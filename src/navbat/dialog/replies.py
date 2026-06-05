@@ -145,6 +145,22 @@ TEMPLATES = {
     "btn_after_tomorrow": {"ru": "Послезавтра", "uz": "Indinga"},
     "btn_yes": {"ru": "Да, отменить", "uz": "Ha, bekor qilish"},
     "btn_no": {"ru": "Нет, оставить", "uz": "Yo'q, qoldirish"},
+    "greeting": {
+        "ru": "Здравствуйте! Я виртуальный администратор клиники «{clinic}»: "
+              "помогу записаться, перенести или отменить приём. "
+              "По медицинским вопросам ответит врач.",
+        "uz": "Assalomu alaykum! Men «{clinic}» klinikasining virtual "
+              "administratoriman: qabulga yozilish, ko'chirish yoki bekor "
+              "qilishda yordam beraman. Tibbiy savollarga shifokor javob beradi.",
+    },
+    "stale_button": {
+        "ru": "Эта кнопка устарела.",
+        "uz": "Bu tugma eskirgan.",
+    },
+    "text_only": {
+        "ru": "Пока я понимаю только текст — напишите, пожалуйста, словами.",
+        "uz": "Hozircha faqat matnni tushunaman — iltimos, so'z bilan yozing.",
+    },
 }
 
 

@@ -75,7 +75,14 @@ class DialogEngine:
     def handle_text(self, chat_id: int, message: str) -> Reply:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
+            first_contact = "greeting_shown" not in conv.context
             reply = self._process_text(session, conv, message)
+            if first_contact:
+                # P0 BRIEF: дисклеймер при первом контакте
+                conv.context["greeting_shown"] = True
+                greeting = t("greeting", self._lang(conv),
+                             clinic=self._clinic_name(session))
+                reply = Reply(f"{greeting}\n\n{reply.text}", reply.buttons)
             save_conversation(session, conv)
         return reply
 
@@ -284,6 +291,9 @@ class DialogEngine:
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("cancel_kept", lang))
+        if kind == "stale":
+            # нажата кнопка из устаревшего сообщения — повторяем текущий шаг
+            return self._with_reprompt(session, conv, Reply(t("stale_button", lang)))
         return Reply(t("other_fallback", lang))
 
     def _on_slot_chosen(self, session: Session, conv: Conversation,
@@ -512,6 +522,12 @@ class DialogEngine:
     def _clear_booking(self, conv: Conversation) -> None:
         for key in _BOOKING_KEYS:
             conv.context.pop(key, None)
+
+    def _clinic_name(self, session: Session) -> str:
+        return session.execute(
+            text("SELECT name FROM clinic "
+                 "WHERE id = current_setting('app.clinic_id')::uuid")
+        ).scalar_one()
 
     def _clinic_tz(self, session: Session) -> ZoneInfo:
         if self._tz is None:
