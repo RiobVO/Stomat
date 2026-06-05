@@ -76,7 +76,6 @@ def test_happy_path_new_patient(app_session_factory, admin_engine, clinic_a,
     day = next_monday()
     engine = make_engine(app_session_factory, clinic_a, [
         extr(service="cleaning", date_ref=explicit(day)),
-        ExtractionError("имя — не NLU-текст"),
     ])
 
     offer = engine.handle_text(CHAT, "хочу чистку в понедельник")
@@ -213,7 +212,6 @@ def test_hold_expired_during_collection_reoffers(app_session_factory, admin_engi
     day = next_monday()
     engine = make_engine(app_session_factory, clinic_a, [
         extr(service="cleaning", date_ref=explicit(day)),
-        ExtractionError("имя"),
     ])
     offer = engine.handle_text(CHAT, "чистку в понедельник")
     engine.handle_action(CHAT, slot_buttons(offer)[0].action)
