@@ -92,8 +92,8 @@ def app_session_factory(migrated):
 def clean_tables(admin_engine, migrated):
     with admin_engine.begin() as conn:
         conn.execute(text(
-            "TRUNCATE appointment_audit, appointment, conversation, holiday, "
-            "patient, doctor, service, clinic CASCADE"
+            "TRUNCATE appointment_audit, appointment, conversation, message_queue, "
+            "holiday, patient, doctor, service, clinic CASCADE"
         ))
     yield
 
