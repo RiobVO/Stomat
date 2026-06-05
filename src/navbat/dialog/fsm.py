@@ -654,8 +654,21 @@ class DialogEngine:
     # ── Вопросы ──────────────────────────────────────────────────────────
 
     def _price_list(self, session: Session, conv: Conversation) -> Reply:
-        """Заглушка прайс-листа — реализуется в Task 4."""
-        return Reply(t("price_empty", self._lang(conv)))
+        """Весь прайс из каталога services; пустой каталог — к администратору."""
+        lang = self._lang(conv)
+        rows = session.execute(
+            text("SELECT name, price FROM service ORDER BY name")).all()
+        if not rows:
+            return Reply(t("price_empty", lang))
+        lines = []
+        for row in rows:
+            label = service_label(row.name, lang)
+            if row.price is None:
+                lines.append(t("price_line_unknown", lang, service=label))
+            else:
+                price = f"{int(row.price):,}".replace(",", " ")
+                lines.append(t("price_line", lang, service=label, price=price))
+        return Reply(t("price_header", lang) + "\n" + "\n".join(lines))
 
     def _answer_question(self, session: Session, conv: Conversation,
                          extraction: Extraction) -> Reply:
