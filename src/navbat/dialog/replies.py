@@ -156,6 +156,11 @@ TEMPLATES = {
         "ru": "Отлично, ждём вас!",
         "uz": "Ajoyib, sizni kutamiz!",
     },
+    "rate_limited": {
+        "ru": "Слишком много сообщений подряд — сделайте небольшую паузу, "
+              "и я отвечу.",
+        "uz": "Juda ko'p xabar yubordingiz — biroz kuting, javob beraman.",
+    },
     "greeting": {
         "ru": "Здравствуйте! Я виртуальный администратор клиники «{clinic}»: "
               "помогу записаться, перенести или отменить приём. "
