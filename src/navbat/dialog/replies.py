@@ -17,7 +17,8 @@ class Button:
 
 @dataclass(frozen=True)
 class Reply:
-    """contact_request, buttons и menu взаимоисключающие: в Telegram reply_markup один.
+    """contact_request, buttons, menu и remove_keyboard взаимоисключающие:
+    в Telegram reply_markup один.
 
     contact_request — label кнопки «Поделиться контактом» (ReplyKeyboardMarkup,
     request_contact=True); remove_keyboard убирает reply-клавиатуру;
@@ -238,6 +239,7 @@ TEMPLATES = {
     "btn_menu_cancel": {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"},
     "btn_menu_prices": {"ru": "💰 Цены", "uz": "💰 Narxlar"},
     "btn_menu_lang": {"ru": "🌐 Til / Язык", "uz": "🌐 Til / Язык"},
+    # кнопки экрана выбора языка (inline, не reply-меню)
     "btn_lang_uz": {"ru": "O'zbekcha", "uz": "O'zbekcha"},
     "btn_lang_ru": {"ru": "Русский", "uz": "Русский"},
 }
