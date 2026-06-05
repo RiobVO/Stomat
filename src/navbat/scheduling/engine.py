@@ -78,6 +78,8 @@ class SchedulingEngine:
         source: str = "bot",
     ) -> uuid.UUID:
         with self._txn() as session:
+            # сериализация записей по врачу: см. _lock_doctor
+            self._lock_doctor(session, doctor_id)
             # протухшие hold физически блокируют constraint (now() в predicate
             # невозможен) — экспирим их перед вставкой в той же транзакции
             self._expire_stale_holds(session, doctor_id)
@@ -112,6 +114,15 @@ class SchedulingEngine:
 
     def confirm(self, appointment_id: uuid.UUID) -> None:
         with self._txn() as session:
+            doctor_id = session.execute(
+                text("SELECT doctor_id FROM appointment WHERE id = :id"),
+                {"id": appointment_id},
+            ).scalar_one_or_none()
+            if doctor_id is None:
+                raise AppointmentNotFoundError(str(appointment_id))
+            # UPDATE hold->booked перепроверяет exclusion constraint (status в его
+            # predicate) и дедлочится с конкурентными INSERT того же врача
+            self._lock_doctor(session, doctor_id)
             updated = session.execute(
                 text("UPDATE appointment SET status = 'booked', hold_expires_at = NULL "
                      "WHERE id = :id AND status = 'hold' AND hold_expires_at > now() "
@@ -146,6 +157,7 @@ class SchedulingEngine:
             ).one_or_none()
             if current is None:
                 raise AppointmentNotFoundError(str(appointment_id))
+            self._lock_doctor(session, current.doctor_id)
 
             slot = self._validated_slot(
                 session, current.doctor_id, current.service_id, new_start
@@ -247,6 +259,21 @@ class SchedulingEngine:
             if cand_start == start:
                 return Slot(cand_start, cand_end)
         raise InvalidSlotError(f"{start.isoformat()} вне рабочей сетки врача")
+
+    def _lock_doctor(self, session: Session, doctor_id: uuid.UUID) -> None:
+        """Advisory-лок на врача до конца транзакции.
+
+        Убирает дедлок: конкурентные INSERT ждут внутри проверки exclusion
+        constraint чужую транзакцию, а confirm/reschedule (UPDATE строк в
+        predicate constraint) перепроверяют constraint навстречу — взаимное
+        ожидание. Сериализация записей по врачу решает это структурно; масштаб
+        клиники (1–4 кресла) её не почувствует. cancel лок не берёт: строка
+        уходит из partial-индекса, перепроверки нет.
+        """
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:d AS text), 0))"),
+            {"d": doctor_id},
+        )
 
     def _doctor_buffer(self, session: Session, doctor_id) -> int:
         return session.execute(
