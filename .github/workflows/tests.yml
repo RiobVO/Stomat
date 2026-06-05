@@ -1,0 +1,45 @@
+# CI: полный сьют ×3 подряд против реального PostgreSQL.
+# Требование BRIEF: race-тест (50 одновременных запросов → 1 запись)
+# автоматизирован в пайплайне; тройной прогон ловит флаки конкурентных тестов.
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: navbat_dev
+          POSTGRES_DB: navbat
+        ports:
+          - "5434:5432"  # дефолтные DSN проекта смотрят на :5434
+        options: >-
+          --health-cmd "pg_isready -U postgres -d navbat"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Create app role (init.sql)
+        env:
+          PGPASSWORD: navbat_dev
+        run: psql -h localhost -p 5434 -U postgres -d navbat -f docker/init.sql
+      - name: Install
+        run: pip install -e .[dev]
+      - name: Test suite x3 (concurrency flakes)
+        run: |
+          for run in 1 2 3; do
+            echo "=== run $run ==="
+            python -m pytest -q
+          done
