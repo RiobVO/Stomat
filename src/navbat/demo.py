@@ -27,6 +27,8 @@ from navbat.onboard import DEMO_CLINIC_ID, DEV_ENC_KEY, seed_demo_clinic
 log = logging.getLogger("navbat.demo")
 
 DEMO_CHAT_ID = 1
+DEMO_PHONE = "+998901234567"   # «свой контакт» при нажатии кнопки в консоли
+CONTACT_ACTION = "__contact__"  # сентинел: цифра этой кнопки = поделиться контактом
 FIXTURES = Path(__file__).parents[2] / "spike_nlu" / "data" / "messages.jsonl"
 
 
@@ -53,11 +55,20 @@ def build_extractor(use_real: bool):
 
 
 def render(reply: Reply) -> list[str]:
-    """Печать ответа; возвращает actions кнопок для выбора цифрой."""
+    """Печать ответа; возвращает actions кнопок для выбора цифрой.
+
+    Кнопка «Поделиться контактом» (в Telegram — reply-клавиатура) в консоли
+    деградирует до нумерованного пункта: выбор отправляет DEMO_PHONE.
+    """
     print(f"\nБот: {reply.text}")
+    actions = [b.action for b in reply.buttons]
     for idx, button in enumerate(reply.buttons, 1):
         print(f"  {idx}. {button.label}")
-    return [b.action for b in reply.buttons]
+    if reply.contact_request:
+        actions.append(CONTACT_ACTION)
+        print(f"  {len(actions)}. [{reply.contact_request}] "
+              f"(отправит контакт {DEMO_PHONE})")
+    return actions
 
 
 def main() -> int:
@@ -92,7 +103,11 @@ def main() -> int:
             print("Диалог сброшен.")
             continue
         if user_input.isdigit() and 1 <= int(user_input) <= len(actions):
-            reply = engine.handle_action(DEMO_CHAT_ID, actions[int(user_input) - 1])
+            action = actions[int(user_input) - 1]
+            if action == CONTACT_ACTION:
+                reply = engine.handle_contact(DEMO_CHAT_ID, DEMO_PHONE, own=True)
+            else:
+                reply = engine.handle_action(DEMO_CHAT_ID, action)
         else:
             reply = engine.handle_text(DEMO_CHAT_ID, user_input)
         actions = render(reply)

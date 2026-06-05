@@ -47,14 +47,25 @@ class TelegramAPI:
         return self._call("getUpdates", **params)
 
     def send_message(self, chat_id: int, text: str,
-                     buttons: Sequence[Button] = ()) -> dict:
+                     buttons: Sequence[Button] = (),
+                     contact_request: str | None = None,
+                     remove_keyboard: bool = False) -> dict:
         params: dict = {"chat_id": chat_id, "text": text}
-        if buttons:
+        if contact_request:
+            # one_time_keyboard: клавиатура прячется после нажатия сама
+            params["reply_markup"] = {
+                "keyboard": [[{"text": contact_request, "request_contact": True}]],
+                "resize_keyboard": True,
+                "one_time_keyboard": True,
+            }
+        elif buttons:
             params["reply_markup"] = {
                 "inline_keyboard": [
                     [{"text": b.label, "callback_data": b.action}] for b in buttons
                 ]
             }
+        elif remove_keyboard:
+            params["reply_markup"] = {"remove_keyboard": True}
         return self._call("sendMessage", **params)
 
     def answer_callback_query(self, callback_query_id: str) -> bool:

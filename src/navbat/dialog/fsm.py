@@ -15,6 +15,7 @@ constraint + advisory lock, см. инкремент 1).
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -103,6 +104,14 @@ class DialogEngine:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
             reply = self._process_action(session, conv, action)
+            save_conversation(session, conv)
+        return reply
+
+    def handle_contact(self, chat_id: int, phone: str, own: bool) -> Reply:
+        """Контакт из кнопки «Поделиться»; own — собственный контакт отправителя."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            conv = load_conversation(session, chat_id)
+            reply = self._process_contact(session, conv, phone, own)
             save_conversation(session, conv)
         return reply
 
@@ -350,18 +359,45 @@ class DialogEngine:
                 return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
         conv.context["pending_name"] = message.strip()
         conv.state = "awaiting_phone"
-        return Reply(t("ask_phone", self._lang(conv)))
+        lang = self._lang(conv)
+        return Reply(t("ask_phone", lang),
+                     contact_request=t("btn_share_contact", lang))
 
     def _on_phone(self, session: Session, conv: Conversation, message: str) -> Reply:
+        """Текст на шаге телефона: ручной ввод не принимается — только кнопка.
+
+        PII: телефон текстом в NLU не уходит — NLU дёргается только для
+        вопросоподобного текста (прерывание вбок), как на шаге имени.
+        """
         lang = self._lang(conv)
-        try:
-            phone = normalize_phone(message)
-        except ValueError:
+        if _looks_like_question(message):
             extraction = self._try_extract(message)
             if extraction is not None and extraction.intent == "question":
                 answer = self._answer_question(session, conv, extraction)
-                return Reply(f"{answer.text}\n\n{t('ask_phone', lang)}")
-            return Reply(t("bad_phone", lang))
+                return Reply(f"{answer.text}\n\n{t('ask_phone', lang)}",
+                             contact_request=t("btn_share_contact", lang))
+        return Reply(t("press_contact_button", lang),
+                     contact_request=t("btn_share_contact", lang))
+
+    def _process_contact(self, session: Session, conv: Conversation,
+                         phone: str, own: bool) -> Reply:
+        lang = self._lang(conv)
+        if conv.state == "escalated":
+            return Reply(t("escalated", lang))
+        if conv.state != "awaiting_phone":
+            return Reply(t("other_fallback", lang))
+        if not own:
+            return Reply(t("foreign_contact", lang),
+                         contact_request=t("btn_share_contact", lang))
+        try:
+            phone = normalize_phone(phone)
+        except ValueError:
+            # свой контакт с не-узбекским номером: ручного ввода нет — тупик,
+            # лид передаётся живому администратору
+            self._notifier.notify(conv.chat_id,
+                                  "контакт с не-узбекским номером", conv.context)
+            conv.state = "escalated"
+            return Reply(t("escalated", lang))
 
         patient_id = create_patient(session, conv.chat_id,
                                     conv.context["pending_name"], phone)
@@ -375,6 +411,8 @@ class DialogEngine:
                 text("UPDATE appointment SET patient_id = :p WHERE id = :a"),
                 {"p": patient_id, "a": appointment_id},
             )
+            # запись подтверждена — клавиатура с кнопкой больше не нужна
+            reply = replace(reply, remove_keyboard=True)
         return reply
 
     def _confirm_and_finish(self, session: Session, conv: Conversation,

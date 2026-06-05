@@ -45,6 +45,24 @@ def test_send_message_builds_inline_keyboard():
                        [{"text": "Другое время", "callback_data": "a:2"}]]
 
 
+def test_send_message_builds_contact_keyboard():
+    api, requests = make_api(lambda req, n: ok_response({"message_id": 1}))
+    api.send_message(100, "Нажмите кнопку:", contact_request="📱 Отправить мой номер")
+
+    markup = json.loads(requests[0].content)["reply_markup"]
+    assert markup["keyboard"] == [[{"text": "📱 Отправить мой номер",
+                                    "request_contact": True}]]
+    assert markup["resize_keyboard"] is True
+    assert markup["one_time_keyboard"] is True
+
+
+def test_send_message_remove_keyboard():
+    api, requests = make_api(lambda req, n: ok_response({"message_id": 1}))
+    api.send_message(100, "Записал!", remove_keyboard=True)
+    markup = json.loads(requests[0].content)["reply_markup"]
+    assert markup == {"remove_keyboard": True}
+
+
 def test_send_message_without_buttons_has_no_markup():
     api, requests = make_api(lambda req, n: ok_response({"message_id": 1}))
     api.send_message(100, "Записал!")
