@@ -32,7 +32,6 @@ from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
-    TEMPLATES,
     Button,
     Reply,
     menu_rows,
