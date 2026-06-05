@@ -1,0 +1,338 @@
+
+gpt-5-nano: core-5 199/370 = 53.8% | language 72.7% | ошибок прогона 3
+  synthetic          core 93/130 = 71.5%
+  synthetic_gemini   core 55/120 = 45.8%
+  synthetic_gpt      core 51/120 = 42.5%
+  поле intent    76.5%
+  поле service   76.5%
+  поле doctor    96.5%
+  поле date_ref  85.9%
+  поле time_ref  95.9%
+
+gpt-4.1-nano: core-5 222/370 = 60.0% | language 61.6% | ошибок прогона 4
+  synthetic          core 103/130 = 79.2%
+  synthetic_gemini   core 55/120 = 45.8%
+  synthetic_gpt      core 64/120 = 53.3%
+  поле intent    74.1%
+  поле service   82.2%
+  поле doctor    95.7%
+  поле date_ref  87.0%
+  поле time_ref  97.3%
+
+gpt-4o-mini: core-5 278/370 = 75.1% | language 82.4% | ошибок прогона 1
+  synthetic          core 122/130 = 93.8%
+  synthetic_gemini   core 73/120 = 60.8%
+  synthetic_gpt      core 83/120 = 69.2%
+  поле intent    85.4%
+  поле service   88.1%
+  поле doctor    97.8%
+  поле date_ref  95.7%
+  поле time_ref  98.9%
+
+=== core-5 фейлы gpt-4o-mini: 92 ===
+
+[m011] (synthetic) «Bugun soat 16:00 da kelsam bo'ladimi?»
+  intent: expected 'book' | got 'question'
+
+[m022] (synthetic) «Tosh olish uchun qancha vaqt ketadi?»
+  service: expected 'cleaning' | got 'extraction'
+
+[m027] (synthetic) «Эртага соат 14:00 да бўш жой борми?»
+  intent: expected 'book' | got 'question'
+
+[m057] (synthetic) «Вы работаете в воскресенье?»
+  date_ref: expected 'weekday_sun' | got None
+
+[m075] (synthetic) «Снимок qildirish kerak, qachon можно?»
+  intent: expected 'book' | got 'question'
+
+[m096] (synthetic) «ээ алло сиз ишлаяпсизларми бугун кечқурун»
+  intent: expected 'question' | got 'greeting'
+
+[m100] (synthetic) «ээ доктор каримовга ёзилмоқчийдим качон бўш»
+  intent: expected 'book' | got 'question'
+
+[m128] (synthetic) «Ассалому алайкум. Кампирим тишини кўрсатмоқчи эди, қариялар учун ҳам қарайсизларми? Душанба куни олиб борсам майлими?»
+  intent: expected 'book' | got 'question'
+  service: expected None | got 'kids'
+
+[g_001] (synthetic_gemini) «Salom, мне на субботу tish og'riyapti записаться»
+  service: expected 'checkup' | got None
+
+[g_006] (synthetic_gemini) «Здравствуйте деточка извините пожалуйста за беспокойство я хотела бы узнать можно ли к доктору Азизу записаться на осмотр»
+  intent: expected 'book' | got 'question'
+
+[g_007] (synthetic_gemini) «bratan men boromiman bugun ishim chiqip qoldi»
+  intent: expected 'cancel' | got 'other'
+
+[g_012] (synthetic_gemini) «зуб балит  памагите  сиводня  в 5  вечера»
+  service: expected 'checkup' | got None
+  time_ref: expected '17:00' | got 'evening'
+
+[g_013] (synthetic_gemini) «Добрый, a implant qo'yish qancha vaqt oladi, записаться хочу на след неделю»
+  intent: expected 'book' | got 'question'
+
+[g_014] (synthetic_gemini) «ака хирург борми хозир кесам боладими»
+  intent: expected 'book' | got 'question'
+  service: expected 'extraction' | got None
+  doctor: expected None | got 'ака хирург'
+  date_ref: expected 'today' | got None
+
+[g_017] (synthetic_gemini) «Vrach Malika opaga obetga yozvoring plomba tushb qoldi»
+  doctor: expected 'Малика' | got 'Malika opa'
+  time_ref: expected 'afternoon' | got None
+
+[g_019] (synthetic_gemini) «salom tish ogrisiga nima ichsa boladi dori, yozilgandm ssilka kelmadi»
+  intent: expected 'other' | got 'medical'
+
+[g_020] (synthetic_gemini) «Здравствуйте, хотел бы узнать, вы сегодня работаете? мне гигиену сделать надо бы...»
+  intent: expected 'book' | got 'question'
+
+[g_023] (synthetic_gemini) «Aka ertagamas indinga boraman xoop?»
+  intent: expected 'reschedule' | got 'greeting'
+
+[g_024] (synthetic_gemini) «йулакчадан каерга бурилиш керак тополмаяпман»
+  intent: expected 'other' | got 'question'
+
+[g_030] (synthetic_gemini) «уже закрыто или можно подойти щас зуб сломал»
+  intent: expected 'book' | got 'question'
+  service: expected 'checkup' | got None
+  date_ref: expected 'today' | got None
+
+[g_036] (synthetic_gemini) «салом ман кеч кобкетяпман 10 мин»
+  intent: expected 'other' | got 'greeting'
+
+[g_040] (synthetic_gemini) «xozir ochiqmisila?»
+  date_ref: expected 'today' | got None
+
+[g_042] (synthetic_gemini) «tish doktori qachon keladila»
+  service: expected None | got 'kids'
+
+[g_045] (synthetic_gemini) «salom. bitta savol. tish ogriyapdi uje 3 kun. bugun obetdan keyin borsam korasilarmi. uzoqdan kelyapman»
+  intent: expected 'book' | got 'question'
+  service: expected 'checkup' | got None
+
+[g_053] (synthetic_gemini) «Здравствуйте сынок я бы хотела узнать как к вам на автобусе доехать от цума»
+  intent: expected 'other' | got 'question'
+
+[g_056] (synthetic_gemini) «Здравствуйте мне нужно удалить зуб 8-ку на когда есть места?»
+  intent: expected 'book' | got 'question'
+
+[g_059] (synthetic_gemini) «salom.men.keldim.kirmayapdi.eshik.»
+  intent: expected 'other' | got 'greeting'
+
+[g_061] (synthetic_gemini) «Aka ertaga obetdan keyn bormi joi tish ogrk»
+  service: expected 'checkup' | got None
+  doctor: expected None | got 'Aka'
+
+[g_062] (synthetic_gemini) «Здрасьте, а рентген у вас есть? мне бы снимок сделать»
+  service: expected 'checkup' | got 'xray'
+
+[g_064] (synthetic_gemini) «йук бормайман бугун»
+  intent: expected 'cancel' | got 'greeting'
+
+[g_065] (synthetic_gemini) «а это если я в 15 00 приду нормально будет?»
+  intent: expected 'book' | got 'question'
+
+[g_070] (synthetic_gemini) «man shuyrda man, qaysi qavat?»
+  intent: expected 'other' | got 'question'
+
+[g_072] (synthetic_gemini) «salom doctor bormilar hozir kelsam ko'ra oladimi»
+  intent: expected 'question' | got 'greeting'
+  service: expected 'checkup' | got None
+  date_ref: expected 'today' | got None
+
+[g_074] (synthetic_gemini) «bugun emas ertaga bormoqchiman bekor qiling»
+  intent: expected 'reschedule' | got 'cancel'
+  date_ref: expected 'tomorrow' | got 'today'
+
+[g_076] (synthetic_gemini) «Assalomu alaykum tish davolatish uchun navbatga yozilmoqchi edim»
+  service: expected 'checkup' | got None
+
+[g_080] (synthetic_gemini) «какой график работы у вас? к вам можно вечером на чистку?»
+  intent: expected 'book' | got 'question'
+
+[g_081] (synthetic_gemini) «salom doctor ismizi bilmadimu man tish qoydirmoqchiman qachon kelsam boladi»
+  intent: expected 'book' | got 'question'
+  service: expected 'crown' | got 'filling'
+
+[g_082] (synthetic_gemini) «здравствуйте извините я забыла во сколько у меня запись сегодня»
+  ОШИБКА ПРОГОНА: api: Error code: 429 - {'error': {'message': 'Rate limit reached for gpt-4o-mini in organization org-mwfupPNG1J6wvKyYDxTC79eg on tokens per min (TPM): Limit 200000, Used 198712, Requested 1693. Please try again in 121ms. Visit https://platform.openai.com/account/rate-limits to learn more.', 'type': 'tokens', 'param': None, 'code': 'rate_limit_exceeded'}}
+
+[g_086] (synthetic_gemini) «Tishim rosa og'riyapti, hoziroq bormasam bo'lmaydi!!»
+  service: expected 'checkup' | got None
+  date_ref: expected 'today' | got None
+
+[g_087] (synthetic_gemini) «у меня там этот кариес кажется надо посмотреть завтра утром»
+  service: expected 'checkup' | got 'filling'
+
+[g_088] (synthetic_gemini) «ertaga soat 10 da uzilmasam bolmaydi, vrach bilan gaplashish kerak»
+  intent: expected 'book' | got 'medical'
+  service: expected 'checkup' | got None
+
+[g_089] (synthetic_gemini) «а вы детские зубы лечите??»
+  service: expected None | got 'kids'
+
+[g_094] (synthetic_gemini) «Bugun kelomimiz vaqtni jilg'iting»
+  intent: expected 'reschedule' | got 'book'
+
+[g_095] (synthetic_gemini) «хотела сделать импланты, доктор Рустам работает в понедельник?»
+  intent: expected 'book' | got 'question'
+
+[g_096] (synthetic_gemini) «salom bormisila»
+  intent: expected 'question' | got 'greeting'
+
+[g_101] (synthetic_gemini) «aka plombani almashtirish kere qacon borsam boladi»
+  intent: expected 'book' | got 'reschedule'
+  doctor: expected None | got 'aka'
+
+[g_102] (synthetic_gemini) «салом ман ярим соат кеч қоламан йўлдаман»
+  intent: expected 'other' | got 'greeting'
+
+[g_103] (synthetic_gemini) «Здравствуйте! Хочу записаться к вам. Спасибо.»
+  intent: expected 'book' | got 'greeting'
+
+[g_106] (synthetic_gemini) «Tishim tushib qoldi. Implant qoyish kere. Doktor Sardor bormi bugun»
+  doctor: expected 'Сардор' | got 'Sardor'
+
+[g_108] (synthetic_gemini) «yozildimmi o'zi sms kelmadi»
+  intent: expected 'question' | got 'greeting'
+
+[g_109] (synthetic_gemini) «вырывать больно нет?»
+  intent: expected 'question' | got 'medical'
+
+[g_112] (synthetic_gemini) «салом врач Дилнозада бугунгига жой борми»
+  intent: expected 'book' | got 'question'
+
+[g_114] (synthetic_gemini) «Tishni oqartirish qancha sizlarda»
+  service: expected 'cleaning' | got 'whitening'
+
+[g_117] (synthetic_gemini) «коронка қўйдириш керак кимга ёзилсам бўлади»
+  intent: expected 'book' | got 'question'
+
+[g_120] (synthetic_gemini) «здрасьте а можно к вам щас прийти у меня зуб прям отваливается»
+  service: expected 'checkup' | got None
+
+[c_003] (synthetic_gpt) «salom мне на субботу tish og'riyapti записаться»
+  service: expected 'checkup' | got None
+
+[c_009] (synthetic_gpt) «ммм это самое имплант консультация нужна»
+  intent: expected 'book' | got 'question'
+  service: expected 'checkup' | got 'implant'
+
+[c_010] (synthetic_gpt) «tish tozalashga ertalab joy bormi»
+  intent: expected 'question' | got 'book'
+  date_ref: expected None | got 'today'
+
+[c_011] (synthetic_gpt) «доброго дня если можно записаться к врачу акмал»
+  service: expected 'checkup' | got None
+
+[c_014] (synthetic_gpt) «ertaga soat 10 dagi yozuvni juma ga suring»
+  date_ref: expected 'tomorrow' | got 'weekday_fri'
+
+[c_016] (synthetic_gpt) «ишлайсизми якшанба куни»
+  date_ref: expected None | got 'weekday_sun'
+
+[c_019] (synthetic_gpt) «меня запишите после обеда»
+  service: expected 'checkup' | got None
+
+[c_021] (synthetic_gpt) «алло ой сообщение пишу короче завтра к 9 можно»
+  service: expected 'checkup' | got None
+
+[c_027] (synthetic_gpt) «salom akmal doktorga bugun boraman»
+  service: expected 'checkup' | got None
+  doctor: expected 'Акмал' | got 'Akmal'
+
+[c_029] (synthetic_gpt) «ммм запись была кажется на пятницу перенести бы»
+  date_ref: expected None | got 'weekday_fri'
+
+[c_032] (synthetic_gpt) «сегодня не получается простите»
+  intent: expected 'cancel' | got 'other'
+
+[c_034] (synthetic_gpt) «эртага кечки пайт буш вакт борми»
+  service: expected 'checkup' | got None
+
+[c_039] (synthetic_gpt) «salom tishim sinib qoldi nima qilsam»
+  intent: expected 'other' | got 'medical'
+
+[c_040] (synthetic_gpt) «можно на завтра после 6»
+  service: expected 'checkup' | got None
+
+[c_041] (synthetic_gpt) «имплант эмас факат корик»
+  intent: expected 'book' | got 'question'
+  service: expected 'checkup' | got 'implant'
+
+[c_042] (synthetic_gpt) «перенесите пожалуйста на понедельник»
+  date_ref: expected None | got 'weekday_mon'
+
+[c_043] (synthetic_gpt) «tish ogriyapti juda qattiq»
+  intent: expected 'book' | got 'medical'
+  service: expected 'checkup' | got None
+
+[c_049] (synthetic_gpt) «это самое завтра завтра имплант консультация»
+  service: expected 'checkup' | got 'implant'
+
+[c_051] (synthetic_gpt) «к 11 можно записатся»
+  service: expected 'checkup' | got None
+
+[c_053] (synthetic_gpt) «не могу найти вход»
+  intent: expected 'other' | got 'greeting'
+
+[c_061] (synthetic_gpt) «tishim qimirlayapti yozsangiz»
+  intent: expected 'book' | got 'medical'
+  service: expected 'checkup' | got None
+
+[c_063] (synthetic_gpt) «aziz doktorga payshanba»
+  service: expected 'checkup' | got None
+  doctor: expected 'Азиз' | got 'aziz doktor'
+  date_ref: expected None | got 'weekday_thu'
+
+[c_064] (synthetic_gpt) «имплант учун консультация керак»
+  intent: expected 'book' | got 'question'
+  service: expected 'checkup' | got 'implant'
+
+[c_066] (synthetic_gpt) «эрталаб келсам кабул киласизми»
+  intent: expected 'question' | got 'book'
+  service: expected 'checkup' | got None
+  date_ref: expected None | got 'today'
+
+[c_070] (synthetic_gpt) «запишите пожалуйста если можно после работы»
+  service: expected 'checkup' | got None
+  time_ref: expected 'evening' | got 'afternoon'
+
+[c_075] (synthetic_gpt) «ассалом алейкум мен ёшим катта одамман имплант мумкинми»
+  intent: expected 'question' | got 'medical'
+
+[c_083] (synthetic_gpt) «мне бы доктора акмала»
+  intent: expected 'book' | got 'other'
+  service: expected 'checkup' | got None
+
+[c_085] (synthetic_gpt) «запись есть на субботу утром»
+  service: expected 'checkup' | got None
+
+[c_091] (synthetic_gpt) «сегодня к 18 можно»
+  service: expected 'checkup' | got None
+
+[c_094] (synthetic_gpt) «салом доктор азиз борми»
+  intent: expected 'question' | got 'greeting'
+
+[c_097] (synthetic_gpt) «имплант консультация завтра утром»
+  service: expected 'checkup' | got 'implant'
+
+[c_099] (synthetic_gpt) «воскресенье работаете нет»
+  date_ref: expected None | got 'weekday_sun'
+
+[c_106] (synthetic_gpt) «олиб ташлаш керак шекилли жуда огрияпти»
+  intent: expected 'book' | got 'medical'
+
+[c_107] (synthetic_gpt) «можно на 16 30 к акмалу»
+  service: expected 'checkup' | got None
+
+[c_111] (synthetic_gpt) «эртага тушдан кейин кабул»
+  service: expected 'checkup' | got None
+
+[c_112] (synthetic_gpt) «короче адрес не нашел»
+  intent: expected 'other' | got 'question'
+
+[c_116] (synthetic_gpt) «зуб болит сил нет примите»
+  service: expected 'checkup' | got None
