@@ -18,8 +18,9 @@
   с авто-переносом РЕАЛИЗОВАН (calendar/sync.py _resolve_conflict).
 - Инкремент A «Диалоговая надёжность» — ЗАКРЫТ 06.06.2026 (все 4 пункта,
   BRIEF разд. 14.A): выход из escalated (/start + /release в админ-чате),
-  «сейчас закрыто» вне рабочего окна, праздники через onboard,
-  stateless-NLU зафиксирован.
+  «сейчас закрыто» вне рабочего окна, закрытые дни /dayoff+/dayopen
+  в админ-чате (предзаполненный календарь праздников ОТМЕНЁН — решение
+  пользователя), stateless-NLU зафиксирован.
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
@@ -140,8 +141,8 @@
   `--check` — преддемо-чеклист; `--real` — платный NLU, только по явной команде;
   `--reminder-offsets 4,2` — минуты, для демо).
 - Онбординг: `python -m navbat.onboard` (--demo | --tg-token | --doctor
-  +--calendar | --holidays <год> +--hayit DD.MM | --list). Сценарий показа
-  стоматологу: docs/DEMO.md.
+  +--calendar | --list). Выходные дни — /dayoff в админ-чате, не онбординг.
+  Сценарий показа стоматологу: docs/DEMO.md.
 - Демо диалога в консоли: `python -m navbat.demo` (фейковый NLU, без API).
 - NLU-харнесс: `cd spike_nlu; python eval.py` (OPENAI_API_KEY в user-env).
 
