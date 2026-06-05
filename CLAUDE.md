@@ -13,10 +13,13 @@
 - Текущий этап: Ф1.5 Production-Ready v1.0 — чеклист в BRIEF.md разд. 14
   (группы A–E: диалоговая надёжность, LLM-устойчивость, деплой/эксплуатация,
   комплаенс, продукт). Деплой на VPS теперь ДО пилота, не после продажи.
-- Gap-аудит 06.06.2026: готовность ~70%; критичные дыры — вечный escalated,
-  нет fallback-LLM, нет /health, нерабочее время без «закрыто», праздники
-  не заполняются, нет бэкапов/WAL. Поправка к аудиту: conflict-resolution
+- Gap-аудит 06.06.2026: готовность ~70%; критичные дыры — нет fallback-LLM,
+  нет /health, нет бэкапов/WAL. Поправка к аудиту: conflict-resolution
   с авто-переносом РЕАЛИЗОВАН (calendar/sync.py _resolve_conflict).
+- Инкремент A «Диалоговая надёжность» — ЗАКРЫТ 06.06.2026 (все 4 пункта,
+  BRIEF разд. 14.A): выход из escalated (/start + /release в админ-чате),
+  «сейчас закрыто» вне рабочего окна, праздники через onboard,
+  stateless-NLU зафиксирован.
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
@@ -130,14 +133,15 @@
 - Секреты: локальный `.env` в корне (gitignored) — NAVBAT_TG_TOKEN,
   NAVBAT_TG_ADMIN_CHAT и пр.; грузится автоматически (navbat/envfile.py)
   в supervisor, onboard и demo. Окружение главнее файла.
-- Тесты: `python -m pytest` (219 зелёных). Конкурентные тесты —
+- Тесты: `python -m pytest` (261 зелёный). Конкурентные тесты —
   гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит.
   CI: GitHub Actions гоняет сьют ×3 на каждый push.
 - ВСЯ СИСТЕМА: `python -m navbat` (супервизор: канал+календарь+напоминания;
   `--check` — преддемо-чеклист; `--real` — платный NLU, только по явной команде;
   `--reminder-offsets 4,2` — минуты, для демо).
 - Онбординг: `python -m navbat.onboard` (--demo | --tg-token | --doctor
-  +--calendar | --list). Сценарий показа стоматологу: docs/DEMO.md.
+  +--calendar | --holidays <год> +--hayit DD.MM | --list). Сценарий показа
+  стоматологу: docs/DEMO.md.
 - Демо диалога в консоли: `python -m navbat.demo` (фейковый NLU, без API).
 - NLU-харнесс: `cd spike_nlu; python eval.py` (OPENAI_API_KEY в user-env).
 
