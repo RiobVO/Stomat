@@ -15,9 +15,9 @@
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
   --reminder-offsets 4,2`.
 - ВАЖНО: pytest TRUNCATE'ит ВСЮ базу, включая демо-клинику с токеном.
-  После прогона тестов перед демо: `python -m navbat.onboard --demo` +
-  `--tg-token ... --admin-chat ...` заново (токен спросить у пользователя,
-  в репо его нет).
+  Восстановление — ОДНА команда: `python -m navbat.onboard --demo`
+  (токен и админ-чат подтягиваются из локального .env: NAVBAT_TG_TOKEN,
+  NAVBAT_TG_ADMIN_CHAT; файл в .gitignore, у пользователя не спрашивать).
 
 ## Что проверено (факты, не трогать)
 
@@ -114,7 +114,10 @@
 
 - Репозиторий: https://github.com/RiobVO/Stomat (origin). Коммиты пушить, не копить локально.
 - БД: `docker compose up -d` → postgres :5434 (5433 занят соседним проектом).
-- Тесты: `python -m pytest` (215 зелёных). Конкурентные тесты —
+- Секреты: локальный `.env` в корне (gitignored) — NAVBAT_TG_TOKEN,
+  NAVBAT_TG_ADMIN_CHAT и пр.; грузится автоматически (navbat/envfile.py)
+  в supervisor, onboard и demo. Окружение главнее файла.
+- Тесты: `python -m pytest` (219 зелёных). Конкурентные тесты —
   гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит.
   CI: GitHub Actions гоняет сьют ×3 на каждый push.
 - ВСЯ СИСТЕМА: `python -m navbat` (супервизор: канал+календарь+напоминания;

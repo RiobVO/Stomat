@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.envfile import load_env_file
 from navbat.dialog.replies import Reply
 from navbat.nlu.extractor import FakeExtractor
 from navbat.onboard import DEMO_CLINIC_ID, DEV_ENC_KEY, seed_demo_clinic
@@ -77,6 +78,7 @@ def main() -> int:
                         help="реальный gpt-4o-mini вместо фикстур (платно!)")
     args = parser.parse_args()
 
+    load_env_file()
     # dev-ключ шифрования: только для локального демо, в проде ключ из секретов
     os.environ.setdefault("NAVBAT_ENC_KEY", DEV_ENC_KEY)
 

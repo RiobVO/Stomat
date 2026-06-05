@@ -21,6 +21,7 @@ from sqlalchemy import text
 
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.envfile import load_env_file
 from navbat.nlu.wrappers import (
     BudgetedExtractor,
     DeidentifyingExtractor,
@@ -131,6 +132,7 @@ def main() -> int:
                         help="преддемо-чеклист и выход")
     args = parser.parse_args()
 
+    load_env_file()
     os.environ.setdefault("NAVBAT_ENC_KEY", DEV_ENC_KEY)
     session_factory = make_session_factory(make_app_engine())
 
