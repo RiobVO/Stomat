@@ -14,6 +14,10 @@
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
   --reminder-offsets 4,2`.
+- ВАЖНО: pytest TRUNCATE'ит ВСЮ базу, включая демо-клинику с токеном.
+  После прогона тестов перед демо: `python -m navbat.onboard --demo` +
+  `--tg-token ... --admin-chat ...` заново (токен спросить у пользователя,
+  в репо его нет).
 
 ## Что проверено (факты, не трогать)
 
