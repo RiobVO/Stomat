@@ -152,6 +152,10 @@ TEMPLATES = {
     },
     "btn_attend": {"ru": "✓ Приду", "uz": "✓ Kelaman"},
     "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Yozuvni bekor qilish"},
+    "attend_ok": {
+        "ru": "Отлично, ждём вас!",
+        "uz": "Ajoyib, sizni kutamiz!",
+    },
     "greeting": {
         "ru": "Здравствуйте! Я виртуальный администратор клиники «{clinic}»: "
               "помогу записаться, перенести или отменить приём. "
