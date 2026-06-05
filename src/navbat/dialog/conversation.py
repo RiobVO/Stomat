@@ -36,6 +36,17 @@ def load_conversation(session: Session, chat_id: int) -> Conversation:
     )
 
 
+def get_chat_lang(session: Session, chat_id: int | None) -> str:
+    """Язык последнего диалога чата; нет разговора — ru."""
+    if not chat_id:
+        return "ru"
+    lang = session.execute(
+        text("SELECT context ->> 'lang' FROM conversation WHERE tg_chat_id = :chat"),
+        {"chat": chat_id},
+    ).scalar_one_or_none()
+    return lang or "ru"
+
+
 def save_conversation(session: Session, conv: Conversation) -> None:
     session.execute(
         text("""
