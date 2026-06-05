@@ -51,6 +51,10 @@ class GoogleCalendarAPI:
         self._retry_delays = tuple(retry_delays)
         self._access_token: str | None = None
 
+    def check_auth(self) -> None:
+        """Проверка живости refresh-токена (преддемо-чеклист). Бросает CalendarAuthError."""
+        self._refresh_access_token()
+
     # ── Календарные методы ───────────────────────────────────────────────
 
     def list_events(self, calendar_id: str, sync_token: str | None = None,
