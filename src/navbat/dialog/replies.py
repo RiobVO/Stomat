@@ -103,10 +103,48 @@ TEMPLATES = {
         "ru": "Я помогу записаться на приём: напишите услугу и удобный день.",
         "uz": "Qabulga yozilishga yordam beraman: xizmat va qulay kunni yozing.",
     },
+    "price_answer": {
+        "ru": "«{service}» — {price} сум.",
+        "uz": "«{service}» — {price} so'm.",
+    },
+    "price_unknown": {
+        "ru": "Цену на «{service}» уточнит администратор.",
+        "uz": "«{service}» narxini administrator aniqlashtiradi.",
+    },
+    "faq_fallback": {
+        "ru": "Это уточнит администратор — я передал ему ваш вопрос.",
+        "uz": "Buni administrator aniqlashtiradi — savolingizni unga uzatdim.",
+    },
+    "cancel_confirm_q": {
+        "ru": "Отменить вашу запись на {when}?",
+        "uz": "{when} kungi yozuvingizni bekor qilaymi?",
+    },
+    "cancel_done": {
+        "ru": "Запись отменена. Будем рады записать вас снова.",
+        "uz": "Yozuv bekor qilindi. Sizni yana yozishdan xursand bo'lamiz.",
+    },
+    "cancel_kept": {
+        "ru": "Хорошо, запись остаётся в силе.",
+        "uz": "Yaxshi, yozuv o'z kuchida qoladi.",
+    },
+    "cancel_none": {
+        "ru": "Активной записи не нашёл. Хотите записаться?",
+        "uz": "Faol yozuv topilmadi. Yozilishni xohlaysizmi?",
+    },
+    "resched_none": {
+        "ru": "Активной записи для переноса не нашёл. Хотите записаться?",
+        "uz": "Ko'chirish uchun faol yozuv topilmadi. Yozilishni xohlaysizmi?",
+    },
+    "resched_done": {
+        "ru": "Перенёс вашу запись на {when}. Ждём вас!",
+        "uz": "Yozuvingizni {when} ga ko'chirdim. Sizni kutamiz!",
+    },
     "btn_other_time": {"ru": "Другое время", "uz": "Boshqa vaqt"},
     "btn_today": {"ru": "Сегодня", "uz": "Bugun"},
     "btn_tomorrow": {"ru": "Завтра", "uz": "Ertaga"},
     "btn_after_tomorrow": {"ru": "Послезавтра", "uz": "Indinga"},
+    "btn_yes": {"ru": "Да, отменить", "uz": "Ha, bekor qilish"},
+    "btn_no": {"ru": "Нет, оставить", "uz": "Yo'q, qoldirish"},
 }
 
 

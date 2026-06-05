@@ -147,13 +147,15 @@ def service_cleaning(admin_engine, clinic_a) -> uuid.UUID:
     return make_service(admin_engine, clinic_a, "cleaning", 30)
 
 
-def make_service(admin_engine, clinic_id, name: str, duration_min: int) -> uuid.UUID:
+def make_service(admin_engine, clinic_id, name: str, duration_min: int,
+                 price: int | None = None) -> uuid.UUID:
     sid = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO service (id, clinic_id, name, duration_min) "
-                 "VALUES (:id, :cid, :name, :dur)"),
-            {"id": sid, "cid": clinic_id, "name": name, "dur": duration_min},
+            text("INSERT INTO service (id, clinic_id, name, duration_min, price) "
+                 "VALUES (:id, :cid, :name, :dur, :price)"),
+            {"id": sid, "cid": clinic_id, "name": name, "dur": duration_min,
+             "price": price},
         )
     return sid
 
