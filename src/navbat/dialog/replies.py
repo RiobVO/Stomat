@@ -17,15 +17,17 @@ class Button:
 
 @dataclass(frozen=True)
 class Reply:
-    """contact_request и buttons взаимоисключающие: в Telegram reply_markup один.
+    """contact_request, buttons и menu взаимоисключающие: в Telegram reply_markup один.
 
     contact_request — label кнопки «Поделиться контактом» (ReplyKeyboardMarkup,
-    request_contact=True); remove_keyboard убирает reply-клавиатуру.
+    request_contact=True); remove_keyboard убирает reply-клавиатуру;
+    menu — ряды label'ов постоянной reply-клавиатуры главного меню.
     """
     text: str
     buttons: tuple[Button, ...] = ()
     contact_request: str | None = None
     remove_keyboard: bool = False
+    menu: tuple[tuple[str, ...], ...] | None = None
 
 
 MEDICAL_DISCLAIMER = {
@@ -206,6 +208,38 @@ TEMPLATES = {
         "ru": "Пока я понимаю только текст — напишите, пожалуйста, словами.",
         "uz": "Hozircha faqat matnni tushunaman — iltimos, so'z bilan yozing.",
     },
+    "choose_lang": {
+        "ru": "Tilni tanlang / Выберите язык:",
+        "uz": "Tilni tanlang / Выберите язык:",
+    },
+    "menu_hint": {
+        "ru": "Выберите действие или напишите своими словами:",
+        "uz": "Amalni tanlang yoki o'z so'zlaringiz bilan yozing:",
+    },
+    "lang_changed": {
+        "ru": "Язык переключён на русский.",
+        "uz": "Til o'zbek tiliga o'zgartirildi.",
+    },
+    "price_header": {"ru": "Наши цены:", "uz": "Narxlarimiz:"},
+    "price_line": {
+        "ru": "• {service} — {price} сум",
+        "uz": "• {service} — {price} so'm",
+    },
+    "price_line_unknown": {
+        "ru": "• {service} — цену уточнит администратор",
+        "uz": "• {service} — narxini administrator aniqlashtiradi",
+    },
+    "price_empty": {
+        "ru": "Прайс уточнит администратор.",
+        "uz": "Narxlarni administrator aniqlashtiradi.",
+    },
+    "btn_menu_book": {"ru": "📅 Записаться", "uz": "📅 Yozilish"},
+    "btn_menu_resched": {"ru": "🔄 Перенести", "uz": "🔄 Ko'chirish"},
+    "btn_menu_cancel": {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"},
+    "btn_menu_prices": {"ru": "💰 Цены", "uz": "💰 Narxlar"},
+    "btn_menu_lang": {"ru": "🌐 Til / Язык", "uz": "🌐 Til / Язык"},
+    "btn_lang_uz": {"ru": "O'zbekcha", "uz": "O'zbekcha"},
+    "btn_lang_ru": {"ru": "Русский", "uz": "Русский"},
 }
 
 
@@ -217,3 +251,12 @@ def t(key: str, lang: str, **kwargs) -> str:
 def service_label(key: str, lang: str) -> str:
     labels = SERVICE_LABELS.get(key)
     return labels[lang] if labels else key
+
+
+def menu_rows(lang: str) -> tuple[tuple[str, ...], ...]:
+    """Ряды постоянной reply-клавиатуры главного меню."""
+    return (
+        (t("btn_menu_book", lang),),
+        (t("btn_menu_resched", lang), t("btn_menu_cancel", lang)),
+        (t("btn_menu_prices", lang), t("btn_menu_lang", lang)),
+    )
