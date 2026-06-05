@@ -386,6 +386,9 @@ class DialogEngine:
             conv.context["lang"] = rest
             if not conv.context.get("greeting_shown"):
                 return self._greeting_with_menu(session, conv)
+            # посреди сценария _with_reprompt отдаёт inline-кнопки шага, и menu
+            # из note теряется — reply_markup в Telegram один. Reply-клавиатура
+            # перерисуется на новом языке со следующим menu-сообщением.
             note = Reply(t("lang_changed", rest), menu=menu_rows(rest))
             return self._with_reprompt(session, conv, note)
         if kind == "service":
