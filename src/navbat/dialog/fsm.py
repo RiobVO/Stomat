@@ -15,6 +15,7 @@ constraint + advisory lock, см. инкремент 1).
 from __future__ import annotations
 
 import uuid
+from contextlib import suppress
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
@@ -31,8 +32,10 @@ from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
+    TEMPLATES,
     Button,
     Reply,
+    menu_rows,
     service_label,
     t,
 )
@@ -89,14 +92,16 @@ class DialogEngine:
     def handle_text(self, chat_id: int, message: str) -> Reply:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
-            first_contact = "greeting_shown" not in conv.context
-            reply = self._process_text(session, conv, message)
-            if first_contact:
-                # P0 BRIEF: дисклеймер при первом контакте
-                conv.context["greeting_shown"] = True
-                greeting = t("greeting", self._lang(conv),
-                             clinic=self._clinic_name(session))
-                reply = Reply(f"{greeting}\n\n{reply.text}", reply.buttons)
+            reply = self._handle_command_or_menu(session, conv, message)
+            if reply is None:
+                first_contact = "greeting_shown" not in conv.context
+                reply = self._process_text(session, conv, message)
+                if first_contact:
+                    # P0 BRIEF: дисклеймер при первом контакте
+                    conv.context["greeting_shown"] = True
+                    greeting = t("greeting", self._lang(conv),
+                                 clinic=self._clinic_name(session))
+                    reply = Reply(f"{greeting}\n\n{reply.text}", reply.buttons)
             save_conversation(session, conv)
         return reply
 
@@ -114,6 +119,50 @@ class DialogEngine:
             reply = self._process_contact(session, conv, phone, own)
             save_conversation(session, conv)
         return reply
+
+    # ── /start и главное меню (перехват до NLU) ──────────────────────────
+
+    def _handle_command_or_menu(self, session: Session, conv: Conversation,
+                                message: str) -> Reply | None:
+        """Перехват /start до NLU и до PII-эвристик: ноль токенов.
+
+        None — обычный текст, идёт штатным путём (LLM-fallback).
+        """
+        if conv.state == "escalated":
+            return None  # стоп-состояние не обходится командами
+        if message.strip() == "/start":
+            return self._on_start(session, conv)
+        return None
+
+    def _on_start(self, session: Session, conv: Conversation) -> Reply:
+        self._abort_pending(conv)
+        if "lang" not in conv.context:
+            return self._lang_screen(conv)
+        return self._greeting_with_menu(session, conv)
+
+    def _lang_screen(self, conv: Conversation) -> Reply:
+        return Reply(t("choose_lang", self._lang(conv)),
+                     (Button(t("btn_lang_uz", "ru"), "lang:uz"),
+                      Button(t("btn_lang_ru", "ru"), "lang:ru")))
+
+    def _greeting_with_menu(self, session: Session, conv: Conversation) -> Reply:
+        lang = self._lang(conv)
+        conv.context["greeting_shown"] = True
+        greeting = t("greeting", lang, clinic=self._clinic_name(session))
+        return Reply(f"{greeting}\n\n{t('menu_hint', lang)}", menu=menu_rows(lang))
+
+    def _abort_pending(self, conv: Conversation) -> None:
+        """Меню/старт посреди сценария = явная смена намерения.
+
+        Висящий hold отпускаем: бронь слота не должна переживать отказ
+        от записи. Протухший/уже отменённый hold — цель и так достигнута.
+        """
+        appt = conv.context.get("appointment_id")
+        if appt:
+            with suppress(AppointmentNotFoundError):
+                self._sched.cancel(uuid.UUID(appt))
+        self._clear_booking(conv)
+        conv.state = "idle"
 
     # ── Текст ────────────────────────────────────────────────────────────
 
@@ -290,6 +339,12 @@ class DialogEngine:
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
         kind, _, rest = action.partition(":")
+        if kind == "lang":
+            conv.context["lang"] = rest
+            if not conv.context.get("greeting_shown"):
+                return self._greeting_with_menu(session, conv)
+            note = Reply(t("lang_changed", rest), menu=menu_rows(rest))
+            return self._with_reprompt(session, conv, note)
         if kind == "service":
             conv.context["service"] = rest
             return self._advance_booking(session, conv)
