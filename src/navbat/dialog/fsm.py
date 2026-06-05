@@ -509,8 +509,8 @@ class DialogEngine:
                 text("UPDATE appointment SET patient_id = :p WHERE id = :a"),
                 {"p": patient_id, "a": appointment_id},
             )
-            # запись подтверждена — клавиатура с кнопкой больше не нужна
-            reply = replace(reply, remove_keyboard=True)
+            # запись подтверждена — контакт-клавиатуру заменяет главное меню
+            reply = replace(reply, menu=menu_rows(lang))
         return reply
 
     def _confirm_and_finish(self, session: Session, conv: Conversation,

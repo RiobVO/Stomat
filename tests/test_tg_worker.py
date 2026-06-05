@@ -17,7 +17,7 @@ from navbat.dialog.replies import Reply, TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import TelegramAPIError
 from navbat.telegram.queue import enqueue
-from navbat.telegram.worker import UpdateWorker
+from navbat.telegram.worker import UpdateWorker, send_reply
 from test_dialog_booking import CHAT, RecordingNotifier, explicit, extr
 
 UPDATE_SEQ = iter(range(1, 10_000))
@@ -26,17 +26,17 @@ UPDATE_SEQ = iter(range(1, 10_000))
 class FakeTelegramAPI:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, tuple]] = []
-        self.keyboards: list[tuple] = []  # (contact_request, remove_keyboard)
+        self.keyboards: list[tuple] = []  # (contact_request, menu)
         self.answered: list[str] = []
         self.send_failures = 0  # сколько ближайших send уронить
 
     def send_message(self, chat_id, text, buttons=(),
-                     contact_request=None, remove_keyboard=False):
+                     contact_request=None, menu=None):
         if self.send_failures > 0:
             self.send_failures -= 1
             raise TelegramAPIError("эмуляция падения сети")
         self.sent.append((chat_id, text, tuple(buttons)))
-        self.keyboards.append((contact_request, remove_keyboard))
+        self.keyboards.append((contact_request, menu))
         return {"message_id": len(self.sent)}
 
     def answer_callback_query(self, callback_query_id):
@@ -201,17 +201,26 @@ def contact_worker(app_session_factory, clinic_id, reply: Reply):
     return worker, api, dialog
 
 
+def test_menu_keyboard_passes_through_send_reply(app_session_factory, clinic_a):
+    api = FakeTelegramAPI()
+    menu = (("📅 Записаться",), ("💰 Цены",))
+    send_reply(api, app_session_factory, clinic_a, 500,
+               Reply("Меню:", menu=menu))
+    assert api.keyboards[-1] == (None, menu), "menu дошёл до API"
+
+
 def test_contact_update_routed_with_own_flag(app_session_factory, admin_engine,
                                              clinic_a, doctor_a, service_cleaning):
+    menu = (("📅 Записаться",),)
     worker, api, dialog = contact_worker(
         app_session_factory, clinic_a,
-        Reply("Записал!", remove_keyboard=True))
+        Reply("Записал!", menu=menu))
     put_contact(app_session_factory, clinic_a, "998901234567",
                 contact_user_id=CHAT, from_id=CHAT)
     worker.process_one()
 
     assert dialog.contacts == [(CHAT, "998901234567", True)]
-    assert api.keyboards[-1] == (None, True), "remove_keyboard дошёл до API"
+    assert api.keyboards[-1] == (None, menu), "menu дошёл до API"
     assert queue_statuses(admin_engine) == ["done"]
 
 
@@ -228,7 +237,7 @@ def test_foreign_or_missing_user_id_not_own(app_session_factory, admin_engine,
     worker.process_one()
 
     assert [own for _, _, own in dialog.contacts] == [False, False]
-    assert api.keyboards[-1] == ("📱", False), "кнопка предложена снова"
+    assert api.keyboards[-1] == ("📱", None), "кнопка предложена снова"
 
 
 # ── Не-текст и служебные апдейты ─────────────────────────────────────────────

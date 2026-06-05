@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from conftest import make_service, next_monday
 from navbat.dialog.fsm import DialogEngine
-from navbat.dialog.replies import TEMPLATES
+from navbat.dialog.replies import TEMPLATES, menu_rows
 from navbat.nlu.extractor import FakeExtractor
 from test_dialog_booking import (
     CHAT,
@@ -66,14 +66,15 @@ def test_ask_phone_offers_contact_button(app_session_factory, admin_engine,
     assert fsm_state(admin_engine) == "awaiting_phone"
 
 
-def test_own_contact_books_and_removes_keyboard(app_session_factory, admin_engine,
-                                                clinic_a, doctor_a, service_cleaning):
+def test_own_contact_books_and_restores_menu(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a, service_cleaning):
     engine = make_engine(app_session_factory, clinic_a, booking_script())
     to_phone_step(engine)
 
     # Telegram отдаёт phone_number без плюса
     done = engine.handle_contact(CHAT, "998901234567", own=True)
-    assert done.remove_keyboard, "клавиатура с кнопкой убирается"
+    assert done.menu == menu_rows("ru"), \
+        "контакт-клавиатура заменяется главным меню"
     assert "09:00" in done.text
     assert appt_status(admin_engine) == "booked"
     assert fsm_state(admin_engine) == "idle"

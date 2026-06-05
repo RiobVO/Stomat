@@ -49,7 +49,7 @@ class TelegramAPI:
     def send_message(self, chat_id: int, text: str,
                      buttons: Sequence[Button] = (),
                      contact_request: str | None = None,
-                     remove_keyboard: bool = False) -> dict:
+                     menu: Sequence[Sequence[str]] | None = None) -> dict:
         params: dict = {"chat_id": chat_id, "text": text}
         if contact_request:
             # one_time_keyboard: клавиатура прячется после нажатия сама
@@ -64,8 +64,13 @@ class TelegramAPI:
                     [{"text": b.label, "callback_data": b.action}] for b in buttons
                 ]
             }
-        elif remove_keyboard:
-            params["reply_markup"] = {"remove_keyboard": True}
+        elif menu:
+            # постоянное главное меню; держится до следующей reply-клавиатуры
+            params["reply_markup"] = {
+                "keyboard": [[{"text": label} for label in row] for row in menu],
+                "resize_keyboard": True,
+                "is_persistent": True,
+            }
         return self._call("sendMessage", **params)
 
     def answer_callback_query(self, callback_query_id: str) -> bool:
