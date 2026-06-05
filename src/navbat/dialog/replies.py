@@ -157,6 +157,18 @@ TEMPLATES = {
         "ru": "Эта кнопка устарела.",
         "uz": "Bu tugma eskirgan.",
     },
+    "conflict_moved": {
+        "ru": "К сожалению, время {old} стало недоступно — перенёс вашу запись "
+              "на {new}. Если не подходит, выберите другое:",
+        "uz": "Afsuski, {old} vaqti band bo'lib qoldi — yozuvingizni {new} ga "
+              "ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:",
+    },
+    "conflict_cancelled": {
+        "ru": "К сожалению, время {old} стало недоступно, а свободного времени "
+              "в ближайшие дни нет — запись отменена. Напишите, и подберём новое.",
+        "uz": "Afsuski, {old} vaqti band bo'lib qoldi, yaqin kunlarda bo'sh vaqt "
+              "yo'q — yozuv bekor qilindi. Yozing, yangisini topamiz.",
+    },
     "text_only": {
         "ru": "Пока я понимаю только текст — напишите, пожалуйста, словами.",
         "uz": "Hozircha faqat matnni tushunaman — iltimos, so'z bilan yozing.",

@@ -114,24 +114,7 @@ class UpdateWorker:
     # ── Кнопки: короткий callback_data + map в контексте ─────────────────
 
     def _send(self, chat_id: int, reply: Reply) -> None:
-        buttons = reply.buttons
-        if buttons:
-            mapping = {str(i): b.action for i, b in enumerate(buttons, 1)}
-            self._store_actions(chat_id, mapping)
-            buttons = tuple(
-                Button(b.label, f"a:{i}") for i, b in enumerate(buttons, 1)
-            )
-        self._api.send_message(chat_id, reply.text, buttons)
-
-    def _store_actions(self, chat_id: int, mapping: dict[str, str]) -> None:
-        with tenant_transaction(self._session_factory, self._clinic_id) as session:
-            session.execute(
-                text("UPDATE conversation "
-                     "SET context = jsonb_set(context, '{tg_actions}', "
-                     "                        CAST(:mapping AS jsonb), true) "
-                     "WHERE tg_chat_id = :chat"),
-                {"mapping": json.dumps(mapping, ensure_ascii=False), "chat": chat_id},
-            )
+        send_reply(self._api, self._session_factory, self._clinic_id, chat_id, reply)
 
     def _lookup_action(self, chat_id: int, data: str) -> str | None:
         if not data.startswith("a:"):
@@ -142,3 +125,24 @@ class UpdateWorker:
                      "FROM conversation WHERE tg_chat_id = :chat"),
                 {"index": data[2:], "chat": chat_id},
             ).scalar_one_or_none()
+
+
+def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
+               chat_id: int, reply: Reply) -> None:
+    """Отправка Reply в чат: кнопки нумеруются, map уходит в context.
+
+    Используется воркером и календарным sync'ом (уведомления о переносе).
+    """
+    buttons = reply.buttons
+    if buttons:
+        mapping = {str(i): b.action for i, b in enumerate(buttons, 1)}
+        with tenant_transaction(session_factory, clinic_id) as session:
+            session.execute(
+                text("UPDATE conversation "
+                     "SET context = jsonb_set(context, '{tg_actions}', "
+                     "                        CAST(:mapping AS jsonb), true) "
+                     "WHERE tg_chat_id = :chat"),
+                {"mapping": json.dumps(mapping, ensure_ascii=False), "chat": chat_id},
+            )
+        buttons = tuple(Button(b.label, f"a:{i}") for i, b in enumerate(buttons, 1))
+    api.send_message(chat_id, reply.text, buttons)
