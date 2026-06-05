@@ -2,7 +2,7 @@
 from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from navbat.scheduling.calendar_rules import day_intervals, slot_candidates
+from navbat.scheduling.calendar_rules import day_intervals, open_bounds, slot_candidates
 
 from conftest import WORKING_INTERVALS, at_tashkent, next_monday, next_sunday
 
@@ -42,6 +42,37 @@ def test_candidates_respect_lunch_and_shift_bounds():
     assert "17:30" in starts            # последний вечерний (30 мин до 18:00)
     assert "18:00" not in starts
     assert len(slots) == 16             # 8 утром + 8 вечером
+
+
+# ── Рабочее окно дня клиники (для «сейчас закрыто») ──────────────────────────
+
+def test_open_bounds_spans_lunch_break():
+    # окно дня — от первого открытия до последнего закрытия: обед НЕ «закрыто»
+    day = next_monday()
+    assert open_bounds([WORKING_INTERVALS], day, TASHKENT, holidays=set()) == (
+        at_tashkent(day, "09:00"), at_tashkent(day, "18:00"))
+
+
+def test_open_bounds_union_of_doctors():
+    day = next_monday()
+    early = {"mon": [["08:00", "12:00"]]}
+    late = {"mon": [["10:00", "19:00"]]}
+    assert open_bounds([early, late], day, TASHKENT, holidays=set()) == (
+        at_tashkent(day, "08:00"), at_tashkent(day, "19:00"))
+
+
+def test_open_bounds_holiday_is_closed():
+    day = next_monday()
+    assert open_bounds([WORKING_INTERVALS], day, TASHKENT, holidays={day}) is None
+
+
+def test_open_bounds_day_off_is_closed():
+    assert open_bounds([WORKING_INTERVALS], next_sunday(), TASHKENT,
+                       holidays=set()) is None
+
+
+def test_open_bounds_no_doctors_is_closed():
+    assert open_bounds([], next_monday(), TASHKENT, holidays=set()) is None
 
 
 def test_long_service_does_not_cross_shift_end():
