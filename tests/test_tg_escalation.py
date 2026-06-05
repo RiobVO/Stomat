@@ -20,6 +20,15 @@ def test_notify_sends_context_to_admin_chat():
     assert "uz" in message_text
 
 
+def test_alert_contains_release_hint():
+    # админу не нужно помнить синтаксис — команда снятия прямо в алерте
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+    escalation.notify(100, "2 кривых ответа NLU подряд", {"lang": "uz"})
+
+    assert "/release 100" in api.sent[0][1]
+
+
 def test_no_admin_chat_falls_back_to_log_without_raising():
     api = FakeTelegramAPI()
     escalation = TelegramEscalation(api, admin_chat_id=None)

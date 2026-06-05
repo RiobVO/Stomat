@@ -25,7 +25,8 @@ class TelegramEscalation:
             return
         message = (f"Эскалация: чат {chat_id}\n"
                    f"Причина: {reason}\n"
-                   f"Контекст: {json.dumps(context, ensure_ascii=False)}")
+                   f"Контекст: {json.dumps(context, ensure_ascii=False)}\n"
+                   f"Снять: /release {chat_id}")
         try:
             self._api.send_message(self._admin_chat_id, message)
         except TelegramAPIError as e:

@@ -134,12 +134,13 @@ class DialogEngine:
         """Перехват /start и label'ов reply-меню до NLU: ноль токенов.
 
         None — обычный текст, идёт штатным путём (LLM-fallback).
-        Escalated-состояние не обходится ни командами, ни кнопками.
+        Escalated пробивает только /start — пациент сам выходит из заморозки
+        (BRIEF разд. 14.A); кнопки меню стоп-состояние не обходят.
         """
-        if conv.state == "escalated":
-            return None  # стоп-состояние не обходится командами
         if message.strip() == "/start":
             return self._on_start(session, conv)
+        if conv.state == "escalated":
+            return None  # стоп-состояние не обходится кнопками
         key = _MENU_ACTIONS.get(message.strip())
         if key is None:
             return None
@@ -147,6 +148,9 @@ class DialogEngine:
 
     def _on_start(self, session: Session, conv: Conversation) -> Reply:
         self._abort_pending(conv)
+        # выход из заморозки = чистый счёт: иначе унаследованный счётчик ≥2
+        # эскалировал бы повторно с первого же сбоя NLU
+        conv.context["nlu_failures"] = 0
         if "lang" not in conv.context:
             return self._lang_screen(conv)
         return self._greeting_with_menu(session, conv)
