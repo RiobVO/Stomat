@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from navbat.nlu.extractor import ExtractionError
+from navbat.nlu.extractor import ExtractionError, ProviderDownError
 from navbat.nlu.schema import Extraction
 
 log = logging.getLogger("navbat.nlu")
@@ -35,6 +35,8 @@ class OpenAIExtractor:
         self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
+        from openai import APIError  # модуль уже загружен в __init__
+
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": text},
@@ -64,6 +66,10 @@ class OpenAIExtractor:
                 if message.refusal or message.parsed is None:
                     raise ExtractionError(message.refusal or "пустой parsed")
                 return message.parsed
+            except APIError as e:
+                # сеть/5xx/429 после встроенных ретраев SDK — аутэйдж
+                # провайдера, топливо для FallbackExtractor
+                raise ProviderDownError(f"openai: {e}") from e
             except (ValidationError, ExtractionError) as e:
                 last_error = e
                 log.warning("NLU: невалидный ответ (попытка %d): %s", attempt + 1, e)

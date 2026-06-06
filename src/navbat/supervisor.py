@@ -48,11 +48,25 @@ def parse_offsets(raw: str) -> tuple[timedelta, ...]:
 
 
 def build_real_extractor(session_factory, clinic_id: uuid.UUID, notifier):
-    """Боевая сборка NLU: бюджет → деидентификация → gpt-4o-mini."""
+    """Боевая сборка NLU: бюджет → деидентификация → fallback(OpenAI, Gemini).
+
+    Деидентификация и бюджет общие на оба провайдера; без GEMINI_API_KEY
+    каскада нет — аутэйдж OpenAI уходит в ретрай очереди (как раньше).
+    """
     from navbat.nlu.openai_extractor import OpenAIExtractor
 
     recorder = UsageRecorder(session_factory, clinic_id, notifier=notifier)
-    inner = DeidentifyingExtractor(OpenAIExtractor(on_usage=recorder.record))
+    extractor = OpenAIExtractor(on_usage=recorder.record)
+    if os.environ.get("GEMINI_API_KEY"):
+        from navbat.nlu.fallback import FallbackExtractor
+        from navbat.nlu.gemini_extractor import GeminiExtractor
+
+        extractor = FallbackExtractor(
+            extractor, GeminiExtractor(on_usage=recorder.record))
+        log.info("LLM-fallback включён: Gemini")
+    else:
+        log.warning("GEMINI_API_KEY не задан — fallback-LLM выключен")
+    inner = DeidentifyingExtractor(extractor)
     return BudgetedExtractor(inner, recorder)
 
 
@@ -110,6 +124,12 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             report(False, "Google Calendar", str(e)[:120])
     else:
         report(True, "Google Calendar", "не настроен — бот работает без календаря")
+
+    if os.environ.get("GEMINI_API_KEY"):
+        report(True, "fallback-LLM", "Gemini (ключ задан)")
+    else:
+        report(True, "fallback-LLM",
+               "не настроен — при аутэйдже OpenAI бот без NLU (GEMINI_API_KEY)")
 
     if use_real:
         report(bool(os.environ.get("OPENAI_API_KEY")), "OPENAI_API_KEY для --real")

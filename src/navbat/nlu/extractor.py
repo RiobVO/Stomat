@@ -31,6 +31,16 @@ class ExtractionError(Exception):
     """Невалидный/пустой ответ NLU — после repair-попыток или вне фикстур."""
 
 
+class ProviderDownError(Exception):
+    """Провайдер LLM недоступен (сеть/таймаут/HTTP) — повод для fallback.
+
+    Намеренно НЕ ExtractionError: «модель ответила мусором» (сбой диалога,
+    ловит FSM: reask → эскалация) и «провайдер лежит» (сбой инфраструктуры,
+    ловит FallbackExtractor, а без него — ретрай очереди сообщений) —
+    разные судьбы.
+    """
+
+
 class Extractor(Protocol):
     def extract(self, text: str) -> Extraction: ...
 
