@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
@@ -23,6 +23,7 @@ from navbat.dialog.conversation import (
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
+from navbat.retention import cleanup_old_data
 from navbat.stats import collect_daily_stats, render_stats, should_send_digest
 from navbat.telegram.worker import send_reply
 
@@ -52,6 +53,9 @@ class ReminderService:
         self._notifier = notifier or LoggingEscalation()
         self._offsets = offsets
         self._digest_chat_id = digest_chat_id
+        # retention: раз в календарный день; отметка в памяти — DELETE
+        # идемпотентен, повтор после рестарта безвреден
+        self._cleaned_on: date | None = None
 
     # ── Reconciliation: БД — единственный источник ───────────────────────
 
@@ -186,6 +190,15 @@ class ReminderService:
             )
         return True
 
+    def maybe_cleanup(self) -> bool:
+        """Retention-чистка раз в календарный день (D.3)."""
+        today = date.today()
+        if self._cleaned_on == today:
+            return False
+        self._cleaned_on = today
+        cleanup_old_data(self._session_factory, self._clinic_id)
+        return True
+
     def run(self, stop: threading.Event, interval: float = 30.0) -> None:
         while not stop.is_set():
             started = time.monotonic()
@@ -193,6 +206,7 @@ class ReminderService:
                 self.reconcile()
                 self.send_due()
                 self.maybe_send_digest()
+                self.maybe_cleanup()
             except Exception:
                 log.exception("цикл напоминаний упал — продолжаю")
             elapsed = time.monotonic() - started
