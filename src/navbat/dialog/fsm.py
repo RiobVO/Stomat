@@ -51,7 +51,10 @@ from navbat.scheduling.errors import (
 )
 
 def _looks_like_question(message: str) -> bool:
-    return "?" in message or len(message.strip()) > 30
+    # ТОЛЬКО явный «?»: используется на PII-шагах (имя/телефон) для
+    # прерывания вопросом вбок. Критерий длины убран — длинное ФИО без «?»
+    # не вопрос, а раньше уходило в LLM (утечка PII, M2).
+    return "?" in message
 
 
 MAX_NLU_FAILURES = 2     # подряд; дальше — эскалация
