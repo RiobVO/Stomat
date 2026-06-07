@@ -5,6 +5,13 @@
 пункт D.4). Источник: `src/navbat/dialog/replies.py` — все 67 пар строк
 бота живут только там, вне файла узбекского текста в коде нет (проверено).
 
+> **Раунд 1 (07.06.2026) ПРОВЕДЁН** кросс-проверкой LLM (Gemini + Claude,
+> промпт docs/UZ_LLM_PROMPT.md): внесено 16 правок — терминология «qabul»
+> вместо «yozuv», аффикс «dagi» вместо «kungi» при дате-времени, мягкий
+> reask. Решено оставить: ASCII-апостроф `'`, «Tish oldirish», «Indinga»,
+> заимствования (Plomba и пр.), «Ismingiz nima?». Тексты ниже —
+> актуальные (после правок); контроль — tests/test_replies_uz.py.
+
 ## Как проверять
 
 - **Русский текст — эталон смысла.** Узбекский должен передавать тот же
@@ -39,7 +46,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 1.1 `greeting` — приветствие при первом сообщении
 - RU: Здравствуйте! Я виртуальный администратор клиники «{clinic}»: помогу записаться, перенести или отменить приём. По медицинским вопросам ответит врач.
-- UZ: **Assalomu alaykum! Men «{clinic}» klinikasining virtual administratoriman: qabulga yozilish, ko'chirish yoki bekor qilishda yordam beraman. Tibbiy savollarga shifokor javob beradi.**
+- UZ: **Assalomu alaykum! Men «{clinic}» klinikasining virtual administratoriman: qabulga yozilish, uni boshqa vaqtga ko'chirish yoki bekor qilishda yordam beraman. Tibbiy savollarga shifokor javob beradi.**
 - Правка:
 
 ### 1.2 `choose_lang` — экран выбора языка
@@ -96,7 +103,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 2.6 `no_slots_at_all` — нет мест две недели вперёд
 - RU: В ближайшие две недели свободного времени нет — передаю администратору.
-- UZ: **Yaqin ikki haftada bo'sh vaqt yo'q — administratorga uzataman.**
+- UZ: **Yaqin ikki haftada bo'sh vaqt yo'q — sizni administratorga ulayman.**
 - Правка:
 
 ### 2.7 `doctor_not_found` — врач с таким именем не найден
@@ -111,7 +118,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 2.9 `hold_expired` — бронь истекла
 - RU: Бронь на выбранное время истекла. Вот свежие варианты:
-- UZ: **Tanlangan vaqt broni tugadi. Mana yangi variantlar:**
+- UZ: **Tanlangan vaqtni band qilish muddati tugadi. Mana yangi variantlar:**
 - Правка:
 
 ---
@@ -155,23 +162,23 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 5.1 `cancel_confirm_q` — подтверждение отмены
 - RU: Отменить вашу запись на {when}?
-- UZ: **{when} kungi yozuvingizni bekor qilaymi?**
-- Пример: «08.06 15:30 kungi yozuvingizni bekor qilaymi?» — проверьте, работает ли «kungi» с датой-временем такого формата.
+- UZ: **{when} dagi qabulni bekor qilaymi?**
+- Пример: «08.06 15:30 dagi qabulni bekor qilaymi?» («dagi» вместо «kungi» — решение раунда 1: время не является днём).
 - Правка:
 
 ### 5.2 `cancel_done` — запись отменена
 - RU: Запись отменена. Будем рады записать вас снова.
-- UZ: **Yozuv bekor qilindi. Sizni yana yozishdan xursand bo'lamiz.**
+- UZ: **Qabul bekor qilindi. Sizni yana kutib qolamiz.**
 - Правка:
 
 ### 5.3 `cancel_kept` — пациент передумал отменять
 - RU: Хорошо, запись остаётся в силе.
-- UZ: **Yaxshi, yozuv o'z kuchida qoladi.**
+- UZ: **Yaxshi, qabul o'z kuchida qoladi.**
 - Правка:
 
 ### 5.4 `cancel_none` — отменять нечего
 - RU: Активной записи не нашёл. Хотите записаться?
-- UZ: **Faol yozuv topilmadi. Yozilishni xohlaysizmi?**
+- UZ: **Faol qabul topilmadi. Yozilishni xohlaysizmi?**
 - Правка:
 
 ---
@@ -180,13 +187,13 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 6.1 `resched_none` — переносить нечего
 - RU: Активной записи для переноса не нашёл. Хотите записаться?
-- UZ: **Ko'chirish uchun faol yozuv topilmadi. Yozilishni xohlaysizmi?**
+- UZ: **Boshqa vaqtga ko'chirish uchun faol qabul topilmadi. Yozilishni xohlaysizmi?**
 - Правка:
 
 ### 6.2 `resched_done` — запись перенесена
 - RU: Перенёс вашу запись на {when}. Ждём вас!
-- UZ: **Yozuvingizni {when} ga ko'chirdim. Sizni kutamiz!**
-- Пример: «Yozuvingizni 08.06 15:30 ga ko'chirdim. Sizni kutamiz!» — проверьте аффикс «ga» после времени.
+- UZ: **Qabulni {when} ga ko'chirdim. Sizni kutamiz!**
+- Пример: «Qabulni 08.06 15:30 ga ko'chirdim. Sizni kutamiz!» (аффикс «ga» подтверждён раундом 1).
 - Правка:
 
 ---
@@ -210,13 +217,13 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 8.1 `conflict_moved` — время заняли, бот перенёс запись
 - RU: К сожалению, время {old} стало недоступно — перенёс вашу запись на {new}. Если не подходит, выберите другое:
-- UZ: **Afsuski, {old} vaqti band bo'lib qoldi — yozuvingizni {new} ga ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:**
-- Пример: «Afsuski, 08.06 15:30 vaqti band bo'lib qoldi — yozuvingizni 08.06 16:30 ga ko'chirdim. ...»
+- UZ: **Afsuski, {old} vaqti band bo'lib qoldi — qabulni {new} ga ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:**
+- Пример: «Afsuski, 08.06 15:30 vaqti band bo'lib qoldi — qabulni 08.06 16:30 ga ko'chirdim. ...»
 - Правка:
 
 ### 8.2 `conflict_cancelled` — время заняли, заменить нечем
 - RU: К сожалению, время {old} стало недоступно, а свободного времени в ближайшие дни нет — запись отменена. Напишите, и подберём новое.
-- UZ: **Afsuski, {old} vaqti band bo'lib qoldi, yaqin kunlarda bo'sh vaqt yo'q — yozuv bekor qilindi. Yozing, yangisini topamiz.**
+- UZ: **Afsuski, {old} vaqti band bo'lib qoldi, yaqin kunlarda bo'sh vaqt yo'q — qabul bekor qilindi. Yozing, boshqa vaqt topamiz.**
 - Правка:
 
 ---
@@ -259,13 +266,13 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 10.1 `reask` — бот не понял сообщение
 - RU: Не понял вас. Напишите, пожалуйста, иначе — например: «запись на чистку завтра».
-- UZ: **Tushunmadim. Boshqacha yozib ko'ring — masalan: «ertaga tish tozalashga yozilmoqchiman».**
+- UZ: **Kechirasiz, tushunmadim. Boshqacha yozib ko'ring — masalan: «ertaga tish tozalashga yozilmoqchiman».**
 - Пример в кавычках — образец фразы пациента, он должен звучать естественно, как пишет обычный человек.
 - Правка:
 
 ### 10.2 `escalated` — бот передаёт диалог администратору
 - RU: Передаю администратору — он ответит вам здесь в ближайшее время.
-- UZ: **Administratorga uzatdim — u tez orada shu yerda javob beradi.**
+- UZ: **Administratorga ulab berdim — u tez orada shu yerda javob beradi.**
 - Правка:
 
 ### 10.3 `other_fallback` — сообщение не про запись
@@ -275,7 +282,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 10.4 `faq_fallback` — вопрос, на который бот не знает ответ
 - RU: Это уточнит администратор — я передал ему ваш вопрос.
-- UZ: **Buni administrator aniqlashtiradi — savolingizni unga uzatdim.**
+- UZ: **Buni administrator aniqlashtiradi — savolingizni unga yubordim.**
 - Правка:
 
 ### 10.5 `rate_limited` — слишком много сообщений подряд
@@ -290,7 +297,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ### 10.7 `stale_button` — нажата устаревшая кнопка
 - RU: Эта кнопка устарела.
-- UZ: **Bu tugma eskirgan.**
+- UZ: **Bu tugma endi faol emas.**
 - Правка:
 
 ---
@@ -316,7 +323,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_yes` | подтверждение отмены | Да, отменить | **Ha, bekor qilish** | |
 | `btn_no` | подтверждение отмены | Нет, оставить | **Yo'q, qoldirish** | |
 | `btn_attend` | напоминание | ✓ Приду | **✓ Kelaman** | |
-| `btn_remind_cancel` | напоминание | Отменить запись | **Yozuvni bekor qilish** | |
+| `btn_remind_cancel` | напоминание | Отменить запись | **Qabulni bekor qilish** | |
 
 ---
 
