@@ -62,14 +62,17 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
     )
 
 
-def build_extractor(use_real: bool):
+def build_dialog_extractor(use_real: bool, session_factory, clinic_id, notifier):
+    """NLU для канала. --real собирает ТУ ЖЕ цепочку, что супервизор
+    (деидентификация + дневной бюджет + дрейф + fallback) — голый
+    OpenAIExtractor слал бы PII в LLM без маскировки (C1)."""
     if use_real:
         if not os.environ.get("OPENAI_API_KEY"):
             sys.exit("[FAIL] --real требует OPENAI_API_KEY")
-        from navbat.nlu.openai_extractor import OpenAIExtractor
+        from navbat.supervisor import build_real_extractor
 
         log.warning("NLU: gpt-4o-mini — каждое сообщение стоит денег")
-        return OpenAIExtractor()
+        return build_real_extractor(session_factory, clinic_id, notifier)
     if not FIXTURES.exists():
         sys.exit(f"[FAIL] нет фикстур {FIXTURES} — без --real нужен spike_nlu")
     extractor = FakeExtractor.from_fixtures(FIXTURES)
@@ -98,10 +101,12 @@ def main() -> int:
     me = api.get_me()
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
+    notifier = TelegramEscalation(api, credentials.admin_chat_id)
     dialog = DialogEngine(
         session_factory, args.clinic,
-        extractor=build_extractor(args.real),
-        notifier=TelegramEscalation(api, credentials.admin_chat_id),
+        extractor=build_dialog_extractor(args.real, session_factory,
+                                         args.clinic, notifier),
+        notifier=notifier,
     )
 
     stop = threading.Event()
