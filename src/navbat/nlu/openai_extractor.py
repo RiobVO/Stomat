@@ -26,7 +26,7 @@ LLM_TIMEOUT = 8.0  # BRIEF: таймаут LLM 8 сек → graceful degradation
 
 class OpenAIExtractor:
     def __init__(self, model: str = DEFAULT_MODEL, on_usage=None,
-                 on_repair=None) -> None:
+                 on_repair=None, prompt: str | None = None) -> None:
         # ленивый импорт: openai — optional-зависимость [llm]
         from openai import OpenAI
 
@@ -34,7 +34,8 @@ class OpenAIExtractor:
         self._model = model
         self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
         self._on_repair = on_repair  # callable() — метрика NLU-дрифта
-        self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+        # prompt — версия из БД (B.2); None → встроенный файл
+        self._system_prompt = prompt or _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
         from openai import APIError  # модуль уже загружен в __init__

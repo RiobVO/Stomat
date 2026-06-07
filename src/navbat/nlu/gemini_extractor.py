@@ -57,13 +57,15 @@ class GeminiExtractor:
         on_usage=None,
         on_repair=None,
         client: httpx.Client | None = None,
+        prompt: str | None = None,
     ) -> None:
         self._model = model or os.environ.get("NAVBAT_GEMINI_MODEL", DEFAULT_MODEL)
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
         self._on_repair = on_repair  # callable() — метрика NLU-дрифта
         self._client = client or httpx.Client(timeout=LLM_TIMEOUT)
-        self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+        # prompt — версия из БД (B.2); None → встроенный файл
+        self._system_prompt = prompt or _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
         contents = [{"role": "user", "parts": [{"text": text}]}]
