@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import Conversation, load_conversation, save_conversation
-from navbat.dialog.dates import matches_time_ref, resolve_date_ref
+from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
 from navbat.dialog.replies import (
@@ -368,19 +368,33 @@ class DialogEngine:
         tz = self._clinic_tz(session)
         start_day = max(asked, self._today(session))
         now_utc = self._clock()
+        target = exact_time_ref(time_ref)  # точное HH:MM — мягкое предпочтение
         for offset in range(NEAREST_DAY_SCAN + 1):
             day = start_day + timedelta(days=offset)
-            slots = [
+            free = [
                 (slot.start, doctor_id, doctor_name)
                 for doctor_id, doctor_name in doctors
                 for slot in self._sched.find_free_slots(doctor_id, service_id, day)
                 if slot.start > now_utc  # сегодняшние прошедшие слоты не предлагаем
-                and matches_time_ref(time_ref, slot.start.astimezone(tz).time())
             ]
-            if slots:
-                slots.sort(key=lambda s: (s[0], str(s[1])))
-                return day, slots
+            strict = [s for s in free
+                      if matches_time_ref(time_ref, s[0].astimezone(tz).time())]
+            if strict:
+                strict.sort(key=lambda s: (s[0], str(s[1])))
+                return day, strict
+            # некруглое время без совпадения с сеткой: не врать «нет слотов»,
+            # показать слоты дня, ближайшие к запрошенному времени (M1)
+            if target is not None and free:
+                tmin = target.hour * 60 + target.minute
+                free.sort(key=lambda s: (
+                    abs(self._local_minutes(s[0], tz) - tmin), s[0], str(s[1])))
+                return day, free
         return start_day, []
+
+    @staticmethod
+    def _local_minutes(start: datetime, tz) -> int:
+        local = start.astimezone(tz).time()
+        return local.hour * 60 + local.minute
 
     def _offer_body(self, session: Session, lang: str, asked: date, day: date) -> str:
         today = self._today(session)
