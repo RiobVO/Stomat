@@ -134,7 +134,9 @@ class SchedulingEngine:
             self._audit(session, appointment_id, "confirm",
                         {"status": "hold"}, {"status": "booked"})
 
-    def cancel(self, appointment_id: uuid.UUID) -> None:
+    def cancel(self, appointment_id: uuid.UUID, actor: str | None = None) -> None:
+        # actor «reminder» отличает отмену из напоминания — топливо метрики
+        # предотвращённых неявок (E.1); None → default-актор движка
         with self._txn() as session:
             row = session.execute(
                 text("UPDATE appointment SET status = 'cancelled' "
@@ -145,7 +147,8 @@ class SchedulingEngine:
             if row is None:
                 raise AppointmentNotFoundError(str(appointment_id))
             self._audit(session, appointment_id, "cancel",
-                        {"status": "active"}, {"status": "cancelled"})
+                        {"status": "active"}, {"status": "cancelled"},
+                        actor=actor)
 
     def reschedule(self, appointment_id: uuid.UUID, new_start: datetime) -> None:
         with self._txn() as session:
