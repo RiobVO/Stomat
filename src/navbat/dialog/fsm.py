@@ -67,6 +67,9 @@ _BOOKING_KEYS = ("service", "date", "time_ref", "doctor_id", "doctor_miss",
                  "resched_id", "resched_doctor", "cancel_id", "cancel_when",
                  "cancel_via")
 
+# ключи контекста с PII пациента — НЕ выносить в эскалацию админу (m1)
+_PII_CONTEXT_KEYS = ("pending_name",)
+
 _MENU_KEYS = ("btn_menu_book", "btn_menu_resched", "btn_menu_cancel",
               "btn_menu_prices", "btn_menu_lang")
 # нажатие reply-кнопки приходит ТЕКСТОМ — матчим label'ы обоих языков
@@ -275,7 +278,7 @@ class DialogEngine:
         conv.context["nlu_failures"] = failures
         if failures >= MAX_NLU_FAILURES:
             self._notifier.notify(conv.chat_id, "2 кривых ответа NLU подряд",
-                                  conv.context)
+                                  self._escalation_context(conv))
             conv.state = "escalated"
             return Reply(t("escalated", lang))
         return Reply(t("reask", lang))
@@ -339,7 +342,8 @@ class DialogEngine:
         day, slots = self._collect_slots(session, doctors, service_id, asked,
                                          ctx.get("time_ref"))
         if not slots:
-            self._notifier.notify(conv.chat_id, "нет слотов на 2 недели вперёд", ctx)
+            self._notifier.notify(conv.chat_id, "нет слотов на 2 недели вперёд",
+                                  self._escalation_context(conv))
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("no_slots_at_all", lang))
@@ -542,7 +546,8 @@ class DialogEngine:
             # свой контакт с не-узбекским номером: ручного ввода нет — тупик,
             # лид передаётся живому администратору
             self._notifier.notify(conv.chat_id,
-                                  "контакт с не-узбекским номером", conv.context)
+                                  "контакт с не-узбекским номером",
+                                  self._escalation_context(conv))
             conv.state = "escalated"
             return Reply(t("escalated", lang))
 
@@ -619,7 +624,8 @@ class DialogEngine:
                                          ctx.get("time_ref"))
         if not slots:
             self._notifier.notify(conv.chat_id,
-                                  "перенос: нет слотов на 2 недели вперёд", ctx)
+                                  "перенос: нет слотов на 2 недели вперёд",
+                                  self._escalation_context(conv))
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("no_slots_at_all", lang))
@@ -740,7 +746,8 @@ class DialogEngine:
                 return Reply(t("price_unknown", lang, service=label))
             formatted = f"{int(price):,}".replace(",", " ")
             return Reply(t("price_answer", lang, service=label, price=formatted))
-        self._notifier.notify(conv.chat_id, "вопрос вне компетенции бота", conv.context)
+        self._notifier.notify(conv.chat_id, "вопрос вне компетенции бота",
+                              self._escalation_context(conv))
         return Reply(t("faq_fallback", lang))
 
     def _with_reprompt(self, session: Session, conv: Conversation,
@@ -770,6 +777,12 @@ class DialogEngine:
     def _clear_booking(self, conv: Conversation) -> None:
         for key in _BOOKING_KEYS:
             conv.context.pop(key, None)
+
+    def _escalation_context(self, conv: Conversation) -> dict:
+        """Контекст для эскалации без PII пациента (имя) — он уходит
+        в админ-чат и логи (m1)."""
+        return {k: v for k, v in conv.context.items()
+                if k not in _PII_CONTEXT_KEYS}
 
     def _clinic_name(self, session: Session) -> str:
         return session.execute(
