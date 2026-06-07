@@ -24,6 +24,8 @@ class DailyStats:
     reminders_sent: int
     llm_requests: int
     llm_tokens: int
+    nlu_failures: int
+    nlu_repairs: int
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -47,8 +49,8 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
         {"tz": str(tz), "day": day},
     ).scalar_one()
     llm = session.execute(
-        text("SELECT requests, in_tokens + out_tokens AS tokens "
-             "FROM llm_usage WHERE day = :day"),
+        text("SELECT requests, in_tokens + out_tokens AS tokens, "
+             "failures, repairs FROM llm_usage WHERE day = :day"),
         {"day": day},
     ).one_or_none()
 
@@ -59,6 +61,8 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
         reminders_sent=reminders_sent,
         llm_requests=llm.requests if llm else 0,
         llm_tokens=llm.tokens if llm else 0,
+        nlu_failures=llm.failures if llm else 0,
+        nlu_repairs=llm.repairs if llm else 0,
     )
 
 
@@ -68,7 +72,8 @@ def render_stats(stats: DailyStats, day: date) -> str:
             f"• отмен: {stats.cancelled}\n"
             f"• эскалаций к администратору: {stats.escalated}\n"
             f"• напоминаний доставлено: {stats.reminders_sent}\n"
-            f"• LLM: {stats.llm_requests} запросов, {stats.llm_tokens} токенов")
+            f"• LLM: {stats.llm_requests} запросов, {stats.llm_tokens} токенов, "
+            f"сбоев: {stats.nlu_failures}, repair: {stats.nlu_repairs}")
 
 
 def should_send_digest(now_local: datetime, last_digest: date | None,

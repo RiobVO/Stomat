@@ -55,11 +55,13 @@ class GeminiExtractor:
         model: str | None = None,
         api_key: str | None = None,
         on_usage=None,
+        on_repair=None,
         client: httpx.Client | None = None,
     ) -> None:
         self._model = model or os.environ.get("NAVBAT_GEMINI_MODEL", DEFAULT_MODEL)
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
+        self._on_repair = on_repair  # callable() — метрика NLU-дрифта
         self._client = client or httpx.Client(timeout=LLM_TIMEOUT)
         self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -74,6 +76,8 @@ class GeminiExtractor:
                 last_error = e
                 log.warning("NLU(gemini): невалидный ответ (попытка %d): %s",
                             attempt + 1, e)
+                if self._on_repair and attempt < REPAIR_TRIES:
+                    self._on_repair()  # считаем только реальные повторы
                 # repair полезен, только если модель видит, ЧТО не прошло
                 contents.append({"role": "model", "parts": [{"text": raw}]})
                 contents.append({"role": "user", "parts": [{"text":

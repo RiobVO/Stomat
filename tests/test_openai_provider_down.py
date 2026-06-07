@@ -69,8 +69,8 @@ def test_build_with_gemini_key_inserts_fallback(monkeypatch, app_session_factory
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     chain = build_real_extractor(app_session_factory, clinic_a, notifier=None)
-    # Budgeted → Deidentifying → Fallback(OpenAI, Gemini)
-    assert isinstance(chain._inner._inner, FallbackExtractor)
+    # Budgeted → Drift → Deidentifying → Fallback(OpenAI, Gemini)
+    assert isinstance(chain._inner._inner._inner, FallbackExtractor)
 
 
 def test_build_without_gemini_key_keeps_single_provider(monkeypatch,
@@ -81,4 +81,38 @@ def test_build_without_gemini_key_keeps_single_provider(monkeypatch,
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     chain = build_real_extractor(app_session_factory, clinic_a, notifier=None)
-    assert isinstance(chain._inner._inner, OpenAIExtractor)
+    assert isinstance(chain._inner._inner._inner, OpenAIExtractor)
+
+
+def test_openai_on_repair_called(monkeypatch):
+    from types import SimpleNamespace
+
+    repairs: list[int] = []
+    calls = {"n": 0}
+    valid = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(
+            refusal=None,
+            parsed=__import__("navbat.nlu.schema", fromlist=["Extraction"])
+            .Extraction(intent="book", service=None, doctor=None, date_ref=None,
+                        time_ref=None, language="ru", is_medical=False)))],
+        usage=None,
+    )
+    broken = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(refusal="мусор",
+                                                         parsed=None))],
+        usage=None,
+    )
+
+    class _Completions:
+        def parse(self, **kwargs):
+            calls["n"] += 1
+            return broken if calls["n"] == 1 else valid
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    extractor = OpenAIExtractor(on_repair=lambda: repairs.append(1))
+    extractor._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_Completions()))
+
+    got = extractor.extract("чистку завтра")
+    assert got.intent == "book"
+    assert repairs == [1], "ровно один repair учтён"

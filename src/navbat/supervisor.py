@@ -25,6 +25,7 @@ from navbat.envfile import load_env_file
 from navbat.nlu.wrappers import (
     BudgetedExtractor,
     DeidentifyingExtractor,
+    DriftTrackingExtractor,
     UsageRecorder,
 )
 from navbat.onboard import DEMO_CLINIC_ID, DEV_ENC_KEY
@@ -56,17 +57,19 @@ def build_real_extractor(session_factory, clinic_id: uuid.UUID, notifier):
     from navbat.nlu.openai_extractor import OpenAIExtractor
 
     recorder = UsageRecorder(session_factory, clinic_id, notifier=notifier)
-    extractor = OpenAIExtractor(on_usage=recorder.record)
+    extractor = OpenAIExtractor(on_usage=recorder.record,
+                                on_repair=recorder.record_repair)
     if os.environ.get("GEMINI_API_KEY"):
         from navbat.nlu.fallback import FallbackExtractor
         from navbat.nlu.gemini_extractor import GeminiExtractor
 
         extractor = FallbackExtractor(
-            extractor, GeminiExtractor(on_usage=recorder.record))
+            extractor, GeminiExtractor(on_usage=recorder.record,
+                                       on_repair=recorder.record_repair))
         log.info("LLM-fallback включён: Gemini")
     else:
         log.warning("GEMINI_API_KEY не задан — fallback-LLM выключен")
-    inner = DeidentifyingExtractor(extractor)
+    inner = DriftTrackingExtractor(DeidentifyingExtractor(extractor), recorder)
     return BudgetedExtractor(inner, recorder)
 
 

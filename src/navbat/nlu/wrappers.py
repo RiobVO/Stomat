@@ -1,7 +1,9 @@
-"""Обвязка реального NLU: деидентификация PII и дневной token cap.
+"""Обвязка реального NLU: деидентификация PII, дневной token cap, дрифт.
 
 BRIEF: перед отправкой в LLM текст деидентифицируется; per-clinic лимит
 токенов + алерт — защита кошелька от спама (карта в USD у разработчика).
+Метрика дрифта (Ф1.5 B.3): доля ExtractionError за день — деградацию
+модели/промпта должен первым видеть админ, а не пациент эскалациями.
 """
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ from navbat.nlu.schema import Extraction
 log = logging.getLogger("navbat.nlu")
 
 DEFAULT_DAILY_TOKEN_CAP = 200_000  # ≈$0.1/день на gpt-4o-mini — потолок аномалии
+DEFAULT_DRIFT_THRESHOLD = 0.2  # доля сбоев за день, выше — алерт о дрифте
+DRIFT_MIN_REQUESTS = 20        # меньше запросов — статистики нет, не алертим
 
 # телефоноподобное: 7+ цифр с разделителями; даты (20.06) и время (15:00)
 # короче и не задеваются
@@ -56,6 +60,7 @@ class UsageRecorder:
         clinic_id: uuid.UUID,
         daily_cap: int | None = None,
         notifier: EscalationNotifier | None = None,
+        drift_threshold: float | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
@@ -63,6 +68,9 @@ class UsageRecorder:
             os.environ.get("NAVBAT_DAILY_TOKEN_CAP", DEFAULT_DAILY_TOKEN_CAP))
         self._notifier = notifier or LoggingEscalation()
         self._alerted_on: date | None = None  # алерт раз в день (в памяти — ок)
+        self._drift_threshold = drift_threshold or float(
+            os.environ.get("NAVBAT_NLU_DRIFT_THRESHOLD", DEFAULT_DRIFT_THRESHOLD))
+        self._drift_alerted_on: date | None = None
 
     def record(self, in_tokens: int, out_tokens: int) -> None:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -78,6 +86,46 @@ class UsageRecorder:
                 """),
                 {"input": in_tokens, "output": out_tokens},
             )
+
+    def _bump(self, column: str) -> None:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(
+                text(f"""
+                    INSERT INTO llm_usage (clinic_id, day, {column})
+                    VALUES (current_setting('app.clinic_id')::uuid,
+                            {_CLINIC_TODAY_SQL}, 1)
+                    ON CONFLICT (clinic_id, day) DO UPDATE
+                    SET {column} = llm_usage.{column} + 1
+                """))
+
+    def record_failure(self) -> None:
+        """ExtractionError после repair — сигнал деградации модели/промпта."""
+        self._bump("failures")
+
+    def record_repair(self) -> None:
+        """Повторная попытка из-за невалидного JSON (вызов удался со 2-го раза)."""
+        self._bump("repairs")
+
+    def maybe_alert_drift(self) -> None:
+        """Доля сбоев за день выше порога → алерт админу, раз в день."""
+        today = date.today()
+        if self._drift_alerted_on == today:
+            return
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            row = session.execute(
+                text(f"SELECT requests, failures FROM llm_usage "
+                     f"WHERE day = {_CLINIC_TODAY_SQL}")
+            ).one_or_none()
+        if row is None or row.requests < DRIFT_MIN_REQUESTS:
+            return
+        share = row.failures / row.requests
+        if share <= self._drift_threshold:
+            return
+        self._drift_alerted_on = today
+        self._notifier.notify(
+            0, f"NLU-дрифт: {row.failures} сбоев из {row.requests} запросов "
+               f"за сегодня ({share:.0%}) — проверить промпт/модель",
+            {"failures": row.failures, "requests": row.requests})
 
     def cap_exceeded(self) -> bool:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -95,6 +143,28 @@ class UsageRecorder:
         self._notifier.notify(
             0, f"дневной лимит LLM-токенов ({self._cap}) исчерпан — "
                f"бот эскалирует диалоги до конца дня", {"cap": self._cap})
+
+
+class DriftTrackingExtractor:
+    """Учёт сбоев NLU: ExtractionError → failures+1 + проверка дрифта.
+
+    Бюджет (BudgetExceededError) и аутэйдж провайдера (ProviderDownError) —
+    не дрифт качества: первый — про деньги, второй — про инфраструктуру.
+    """
+
+    def __init__(self, inner: Extractor, recorder: "UsageRecorder") -> None:
+        self._inner = inner
+        self._recorder = recorder
+
+    def extract(self, message: str) -> Extraction:
+        try:
+            return self._inner.extract(message)
+        except BudgetExceededError:
+            raise
+        except ExtractionError:
+            self._recorder.record_failure()
+            self._recorder.maybe_alert_drift()
+            raise
 
 
 class BudgetedExtractor:
