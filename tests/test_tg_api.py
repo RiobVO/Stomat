@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from navbat.dialog.replies import Button
-from navbat.telegram.api import TelegramAPI, TelegramAPIError
+from navbat.telegram.api import ChatUnavailableError, TelegramAPI, TelegramAPIError
 
 
 def make_api(handler) -> tuple[TelegramAPI, list[httpx.Request]]:
@@ -124,3 +124,30 @@ def test_api_logic_error_is_not_retried():
     with pytest.raises(TelegramAPIError, match="chat not found"):
         api.send_message(100, "x")
     assert len(requests) == 1, "логическая ошибка API — повторять бессмысленно"
+
+
+def test_blocked_by_user_is_chat_unavailable():
+    api, requests = make_api(lambda req, n: httpx.Response(
+        403, json={"ok": False, "error_code": 403,
+                   "description": "Forbidden: bot was blocked by the user"}))
+    with pytest.raises(ChatUnavailableError):
+        api.send_message(100, "x")
+    assert len(requests) == 1
+
+
+def test_chat_not_found_is_chat_unavailable():
+    api, _ = make_api(lambda req, n: httpx.Response(
+        400, json={"ok": False, "error_code": 400,
+                   "description": "Bad Request: chat not found"}))
+    with pytest.raises(ChatUnavailableError):
+        api.send_message(100, "x")
+
+
+def test_other_logic_error_stays_generic():
+    api, _ = make_api(lambda req, n: httpx.Response(
+        400, json={"ok": False, "error_code": 400,
+                   "description": "Bad Request: message text is empty"}))
+    with pytest.raises(TelegramAPIError) as exc:
+        api.send_message(100, "x")
+    assert not isinstance(exc.value, ChatUnavailableError), \
+        "не-чатовая логическая ошибка — обычная (баг нашего кода, не молчать)"

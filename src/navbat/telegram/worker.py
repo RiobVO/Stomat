@@ -26,6 +26,7 @@ from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
+from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.queue import (
     QueuedUpdate,
     claim_next,
@@ -66,6 +67,14 @@ class UpdateWorker:
             return False
         try:
             self._handle(claimed)
+        except ChatUnavailableError as e:
+            # пациент заблокировал бота / удалил чат — ответ недоставим, но
+            # это не сбой: гасим апдейт без ретраев и без эскалации (C2)
+            log.info("апдейт %d: чат %s недоступен (%s) — гашу без эскалации",
+                     claimed.update_id, claimed.tg_chat_id, e)
+            with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                complete(session, claimed.id)
+            return True
         except Exception as e:  # ack не выдаём — апдейт вернётся на повтор
             log.exception("апдейт %d: обработка упала", claimed.update_id)
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
