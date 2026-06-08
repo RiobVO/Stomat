@@ -14,6 +14,16 @@ def _engine(app_session_factory, clinic_id, script):
                         notifier=notifier), notifier
 
 
+def test_reask_keeps_menu_available(app_session_factory, admin_engine, clinic_a,
+                                    doctor_a, service_cleaning):
+    # M7: не понятому пациенту всегда доступны кнопки самообслуживания —
+    # «не понял» без выхода толкает к ранней эскалации-тупику
+    engine, _ = _engine(app_session_factory, clinic_a, [ExtractionError("?")])
+    engine.handle_action(CHAT, "lang:ru")  # greeting показан, не первый контакт
+    reply = engine.handle_text(CHAT, "абракадабра")
+    assert reply.menu, "reask должен предлагать меню"
+
+
 def test_two_bad_json_in_a_row_escalates(app_session_factory, admin_engine, clinic_a,
                                          doctor_a, service_cleaning):
     engine, notifier = _engine(app_session_factory, clinic_a,

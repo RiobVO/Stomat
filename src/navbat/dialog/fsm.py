@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -95,7 +96,9 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                     conv.context.greeting_shown = True
                     greeting = t("greeting", self._lang(conv),
                                  clinic=self._clinic_name(session))
-                    reply = Reply(f"{greeting}\n\n{reply.text}", reply.buttons)
+                    # replace, не Reply(...): сохранить menu/contact_request
+                    # ответа, иначе первый контакт стирает кнопки/запрос номера
+                    reply = replace(reply, text=f"{greeting}\n\n{reply.text}")
             save_conversation(session, conv)
         return reply
 
@@ -246,7 +249,9 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return self._start_reschedule(session, conv, extraction)
         if extraction.intent == "cancel":
             return self._start_cancel(session, conv)
-        return Reply(t("other_fallback", self._lang(conv)))
+        lang = self._lang(conv)
+        # off-topic не оставляет пациента без выхода — кнопки меню под рукой (M7)
+        return Reply(t("other_fallback", lang), menu=menu_rows(lang))
 
     def _on_nlu_failure(self, conv: Conversation) -> Reply:
         lang = self._lang(conv)
@@ -257,7 +262,8 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                                   self._escalation_context(conv))
             conv.state = "escalated"
             return Reply(t("escalated", lang))
-        return Reply(t("reask", lang))
+        # не понятому пациенту всегда доступны кнопки самообслуживания (M7)
+        return Reply(t("reask", lang), menu=menu_rows(lang))
 
     def _with_medical_disclaimer(self, conv: Conversation, extraction: Extraction,
                                  reply: Reply) -> Reply:
@@ -314,7 +320,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return Reply(t("attend_ok", lang))
         if kind == "remind_cancel":
             return self._start_cancel_by_id(session, conv, rest)
-        return Reply(t("other_fallback", lang))
+        return Reply(t("other_fallback", lang), menu=menu_rows(lang))
 
     # ── Вопросы ──────────────────────────────────────────────────────────
 
