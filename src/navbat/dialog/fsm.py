@@ -30,6 +30,7 @@ from navbat.dialog.conversation import Conversation, load_conversation, save_con
 from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
+from navbat.dialog import services_repo
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -717,8 +718,7 @@ class DialogEngine:
     def _price_list(self, session: Session, conv: Conversation) -> Reply:
         """Весь прайс из каталога services; пустой каталог — к администратору."""
         lang = self._lang(conv)
-        rows = session.execute(
-            text("SELECT name, price FROM service ORDER BY name")).all()
+        rows = services_repo.price_list(session)
         if not rows:
             return Reply(t("price_empty", lang))
         lines = []
@@ -738,10 +738,7 @@ class DialogEngine:
         lang = self._lang(conv)
         if extraction.service:
             label = service_label(extraction.service, lang)
-            price = session.execute(
-                text("SELECT price FROM service WHERE name = :name LIMIT 1"),
-                {"name": extraction.service},
-            ).scalar_one_or_none()
+            price = services_repo.service_price(session, extraction.service)
             if price is None:
                 return Reply(t("price_unknown", lang, service=label))
             formatted = f"{int(price):,}".replace(",", " ")
@@ -823,20 +820,13 @@ class DialogEngine:
     def _service_name(self, session: Session, service_id) -> str | None:
         if service_id is None:
             return None
-        return session.execute(
-            text("SELECT name FROM service WHERE id = :id"), {"id": service_id}
-        ).scalar_one_or_none()
+        return services_repo.service_name(session, service_id)
 
     def _service_id(self, session: Session, service_key: str) -> uuid.UUID | None:
-        return session.execute(
-            text("SELECT id FROM service WHERE name = :name ORDER BY name LIMIT 1"),
-            {"name": service_key},
-        ).scalar_one_or_none()
+        return services_repo.service_id(session, service_key)
 
     def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
-        names = session.execute(
-            text("SELECT name FROM service ORDER BY name")
-        ).scalars().all()
+        names = services_repo.service_keys(session)
         return tuple(Button(service_label(n, lang), f"service:{n}") for n in names)
 
     def _date_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
