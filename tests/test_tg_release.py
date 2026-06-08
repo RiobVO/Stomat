@@ -111,6 +111,25 @@ def test_release_bad_argument_shows_usage(app_session_factory, admin_engine,
         assert "/release <chat_id>" in text
 
 
+def test_release_works_from_any_listed_admin(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a, service_cleaning):
+    # M4: команда срабатывает от ЛЮБОГО из нескольких админ-чатов
+    second_admin = 888
+    worker, api, _ = make_worker(
+        app_session_factory, clinic_a,
+        [ExtractionError("raz"), ExtractionError("dva")],
+        admin_chat_id=[ADMIN_CHAT, second_admin])
+    escalate_chat(worker, app_session_factory, clinic_a)
+    assert fsm_state(admin_engine) == "escalated"
+
+    put_message(app_session_factory, clinic_a, f"/release {CHAT}",
+                chat_id=second_admin)  # второй админ из списка
+    worker.process_one()
+
+    assert fsm_state(admin_engine) == "idle"
+    assert sent_to(api, second_admin), "ответ ушёл второму админу"
+
+
 def test_release_from_patient_goes_to_nlu(app_session_factory, admin_engine,
                                           clinic_a, doctor_a, service_cleaning):
     # пациент написал «/release 100» — это обычный текст, не админ-команда

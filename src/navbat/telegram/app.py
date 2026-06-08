@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parents[3] / "spike_nlu" / "data" / "messages.jsonl"
 @dataclass(frozen=True)
 class ClinicCredentials:
     token: str
-    admin_chat_id: int | None
+    admin_chat_ids: tuple[int, ...]  # все админ-чаты клиники (M4)
     webhook_secret: str | None
 
 
@@ -47,7 +47,7 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
                             clinic_id: uuid.UUID) -> ClinicCredentials:
     with tenant_transaction(session_factory, clinic_id) as session:
         row = session.execute(
-            text("SELECT tg_bot_token_encrypted, tg_admin_chat_id, tg_webhook_secret "
+            text("SELECT tg_bot_token_encrypted, tg_admin_chat_ids, tg_webhook_secret "
                  "FROM clinic WHERE id = :id"),
             {"id": clinic_id},
         ).one_or_none()
@@ -57,7 +57,7 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
         sys.exit(f"[FAIL] у клиники {clinic_id} не задан tg_bot_token_encrypted")
     return ClinicCredentials(
         token=decrypt_text(row.tg_bot_token_encrypted),
-        admin_chat_id=row.tg_admin_chat_id,
+        admin_chat_ids=tuple(row.tg_admin_chat_ids or ()),
         webhook_secret=row.tg_webhook_secret,
     )
 
@@ -101,7 +101,7 @@ def main() -> int:
     me = api.get_me()
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
-    notifier = TelegramEscalation(api, credentials.admin_chat_id)
+    notifier = TelegramEscalation(api, credentials.admin_chat_ids)
     dialog = DialogEngine(
         session_factory, args.clinic,
         extractor=build_dialog_extractor(args.real, session_factory,
@@ -112,7 +112,7 @@ def main() -> int:
     stop = threading.Event()
     workers = [
         UpdateWorker(session_factory, args.clinic, dialog=dialog, api=api,
-                     notifier=TelegramEscalation(api, credentials.admin_chat_id))
+                     notifier=TelegramEscalation(api, credentials.admin_chat_ids))
         for _ in range(args.workers)
     ]
     threads = [threading.Thread(target=w.run, args=(stop,), name=f"worker-{i}")

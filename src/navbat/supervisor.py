@@ -106,7 +106,7 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
         with tenant_transaction(session_factory, clinic_id) as session:
             session.execute(text("SELECT 1 FROM reminder LIMIT 0"))  # миграции 0006+
             clinic = session.execute(
-                text("SELECT name, tg_bot_token_encrypted, tg_admin_chat_id, "
+                text("SELECT name, tg_bot_token_encrypted, tg_admin_chat_ids, "
                      "gcal_refresh_token_encrypted, nlu_prompt_version "
                      "FROM clinic WHERE id = :id"),
                 {"id": clinic_id},
@@ -134,7 +134,10 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             report(False, "Telegram-бот", str(e)[:120])
     else:
         report(False, "Telegram-бот", "токен не задан (onboard --tg-token)")
-    report(clinic.tg_admin_chat_id is not None, "админ-чат (эскалации, /stats, сводка)")
+    admin_chats = clinic.tg_admin_chat_ids or []
+    report(bool(admin_chats),
+           "админ-чат (эскалации, /stats, сводка)",
+           f"{len(admin_chats)} чат(ов)" if admin_chats else None)
 
     if clinic.gcal_refresh_token_encrypted:
         from navbat.calendar.api import CalendarAuthError, GoogleCalendarAPI
@@ -188,7 +191,7 @@ def main() -> int:
     credentials = load_clinic_credentials(session_factory, args.clinic)
     tg_api = TelegramAPI(credentials.token)
     me = tg_api.get_me()
-    notifier = TelegramEscalation(tg_api, credentials.admin_chat_id)
+    notifier = TelegramEscalation(tg_api, credentials.admin_chat_ids)
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
     extractor = build_dialog_extractor(args.real, session_factory,
@@ -220,7 +223,7 @@ def main() -> int:
                           notifier=notifier, slot_guard=slot_guard)
     reminders = ReminderService(session_factory, args.clinic, tg_api=tg_api,
                                 notifier=notifier, offsets=offsets,
-                                digest_chat_id=credentials.admin_chat_id)
+                                digest_chat_id=credentials.admin_chat_ids)
 
     stop = threading.Event()
     threads = [
@@ -229,14 +232,14 @@ def main() -> int:
     for index in range(args.workers):
         worker = UpdateWorker(session_factory, args.clinic, dialog=dialog,
                               api=tg_api, notifier=notifier,
-                              admin_chat_id=credentials.admin_chat_id)
+                              admin_chat_id=credentials.admin_chat_ids)
         threads.append(threading.Thread(target=worker.run, args=(stop,),
                                         name=f"worker-{index}"))
     if calendar_sync is not None:
         from navbat.calendar.sync_loop import CalendarSyncLoop
 
         sync_loop = CalendarSyncLoop(session_factory, args.clinic, calendar_sync,
-                                     notifier, credentials.admin_chat_id)
+                                     notifier, credentials.admin_chat_ids)
 
         def calendar_loop() -> None:
             while not stop.is_set():

@@ -12,6 +12,7 @@ import logging
 from sqlalchemy import text
 
 from navbat.db.base import tenant_transaction
+from navbat.telegram.escalation import _as_chat_tuple
 
 log = logging.getLogger("navbat.calendar.sync_loop")
 
@@ -25,12 +26,15 @@ class CalendarSyncLoop:
     тестируемо без запуска всего процесса."""
 
     def __init__(self, session_factory, clinic_id, sync, notifier,
-                 admin_chat_id: int | None) -> None:
+                 admin_chat_id=None) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._sync = sync
         self._notifier = notifier
-        self._admin_chat_id = admin_chat_id or 0
+        # системный алерт без пациента: notifier сам веером шлёт всем админам,
+        # здесь нужен лишь «чат» для строки контекста — берём первый или 0 (M4)
+        chats = _as_chat_tuple(admin_chat_id)
+        self._admin_chat_id = chats[0] if chats else 0
         self._consecutive_failures = 0
         self._alerted = False
 

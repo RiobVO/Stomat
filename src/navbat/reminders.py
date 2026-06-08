@@ -25,6 +25,7 @@ from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.retention import cleanup_old_data
 from navbat.stats import collect_daily_stats, render_stats, should_send_digest
+from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.reminders")
@@ -52,7 +53,7 @@ class ReminderService:
         self._tg_api = tg_api
         self._notifier = notifier or LoggingEscalation()
         self._offsets = offsets
-        self._digest_chat_id = digest_chat_id
+        self._digest_chat_ids = _as_chat_tuple(digest_chat_id)
         # retention: раз в календарный день; отметка в памяти — DELETE
         # идемпотентен, повтор после рестарта безвреден
         self._cleaned_on: date | None = None
@@ -160,7 +161,7 @@ class ReminderService:
 
     def maybe_send_digest(self, now_local=None) -> bool:
         """Раз в день после DIGEST_HOUR; отметка — clinic.last_digest_date."""
-        if self._digest_chat_id is None or self._tg_api is None:
+        if not self._digest_chat_ids or self._tg_api is None:
             return False
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -176,9 +177,10 @@ class ReminderService:
             return False
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             stats = collect_daily_stats(session, moment.date(), tz)
+        digest = render_stats(stats, moment.date())
         try:
-            self._tg_api.send_message(self._digest_chat_id,
-                                      render_stats(stats, moment.date()))
+            for chat in self._digest_chat_ids:  # сводка всем админ-чатам (M4)
+                self._tg_api.send_message(chat, digest)
         except Exception as e:
             log.warning("вечерняя сводка не доставлена: %s", e)
             return False
