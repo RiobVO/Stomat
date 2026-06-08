@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from conftest import make_service, next_monday
 from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.dialog.replies import TEMPLATES, menu_rows
 from navbat.nlu.extractor import FakeExtractor
 from test_dialog_booking import (
@@ -159,4 +160,37 @@ def test_contact_in_idle_is_fallback(app_session_factory, admin_engine,
     engine = make_engine(app_session_factory, clinic_a, [])
     reply = engine.handle_contact(CHAT, "998901234567", own=True)
     assert TEMPLATES["other_fallback"]["ru"] in reply.text
+    assert patient_count(admin_engine) == 0
+
+
+# ── Боевой путь очереди: контакт приходит уже хэшем ───────────────────────────
+
+def test_hashed_contact_books_with_same_hash(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a, service_cleaning):
+    """Воркер передаёт хэш из payload — пациент создан с тем же хэшем."""
+    engine = make_engine(app_session_factory, clinic_a, booking_script())
+    to_phone_step(engine)
+
+    phone_hash = contact_hash(normalize_phone("998901234567"), "test-salt")
+    engine.handle_contact_hashed(CHAT, phone_hash, own=True)
+
+    assert fsm_state(admin_engine) == "idle"
+    with admin_engine.begin() as conn:
+        stored = conn.execute(text("SELECT contact_hash FROM patient")).scalar_one()
+    assert stored == phone_hash, "в patient ушёл тот же хэш, что вырезан в очереди"
+
+
+def test_hashed_contact_none_escalates(app_session_factory, admin_engine,
+                                       clinic_a, doctor_a, service_cleaning):
+    """phone_hash=None (не-узбекский номер на enqueue) → лид администратору."""
+    notifier = RecordingNotifier()
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=booking_script()),
+                          notifier=notifier)
+    to_phone_step(engine)
+
+    reply = engine.handle_contact_hashed(CHAT, None, own=True)
+    assert TEMPLATES["escalated"]["ru"] in reply.text
+    assert fsm_state(admin_engine) == "escalated"
+    assert notifier.calls, "лид без узбекского номера уходит администратору"
     assert patient_count(admin_engine) == 0

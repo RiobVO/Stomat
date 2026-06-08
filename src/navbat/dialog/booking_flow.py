@@ -13,7 +13,7 @@ from navbat.dialog import appointments_repo
 from navbat.dialog.conversation import Conversation, DialogContext
 from navbat.dialog.dates import resolve_date_ref
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY, _looks_like_question
-from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
+from navbat.dialog.patients import create_patient_with_hash, find_patient_by_chat
 from navbat.dialog.replies import Button, Reply, menu_rows, service_label, t
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.errors import HoldExpiredError, InvalidSlotError, SlotTakenError
@@ -150,7 +150,7 @@ class _BookingFlowMixin:
                      contact_request=t("btn_share_contact", lang))
 
     def _process_contact(self, session: Session, conv: Conversation,
-                         phone: str, own: bool) -> Reply:
+                         phone_hash: str | None, own: bool) -> Reply:
         lang = self._lang(conv)
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
@@ -159,9 +159,7 @@ class _BookingFlowMixin:
         if not own:
             return Reply(t("foreign_contact", lang),
                          contact_request=t("btn_share_contact", lang))
-        try:
-            phone = normalize_phone(phone)
-        except ValueError:
+        if phone_hash is None:
             # свой контакт с не-узбекским номером: ручного ввода нет — тупик,
             # лид передаётся живому администратору
             self._notifier.notify(conv.chat_id,
@@ -170,8 +168,8 @@ class _BookingFlowMixin:
             conv.state = "escalated"
             return Reply(t("escalated", lang))
 
-        patient_id = create_patient(session, conv.chat_id,
-                                    conv.context.pending_name, phone)
+        patient_id = create_patient_with_hash(session, conv.chat_id,
+                                              conv.context.pending_name, phone_hash)
         conv.patient_id = str(patient_id)
         appointment_id = uuid.UUID(conv.context.appointment_id)
         reply = self._confirm_and_finish(session, conv, appointment_id)

@@ -39,12 +39,34 @@ def contact_hash(phone: str, salt: str) -> str:
     return hashlib.sha256((phone + salt).encode()).hexdigest()
 
 
+def _clinic_salt(session: Session) -> str:
+    return session.execute(
+        text("SELECT salt FROM clinic WHERE id = current_setting('app.clinic_id')::uuid")
+    ).scalar_one() or ""
+
+
+def phone_to_hash(session: Session, raw_phone: str) -> str:
+    """Сырой номер → SHA-256-хэш (нормализация к 998… + соль клиники).
+
+    ValueError, если номер не приводится к узбекскому формату — вызывающий
+    решает, что делать (хэшируется на границе enqueue, лид с не-узбекским
+    номером уводится администратору).
+    """
+    return contact_hash(normalize_phone(raw_phone), _clinic_salt(session))
+
+
 def create_patient(
     session: Session, tg_chat_id: int, name: str, phone: str
 ) -> uuid.UUID:
-    salt = session.execute(
-        text("SELECT salt FROM clinic WHERE id = current_setting('app.clinic_id')::uuid")
-    ).scalar_one() or ""
+    return create_patient_with_hash(
+        session, tg_chat_id, name, phone_to_hash(session, phone))
+
+
+def create_patient_with_hash(
+    session: Session, tg_chat_id: int, name: str, phone_hash: str
+) -> uuid.UUID:
+    """Создаёт пациента с УЖЕ посчитанным хэшем телефона: открытый номер
+    хэшируется на границе очереди и в durable-payload не сохраняется."""
     return session.execute(
         text("INSERT INTO patient (clinic_id, tg_chat_id, name_encrypted, contact_hash) "
              "VALUES (current_setting('app.clinic_id')::uuid, :chat, :name, :hash) "
@@ -52,7 +74,7 @@ def create_patient(
         {
             "chat": tg_chat_id,
             "name": encrypt_text(name),
-            "hash": contact_hash(normalize_phone(phone), salt),
+            "hash": phone_hash,
         },
     ).scalar_one()
 

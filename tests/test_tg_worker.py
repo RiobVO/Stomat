@@ -13,6 +13,7 @@ from sqlalchemy import text
 from conftest import next_monday
 from navbat.db.base import tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.dialog.replies import Reply, TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import ChatUnavailableError, TelegramAPIError
@@ -173,14 +174,14 @@ def test_greeting_disclaimer_on_first_contact_only(app_session_factory, clinic_a
 # ── Контакт: телефон кнопкой request_contact ─────────────────────────────────
 
 class RecordingDialog:
-    """Стаб FSM: фиксирует вызовы handle_contact, отвечает заданным Reply."""
+    """Стаб FSM: фиксирует вызовы handle_contact_hashed, отвечает заданным Reply."""
 
     def __init__(self, reply: Reply) -> None:
         self.reply = reply
-        self.contacts: list[tuple[int, str, bool]] = []
+        self.contacts: list[tuple[int, str | None, bool]] = []
 
-    def handle_contact(self, chat_id, phone, own):
-        self.contacts.append((chat_id, phone, own))
+    def handle_contact_hashed(self, chat_id, phone_hash, own):
+        self.contacts.append((chat_id, phone_hash, own))
         return self.reply
 
 
@@ -222,7 +223,9 @@ def test_contact_update_routed_with_own_flag(app_session_factory, admin_engine,
                 contact_user_id=CHAT, from_id=CHAT)
     worker.process_one()
 
-    assert dialog.contacts == [(CHAT, "998901234567", True)]
+    # воркер передаёт хэш из payload — открытого номера в очереди уже нет
+    expected_hash = contact_hash(normalize_phone("998901234567"), "test-salt")
+    assert dialog.contacts == [(CHAT, expected_hash, True)]
     assert api.keyboards[-1] == (None, menu), "menu дошёл до API"
     assert queue_statuses(admin_engine) == ["done"]
 
