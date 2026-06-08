@@ -298,3 +298,32 @@ def test_slot_taken_reoffers_without_it(app_session_factory, admin_engine,
     fresh = slot_buttons(reply)
     assert fresh, "после занятого слота — свежие варианты"
     assert all(slot_start(b) != slot_start(target) for b in fresh)
+
+
+# ── Устаревшая slot-кнопка после сброса сценария не роняет бота (m3) ──────────
+
+def test_stale_slot_button_without_service_reasks_gracefully(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # m3: callback `slot:` из старого сообщения, нажатый когда сценарий уже
+    # сброшен (service=None). Раньше ctx["service"] кидал KeyError; типизи-
+    # рованный DialogContext (R2) отдаёт None → service_id None → hold даёт
+    # InvalidSlotError, которое ловится → бот переспрашивает услугу, не падает.
+    day = next_monday()
+    engine = make_engine(app_session_factory, clinic_a, [
+        extr(service="cleaning", date_ref=explicit(day)),
+    ])
+    offer = engine.handle_text(CHAT, "чистка в понедельник")
+    stale = slot_buttons(offer)[0].action
+    engine.handle_text(CHAT, "/start")  # сброс сценария: service очищен
+
+    reply = engine.handle_action(CHAT, stale)  # не должно бросить
+
+    assert any(b.action.startswith("service:") for b in reply.buttons), \
+        "после сброса контекста stale-slot переспрашивает услугу"
+    assert fsm_state(admin_engine) == "booking_collect"
+    assert appt_count(admin_engine) == 0, "запись не создаётся без услуги"
+
+
+def appt_count(admin_engine) -> int:
+    with admin_engine.begin() as conn:
+        return conn.execute(text("SELECT count(*) FROM appointment")).scalar_one()
