@@ -21,7 +21,6 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
@@ -29,7 +28,7 @@ from navbat.dialog.conversation import Conversation, load_conversation, save_con
 from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
-from navbat.dialog import clinic_repo, doctors_repo, services_repo
+from navbat.dialog import appointments_repo, clinic_repo, doctors_repo, services_repo
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -556,10 +555,7 @@ class DialogEngine:
         if conv.state == "idle":
             # привязка пациента к записи — после confirm: его транзакция
             # обновляет ту же строку, держать её под нашим локом нельзя
-            session.execute(
-                text("UPDATE appointment SET patient_id = :p WHERE id = :a"),
-                {"p": patient_id, "a": appointment_id},
-            )
+            appointments_repo.set_patient(session, appointment_id, patient_id)
             # запись подтверждена — контакт-клавиатуру заменяет главное меню
             reply = replace(reply, menu=menu_rows(lang))
         return reply
@@ -664,11 +660,7 @@ class DialogEngine:
     def _start_cancel_by_id(self, session: Session, conv: Conversation,
                             appointment_id: str) -> Reply:
         """Кнопка «Отменить» из напоминания: запись известна по id."""
-        appointment = session.execute(
-            text("SELECT id, lower(time_range) AS start FROM appointment "
-                 "WHERE id = CAST(:id AS uuid) AND status IN ('hold', 'booked')"),
-            {"id": appointment_id},
-        ).one_or_none()
+        appointment = appointments_repo.active_by_id(session, appointment_id)
         reply = self._begin_cancel(session, conv, appointment)
         if conv.context.get("cancel_id"):
             # источник отмены — напоминание: метрика предотвращённых неявок
@@ -789,23 +781,12 @@ class DialogEngine:
         return self._clock().astimezone(self._clinic_tz(session)).date()
 
     def _guard_allows(self, session: Session, appointment_id: uuid.UUID) -> bool:
-        row = session.execute(
-            text("SELECT doctor_id, lower(time_range) AS start, "
-                 "upper(time_range) AS finish FROM appointment WHERE id = :id"),
-            {"id": appointment_id},
-        ).one()
+        row = appointments_repo.slot_bounds(session, appointment_id)
         return self._slot_guard.is_free(row.doctor_id, row.start, row.finish)
 
     def _find_active_appointment(self, session: Session, chat_id: int):
         """Ближайшая будущая активная запись чата (для переноса/отмены)."""
-        return session.execute(
-            text("SELECT id, doctor_id, service_id, lower(time_range) AS start "
-                 "FROM appointment "
-                 "WHERE tg_chat_id = :chat AND status IN ('hold', 'booked') "
-                 "AND lower(time_range) > now() "
-                 "ORDER BY lower(time_range) LIMIT 1"),
-            {"chat": chat_id},
-        ).one_or_none()
+        return appointments_repo.active_by_chat(session, chat_id)
 
     def _service_name(self, session: Session, service_id) -> str | None:
         if service_id is None:
