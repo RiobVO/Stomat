@@ -6,6 +6,11 @@
 решает SchedulingEngine своими транзакциями (его гарантии — exclusion
 constraint + advisory lock, см. инкремент 1).
 
+DialogEngine — роутер: входные точки, перехват /start и меню, маршрутизация
+интента, callback-кнопки. Логика сценариев вынесена в mixin'ы
+(booking_flow / reschedule_flow / cancel_flow) поверх общих хелперов
+(shared_helpers); всё собирается в один объект, граф вызовов через self (R4).
+
 Зашитые правила:
 - book↔question бэкстоп: вопрос с date_ref/time_ref («есть время сегодня?») —
   это вопрос о наличии, отвечаем ВСЕГДА слотами (известная дыра NLU);
@@ -16,20 +21,20 @@ from __future__ import annotations
 
 import uuid
 from contextlib import suppress
-from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Protocol
+from datetime import datetime, timezone
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog import services_repo
+from navbat.dialog.booking_flow import _BookingFlowMixin
+from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
-    Conversation, DialogContext, load_conversation, save_conversation)
-from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
+    Conversation, load_conversation, save_conversation)
+from navbat.dialog.dialog_common import MAX_NLU_FAILURES, SlotGuard
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
-from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
-from navbat.dialog import appointments_repo, clinic_repo, doctors_repo, services_repo
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -39,27 +44,12 @@ from navbat.dialog.replies import (
     service_label,
     t,
 )
+from navbat.dialog.reschedule_flow import _RescheduleFlowMixin
+from navbat.dialog.shared_helpers import _SharedHelpersMixin
 from navbat.nlu.extractor import ExtractionError, Extractor
 from navbat.nlu.schema import Extraction
-from navbat.scheduling.calendar_rules import open_bounds
 from navbat.scheduling.engine import SchedulingEngine
-from navbat.scheduling.errors import (
-    AppointmentNotFoundError,
-    HoldExpiredError,
-    InvalidSlotError,
-    SlotTakenError,
-)
-
-def _looks_like_question(message: str) -> bool:
-    # ТОЛЬКО явный «?»: используется на PII-шагах (имя/телефон) для
-    # прерывания вопросом вбок. Критерий длины убран — длинное ФИО без «?»
-    # не вопрос, а раньше уходило в LLM (утечка PII, M2).
-    return "?" in message
-
-
-MAX_NLU_FAILURES = 2     # подряд; дальше — эскалация
-SLOTS_PER_REPLY = 4      # кнопок со временем в одном ответе
-NEAREST_DAY_SCAN = 14    # дней вперёд при поиске свободного дня
+from navbat.scheduling.errors import AppointmentNotFoundError
 
 _MENU_KEYS = ("btn_menu_book", "btn_menu_resched", "btn_menu_cancel",
               "btn_menu_prices", "btn_menu_lang")
@@ -69,13 +59,8 @@ _MENU_ACTIONS = {
 }
 
 
-class SlotGuard(Protocol):
-    """Финальная перепроверка слота во внешнем источнике (GCal) перед confirm."""
-
-    def is_free(self, doctor_id: uuid.UUID, start: datetime, end: datetime) -> bool: ...
-
-
-class DialogEngine:
+class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
+                   _RescheduleFlowMixin, _CancelFlowMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -282,139 +267,6 @@ class DialogEngine:
             return Reply(f"{disclaimer}\n\n{reply.text}", reply.buttons)
         return reply
 
-    # ── Slot-filling записи ──────────────────────────────────────────────
-
-    def _continue_booking(self, session: Session, conv: Conversation,
-                          extraction: Extraction) -> Reply:
-        ctx = conv.context
-        if conv.state == "cancel_confirm":
-            # пациент передумал отменять и начал новую запись
-            ctx.cancel_id = None
-            ctx.cancel_when = None
-        if extraction.service:
-            ctx.service = extraction.service
-        self._merge_when(session, ctx, extraction)
-        if extraction.doctor:
-            self._resolve_doctor(session, ctx, extraction.doctor)
-        return self._advance_booking(session, conv)
-
-    def _merge_when(self, session: Session, ctx: DialogContext,
-                    extraction: Extraction) -> None:
-        if extraction.date_ref:
-            resolved = resolve_date_ref(extraction.date_ref, self._today(session))
-            ctx.date = resolved.isoformat()
-        if extraction.time_ref:
-            ctx.time_ref = extraction.time_ref
-
-    def _advance_booking(self, session: Session, conv: Conversation) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        if not ctx.service:
-            conv.state = "booking_collect"
-            return Reply(t("ask_service", lang), self._service_buttons(session, lang))
-        if not ctx.date:
-            conv.state = "booking_collect"
-            return Reply(t("ask_date", lang), self._date_buttons(session, lang))
-        return self._offer_slots(session, conv)
-
-    def _offer_slots(self, session: Session, conv: Conversation,
-                     note: str | None = None) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        service_id = self._service_id(session, ctx.service)
-        if service_id is None:
-            # клиника не оказывает услугу из NLU — спрашиваем из своего каталога
-            ctx.service = None
-            conv.state = "booking_collect"
-            return Reply(t("ask_service", lang), self._service_buttons(session, lang))
-
-        doctors = self._doctors(session, ctx.doctor_id)
-        tz = self._clinic_tz(session)
-        asked = date.fromisoformat(ctx.date)
-        day, slots = self._collect_slots(session, doctors, service_id, asked,
-                                         ctx.time_ref)
-        if not slots:
-            self._notifier.notify(conv.chat_id, "нет слотов на 2 недели вперёд",
-                                  self._escalation_context(conv))
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("no_slots_at_all", lang))
-
-        multi_doctor = len(doctors) > 1
-        buttons = [
-            Button(self._slot_label(start, doctor_name, tz, multi_doctor),
-                   f"slot:{doctor_id}:{start.isoformat()}")
-            for start, doctor_id, doctor_name in slots[:SLOTS_PER_REPLY]
-        ]
-        buttons.append(Button(t("btn_other_time", lang), "ask_date"))
-
-        prefix = ""
-        if ctx.doctor_miss:
-            ctx.doctor_miss = False
-            prefix = t("doctor_not_found", lang) + "\n"
-        if note:
-            prefix = t(note, lang) + "\n" + prefix
-        ctx.date = day.isoformat()
-        conv.state = "booking_offer_slots"
-        return Reply(prefix + self._offer_body(session, lang, asked, day),
-                     tuple(buttons))
-
-    def _collect_slots(self, session: Session, doctors, service_id,
-                       asked: date, time_ref: str | None):
-        """Первый день (от asked, до 2 недель вперёд) с подходящими слотами."""
-        tz = self._clinic_tz(session)
-        start_day = max(asked, self._today(session))
-        now_utc = self._clock()
-        target = exact_time_ref(time_ref)  # точное HH:MM — мягкое предпочтение
-        for offset in range(NEAREST_DAY_SCAN + 1):
-            day = start_day + timedelta(days=offset)
-            free = [
-                (slot.start, doctor_id, doctor_name)
-                for doctor_id, doctor_name in doctors
-                for slot in self._sched.find_free_slots(doctor_id, service_id, day)
-                if slot.start > now_utc  # сегодняшние прошедшие слоты не предлагаем
-            ]
-            strict = [s for s in free
-                      if matches_time_ref(time_ref, s[0].astimezone(tz).time())]
-            if strict:
-                strict.sort(key=lambda s: (s[0], str(s[1])))
-                return day, strict
-            # некруглое время без совпадения с сеткой: не врать «нет слотов»,
-            # показать слоты дня, ближайшие к запрошенному времени (M1)
-            if target is not None and free:
-                tmin = target.hour * 60 + target.minute
-                free.sort(key=lambda s: (
-                    abs(self._local_minutes(s[0], tz) - tmin), s[0], str(s[1])))
-                return day, free
-        return start_day, []
-
-    @staticmethod
-    def _local_minutes(start: datetime, tz) -> int:
-        local = start.astimezone(tz).time()
-        return local.hour * 60 + local.minute
-
-    def _offer_body(self, session: Session, lang: str, asked: date, day: date) -> str:
-        today = self._today(session)
-        if max(asked, today) == today and self._closed_now(session):
-            # пациент метит в «сегодня», а клиника вне рабочего окна: говорим
-            # прямо «закрыто» — иначе ответ читается как «всё занято» (P0 BRIEF)
-            return t("closed_now_slots", lang, date=f"{day:%d.%m}")
-        if day == asked:
-            return t("offer_slots", lang, date=f"{day:%d.%m}")
-        return t("offer_slots_other_day", lang, asked=f"{asked:%d.%m}",
-                 date=f"{day:%d.%m}")
-
-    def _closed_now(self, session: Session) -> bool:
-        """Клиника вне рабочего окна прямо сейчас (выходной/праздник — тоже)."""
-        today = self._today(session)
-        schedules = doctors_repo.working_intervals(session)
-        holidays = clinic_repo.holidays_on(session, today)
-        bounds = open_bounds(schedules, today, self._clinic_tz(session), holidays)
-        if bounds is None:
-            return True
-        lo, hi = bounds
-        return not (lo <= self._clock() < hi)
-
     # ── Кнопки (callback-actions) ────────────────────────────────────────
 
     def _process_action(self, session: Session, conv: Conversation, action: str) -> Reply:
@@ -464,237 +316,6 @@ class DialogEngine:
             return self._start_cancel_by_id(session, conv, rest)
         return Reply(t("other_fallback", lang))
 
-    def _on_slot_chosen(self, session: Session, conv: Conversation,
-                        doctor_id: str, start_iso: str) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        service_id = self._service_id(session, ctx.service)
-        start = datetime.fromisoformat(start_iso)
-        patient = find_patient_by_chat(session, conv.chat_id)
-        try:
-            appointment_id = self._sched.hold(
-                uuid.UUID(doctor_id), service_id, start,
-                patient_id=patient.id if patient else None,
-                tg_chat_id=conv.chat_id,
-            )
-        except (SlotTakenError, InvalidSlotError):
-            return self._offer_slots(session, conv, note="slot_taken")
-
-        ctx.slot_start = start_iso
-        ctx.slot_doctor = dict(self._doctors(session)).get(uuid.UUID(doctor_id))
-        if patient is None:
-            ctx.appointment_id = str(appointment_id)
-            conv.state = "awaiting_name"
-            return Reply(t("ask_name", lang))
-        return self._confirm_and_finish(session, conv, appointment_id)
-
-    # ── Имя и телефон нового пациента ────────────────────────────────────
-
-    def _on_name(self, session: Session, conv: Conversation, message: str) -> Reply:
-        # PII: имя не должно уходить в LLM — NLU дёргаем только для
-        # вопросоподобного текста (прерывание вбок)
-        if _looks_like_question(message):
-            extraction = self._try_extract(message)
-            if extraction is not None and extraction.intent == "question":
-                answer = self._answer_question(session, conv, extraction)
-                return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
-        conv.context.pending_name = message.strip()
-        conv.state = "awaiting_phone"
-        lang = self._lang(conv)
-        return Reply(t("ask_phone", lang),
-                     contact_request=t("btn_share_contact", lang))
-
-    def _on_phone(self, session: Session, conv: Conversation, message: str) -> Reply:
-        """Текст на шаге телефона: ручной ввод не принимается — только кнопка.
-
-        PII: телефон текстом в NLU не уходит — NLU дёргается только для
-        вопросоподобного текста (прерывание вбок), как на шаге имени.
-        """
-        lang = self._lang(conv)
-        if _looks_like_question(message):
-            extraction = self._try_extract(message)
-            if extraction is not None and extraction.intent == "question":
-                answer = self._answer_question(session, conv, extraction)
-                return Reply(f"{answer.text}\n\n{t('ask_phone', lang)}",
-                             contact_request=t("btn_share_contact", lang))
-        return Reply(t("press_contact_button", lang),
-                     contact_request=t("btn_share_contact", lang))
-
-    def _process_contact(self, session: Session, conv: Conversation,
-                         phone: str, own: bool) -> Reply:
-        lang = self._lang(conv)
-        if conv.state == "escalated":
-            return Reply(t("escalated", lang))
-        if conv.state != "awaiting_phone":
-            return Reply(t("other_fallback", lang))
-        if not own:
-            return Reply(t("foreign_contact", lang),
-                         contact_request=t("btn_share_contact", lang))
-        try:
-            phone = normalize_phone(phone)
-        except ValueError:
-            # свой контакт с не-узбекским номером: ручного ввода нет — тупик,
-            # лид передаётся живому администратору
-            self._notifier.notify(conv.chat_id,
-                                  "контакт с не-узбекским номером",
-                                  self._escalation_context(conv))
-            conv.state = "escalated"
-            return Reply(t("escalated", lang))
-
-        patient_id = create_patient(session, conv.chat_id,
-                                    conv.context.pending_name, phone)
-        conv.patient_id = str(patient_id)
-        appointment_id = uuid.UUID(conv.context.appointment_id)
-        reply = self._confirm_and_finish(session, conv, appointment_id)
-        if conv.state == "idle":
-            # привязка пациента к записи — после confirm: его транзакция
-            # обновляет ту же строку, держать её под нашим локом нельзя
-            appointments_repo.set_patient(session, appointment_id, patient_id)
-            # запись подтверждена — контакт-клавиатуру заменяет главное меню
-            reply = replace(reply, menu=menu_rows(lang))
-        return reply
-
-    def _confirm_and_finish(self, session: Session, conv: Conversation,
-                            appointment_id: uuid.UUID) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        if self._slot_guard is not None and not self._guard_allows(session,
-                                                                   appointment_id):
-            # календарь уже занят (sync ещё не довёз) — слот не наш
-            self._sched.cancel(appointment_id)
-            ctx.appointment_id = None
-            return self._offer_slots(session, conv, note="slot_taken")
-        try:
-            self._sched.confirm(appointment_id)
-        except HoldExpiredError:
-            ctx.appointment_id = None
-            return self._offer_slots(session, conv, note="hold_expired")
-        local = datetime.fromisoformat(ctx.slot_start).astimezone(self._clinic_tz(session))
-        doctor = f", {ctx.slot_doctor}" if ctx.slot_doctor else ""
-        reply = Reply(t("booked", lang, service=service_label(ctx.service, lang),
-                        when=f"{local:%d.%m %H:%M}", doctor=doctor))
-        self._clear_booking(conv)
-        conv.state = "idle"
-        return reply
-
-    # ── Перенос ──────────────────────────────────────────────────────────
-
-    def _start_reschedule(self, session: Session, conv: Conversation,
-                          extraction: Extraction) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        appointment = self._find_active_appointment(session, conv.chat_id)
-        if appointment is None:
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("resched_none", lang))
-        ctx.resched_id = str(appointment.id)
-        ctx.resched_doctor = str(appointment.doctor_id)
-        # услугу не переспрашиваем — переносим ту же; перенос остаётся
-        # у того же врача (engine.reschedule врача не меняет)
-        ctx.service = self._service_name(session, appointment.service_id) or "checkup"
-        self._merge_when(session, ctx, extraction)
-        conv.state = "resched_offer_slots"
-        if not ctx.date:
-            return Reply(t("ask_date", lang), self._date_buttons(session, lang))
-        return self._offer_resched_slots(session, conv)
-
-    def _offer_resched_slots(self, session: Session, conv: Conversation,
-                             note: str | None = None) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        service_id = self._service_id(session, ctx.service)
-        doctors = self._doctors(session, ctx.resched_doctor)
-        tz = self._clinic_tz(session)
-        asked = date.fromisoformat(ctx.date)
-        day, slots = self._collect_slots(session, doctors, service_id, asked,
-                                         ctx.time_ref)
-        if not slots:
-            self._notifier.notify(conv.chat_id,
-                                  "перенос: нет слотов на 2 недели вперёд",
-                                  self._escalation_context(conv))
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("no_slots_at_all", lang))
-        buttons = [
-            Button(self._slot_label(start, doctor_name, tz, multi_doctor=False),
-                   f"reslot:{start.isoformat()}")
-            for start, _doctor_id, doctor_name in slots[:SLOTS_PER_REPLY]
-        ]
-        buttons.append(Button(t("btn_other_time", lang), "ask_date"))
-        prefix = t(note, lang) + "\n" if note else ""
-        ctx.date = day.isoformat()
-        conv.state = "resched_offer_slots"
-        return Reply(prefix + self._offer_body(session, lang, asked, day),
-                     tuple(buttons))
-
-    def _on_reslot(self, session: Session, conv: Conversation, start_iso: str) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        try:
-            self._sched.reschedule(uuid.UUID(ctx.resched_id),
-                                   datetime.fromisoformat(start_iso))
-        except (SlotTakenError, InvalidSlotError):
-            return self._offer_resched_slots(session, conv, note="slot_taken")
-        except AppointmentNotFoundError:
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("resched_none", lang))
-        local = datetime.fromisoformat(start_iso).astimezone(self._clinic_tz(session))
-        self._clear_booking(conv)
-        conv.state = "idle"
-        return Reply(t("resched_done", lang, when=f"{local:%d.%m %H:%M}"))
-
-    # ── Отмена ───────────────────────────────────────────────────────────
-
-    def _start_cancel(self, session: Session, conv: Conversation) -> Reply:
-        return self._begin_cancel(
-            session, conv, self._find_active_appointment(session, conv.chat_id))
-
-    def _start_cancel_by_id(self, session: Session, conv: Conversation,
-                            appointment_id: str) -> Reply:
-        """Кнопка «Отменить» из напоминания: запись известна по id."""
-        appointment = appointments_repo.active_by_id(session, appointment_id)
-        reply = self._begin_cancel(session, conv, appointment)
-        if conv.context.cancel_id:
-            # источник отмены — напоминание: метрика предотвращённых неявок
-            conv.context.cancel_via = "reminder"
-        return reply
-
-    def _begin_cancel(self, session: Session, conv: Conversation,
-                      appointment) -> Reply:
-        ctx = conv.context
-        lang = self._lang(conv)
-        if appointment is None:
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("cancel_none", lang))
-        local = appointment.start.astimezone(self._clinic_tz(session))
-        ctx.cancel_id = str(appointment.id)
-        ctx.cancel_when = f"{local:%d.%m %H:%M}"
-        conv.state = "cancel_confirm"
-        return self._cancel_prompt(conv)
-
-    def _cancel_prompt(self, conv: Conversation) -> Reply:
-        lang = self._lang(conv)
-        return Reply(
-            t("cancel_confirm_q", lang, when=conv.context.cancel_when),
-            (Button(t("btn_yes", lang), "cancel_yes"),
-             Button(t("btn_no", lang), "cancel_no")),
-        )
-
-    def _on_cancel_confirmed(self, session: Session, conv: Conversation) -> Reply:
-        lang = self._lang(conv)
-        cancel_id = conv.context.cancel_id
-        cancel_via = conv.context.cancel_via  # до _clear_booking
-        self._clear_booking(conv)
-        conv.state = "idle"
-        try:
-            self._sched.cancel(uuid.UUID(cancel_id), actor=cancel_via)
-        except AppointmentNotFoundError:
-            return Reply(t("cancel_none", lang))
-        return Reply(t("cancel_done", lang))
-
     # ── Вопросы ──────────────────────────────────────────────────────────
 
     def _price_list(self, session: Session, conv: Conversation) -> Reply:
@@ -741,87 +362,3 @@ class DialogEngine:
         else:
             return answer
         return Reply(f"{answer.text}\n\n{prompt.text}", prompt.buttons)
-
-    # ── Вспомогательное ──────────────────────────────────────────────────
-
-    def _try_extract(self, message: str) -> Extraction | None:
-        try:
-            return self._extractor.extract(message)
-        except ExtractionError:
-            return None
-
-    def _lang(self, conv: Conversation) -> str:
-        return conv.context.lang or "ru"
-
-    def _clear_booking(self, conv: Conversation) -> None:
-        conv.context.clear_booking()
-
-    def _escalation_context(self, conv: Conversation) -> dict:
-        """Контекст для эскалации без PII пациента (имя) — он уходит
-        в админ-чат и логи (m1)."""
-        return conv.context.escalation_dict()
-
-    def _clinic_name(self, session: Session) -> str:
-        return clinic_repo.clinic_name(session)
-
-    def _clinic_tz(self, session: Session) -> ZoneInfo:
-        if self._tz is None:
-            self._tz = ZoneInfo(clinic_repo.clinic_timezone(session))
-        return self._tz
-
-    def _today(self, session: Session) -> date:
-        return self._clock().astimezone(self._clinic_tz(session)).date()
-
-    def _guard_allows(self, session: Session, appointment_id: uuid.UUID) -> bool:
-        row = appointments_repo.slot_bounds(session, appointment_id)
-        return self._slot_guard.is_free(row.doctor_id, row.start, row.finish)
-
-    def _find_active_appointment(self, session: Session, chat_id: int):
-        """Ближайшая будущая активная запись чата (для переноса/отмены)."""
-        return appointments_repo.active_by_chat(session, chat_id)
-
-    def _service_name(self, session: Session, service_id) -> str | None:
-        if service_id is None:
-            return None
-        return services_repo.service_name(session, service_id)
-
-    def _service_id(self, session: Session, service_key: str) -> uuid.UUID | None:
-        return services_repo.service_id(session, service_key)
-
-    def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
-        names = services_repo.service_keys(session)
-        return tuple(Button(service_label(n, lang), f"service:{n}") for n in names)
-
-    def _date_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
-        today = self._today(session)
-        return (
-            Button(t("btn_today", lang), f"date:{today.isoformat()}"),
-            Button(t("btn_tomorrow", lang), f"date:{(today + timedelta(days=1)).isoformat()}"),
-            Button(t("btn_after_tomorrow", lang),
-                   f"date:{(today + timedelta(days=2)).isoformat()}"),
-        )
-
-    def _doctors(self, session: Session,
-                 only_id: str | None = None) -> list[tuple[uuid.UUID, str | None]]:
-        doctors = doctors_repo.doctor_list(session)
-        if only_id:
-            doctors = [d for d in doctors if str(d[0]) == only_id]
-        return doctors
-
-    def _resolve_doctor(self, session: Session, ctx: DialogContext,
-                        name: str) -> None:
-        target = name.casefold()
-        for doctor_id, doctor_name in self._doctors(session):
-            if doctor_name and (target in doctor_name.casefold()
-                                or doctor_name.casefold() in target):
-                ctx.doctor_id = str(doctor_id)
-                return
-        ctx.doctor_miss = True
-
-    def _slot_label(self, start: datetime, doctor_name: str | None,
-                    tz: ZoneInfo, multi_doctor: bool) -> str:
-        local = start.astimezone(tz)
-        label = f"{local:%d.%m %H:%M}"
-        if multi_doctor and doctor_name:
-            label += f" · {doctor_name}"
-        return label
