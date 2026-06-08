@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, field_validator
 
@@ -21,6 +21,11 @@ ServiceKey = Literal[
     "cleaning", "filling", "extraction", "implant", "crown",
     "whitening", "braces", "checkup", "xray",
 ]
+
+# Единый источник канонических услуг (9): остальные места (Gemini-схема,
+# метки replies, демо-онбординг) выводятся отсюда или сверяются тестом —
+# чтобы «добавить услугу» не означало синхронить 4 файла руками.
+SERVICE_KEYS: tuple[str, ...] = get_args(ServiceKey)
 
 
 class Extraction(BaseModel):
