@@ -70,6 +70,11 @@ class DialogContext:
             if f.name == "extras":
                 continue
             value = getattr(self, f.name)
+            # храним только отличное от дефолта (компактный JSONB, пустой
+            # контекст -> {}). ОСТОРОЖНО при добавлении полей: поле со
+            # значимым значением, равным дефолту (literal 0/False/""), или
+            # с default_factory сюда не попадёт — для таких нужен явный
+            # маркер «set», а не сравнение с дефолтом.
             if value != f.default:
                 out[f.name] = value
         return out
