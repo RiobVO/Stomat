@@ -55,29 +55,20 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
              "failures, repairs FROM llm_usage WHERE day = :day"),
         {"day": day},
     ).one_or_none()
-    # «язык денег» (E.1): отмена ИЗ НАПОМИНАНИЯ (actor='reminder'), чей слот
-    # потом перезаписан другой booked-записью того же врача; сохранённая
-    # выручка — цены новых записей (NULL-цены в сумму не входят)
+    # «язык денег» (E.1, M2): отмена ИЗ НАПОМИНАНИЯ (actor='reminder') = пациент
+    # предупредил заранее вместо неявки, слот вернулся в продажу. Считаем такие
+    # отмены и стоимость освобождённых слотов (цены отменённых услуг; NULL-цены
+    # в сумму не входят — слот считаем, неизвестную выручку не выдумываем).
+    # M2 снял прежнее требование «именно этот слот тут же перекрыт другой
+    # записью» — на живом трафике оно давало ≈0 и обесценивало метрику.
     money = session.execute(
         text("""
-            WITH freed AS (
-                SELECT a1.id AS old_id, a1.doctor_id, a1.time_range, aa.at
-                FROM appointment_audit aa
-                JOIN appointment a1 ON a1.id = aa.appointment_id
-                WHERE aa.action = 'cancel' AND aa.actor = 'reminder'
-                  AND (aa.at AT TIME ZONE :tz)::date = :day
-            ), resold AS (
-                SELECT DISTINCT ON (a2.id) a2.id, f.old_id, s.price
-                FROM freed f
-                JOIN appointment a2 ON a2.doctor_id = f.doctor_id
-                    AND a2.status = 'booked' AND a2.id != f.old_id
-                    AND a2.time_range && f.time_range
-                    AND a2.created_at > f.at
-                LEFT JOIN service s ON s.id = a2.service_id
-            )
-            SELECT count(DISTINCT old_id) AS prevented,
-                   COALESCE(sum(price), 0) AS saved
-            FROM resold
+            SELECT count(*) AS prevented, COALESCE(sum(s.price), 0) AS saved
+            FROM appointment_audit aa
+            JOIN appointment a ON a.id = aa.appointment_id
+            LEFT JOIN service s ON s.id = a.service_id
+            WHERE aa.action = 'cancel' AND aa.actor = 'reminder'
+              AND (aa.at AT TIME ZONE :tz)::date = :day
         """),
         {"tz": str(tz), "day": day},
     ).one()
@@ -102,7 +93,7 @@ def render_stats(stats: DailyStats, day: date) -> str:
             f"• записей подтверждено: {stats.booked}\n"
             f"• отмен: {stats.cancelled}\n"
             f"• предотвращено неявок: {stats.prevented_noshows} "
-            f"(сохранено ≈ {saved} сум)\n"
+            f"(слотов на ≈ {saved} сум освобождено заранее)\n"
             f"• эскалаций к администратору: {stats.escalated}\n"
             f"• напоминаний доставлено: {stats.reminders_sent}\n"
             f"• LLM: {stats.llm_requests} запросов, {stats.llm_tokens} токенов, "
