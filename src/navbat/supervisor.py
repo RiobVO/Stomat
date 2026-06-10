@@ -54,6 +54,19 @@ def install_sigterm_handler(stop: threading.Event) -> None:
     signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
 
 
+def validate_real_env() -> list[str]:
+    """--real = боевой режим: PII под dev-ключом и пустые API-ключи — отказ."""
+    problems = []
+    enc_key = os.environ.get("NAVBAT_ENC_KEY")
+    if not enc_key or enc_key == DEV_ENC_KEY:
+        problems.append(
+            "NAVBAT_ENC_KEY: для --real нужен боевой ключ (base64 от 32 байт),"
+            " dev-ключ недопустим")
+    if not os.environ.get("OPENAI_API_KEY"):
+        problems.append("OPENAI_API_KEY не задан — --real без него не работает")
+    return problems
+
+
 def build_real_extractor(session_factory, clinic_id: uuid.UUID, notifier):
     """Боевая сборка NLU: бюджет → деидентификация → fallback(OpenAI, Gemini).
 
@@ -187,6 +200,12 @@ def main() -> int:
     args = parser.parse_args()
 
     load_env_file()
+    if args.real and not args.check:
+        problems = validate_real_env()
+        if problems:
+            for problem in problems:
+                print(f"[FAIL] {problem}")
+            return 1
     os.environ.setdefault("NAVBAT_ENC_KEY", DEV_ENC_KEY)
     session_factory = make_session_factory(make_app_engine())
 

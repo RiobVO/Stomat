@@ -39,3 +39,47 @@ def test_sigterm_handler_sets_stop_event():
         assert stop.is_set()
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+# ── env-валидация --real (C-1): dev-ключ и пустые API-ключи недопустимы ─────
+
+def _fresh_key() -> str:
+    import base64
+    import os as _os
+    return base64.b64encode(_os.urandom(32)).decode()
+
+
+def test_validate_real_env_rejects_dev_enc_key(monkeypatch):
+    from navbat.onboard import DEV_ENC_KEY
+    from navbat.supervisor import validate_real_env
+
+    monkeypatch.setenv("NAVBAT_ENC_KEY", DEV_ENC_KEY)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    problems = validate_real_env()
+    assert any("NAVBAT_ENC_KEY" in p for p in problems)
+
+
+def test_validate_real_env_rejects_missing_enc_key(monkeypatch):
+    from navbat.supervisor import validate_real_env
+
+    monkeypatch.delenv("NAVBAT_ENC_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    problems = validate_real_env()
+    assert any("NAVBAT_ENC_KEY" in p for p in problems)
+
+
+def test_validate_real_env_requires_openai_key(monkeypatch):
+    from navbat.supervisor import validate_real_env
+
+    monkeypatch.setenv("NAVBAT_ENC_KEY", _fresh_key())
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    problems = validate_real_env()
+    assert any("OPENAI_API_KEY" in p for p in problems)
+
+
+def test_validate_real_env_accepts_prod_config(monkeypatch):
+    from navbat.supervisor import validate_real_env
+
+    monkeypatch.setenv("NAVBAT_ENC_KEY", _fresh_key())
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert validate_real_env() == []
