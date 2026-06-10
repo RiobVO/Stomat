@@ -47,7 +47,8 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
                             clinic_id: uuid.UUID) -> ClinicCredentials:
     with tenant_transaction(session_factory, clinic_id) as session:
         row = session.execute(
-            text("SELECT tg_bot_token_encrypted, tg_admin_chat_ids, tg_webhook_secret "
+            text("SELECT tg_bot_token_encrypted, tg_admin_chat_ids, "
+                 "tg_webhook_secret_encrypted "
                  "FROM clinic WHERE id = :id"),
             {"id": clinic_id},
         ).one_or_none()
@@ -58,7 +59,8 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
     return ClinicCredentials(
         token=decrypt_text(row.tg_bot_token_encrypted),
         admin_chat_ids=tuple(row.tg_admin_chat_ids or ()),
-        webhook_secret=row.tg_webhook_secret,
+        webhook_secret=(decrypt_text(row.tg_webhook_secret_encrypted)
+                        if row.tg_webhook_secret_encrypted else None),
     )
 
 
@@ -124,7 +126,8 @@ def main() -> int:
     try:
         if args.webhook_url:
             if not credentials.webhook_secret:
-                sys.exit("[FAIL] webhook-режим требует clinic.tg_webhook_secret")
+                sys.exit("[FAIL] webhook-режим требует webhook-секрет "
+                         "(onboard --tg-token генерирует)")
             webhook_server = WebhookServer(
                 session_factory, args.clinic, secret=credentials.webhook_secret,
                 port=args.webhook_port,
