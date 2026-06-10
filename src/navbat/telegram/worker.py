@@ -117,6 +117,9 @@ class UpdateWorker:
             message = payload["message"]
             chat_id = message["chat"]["id"]
             if "contact" in message:
+                if self._bot_paused():
+                    self._send(chat_id, self._paused_reply(chat_id))
+                    return
                 # телефон кнопкой request_contact; принимаем только собственный
                 # контакт отправителя. Rate-limit не нужен: NLU не дёргается.
                 # Номер уже хэширован на enqueue (открытым в очередь не попал);
@@ -149,6 +152,11 @@ class UpdateWorker:
                         and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._forget_reply(message["text"]))
                     return
+                if self._bot_paused():
+                    # пауза (/pause): вежливый ответ вместо диалога; команды
+                    # админа выше по коду продолжают работать
+                    self._send(chat_id, self._paused_reply(chat_id))
+                    return
                 verdict = self._rate_verdict(chat_id, claimed.id)
                 if verdict == "silent":
                     return
@@ -167,12 +175,28 @@ class UpdateWorker:
         if "callback_query" in payload:
             callback = payload["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
+            if self._bot_paused():
+                self._api.answer_callback_query(callback["id"])
+                self._send(chat_id, self._paused_reply(chat_id))
+                return
             action = self._lookup_action(chat_id, callback.get("data", ""))
             reply = self._dialog.handle_action(chat_id, action or "stale")
             self._api.answer_callback_query(callback["id"])
             self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
+
+    def _bot_paused(self) -> bool:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            return session.execute(text(
+                "SELECT bot_paused FROM clinic "
+                "WHERE id = current_setting('app.clinic_id')::uuid"
+            )).scalar_one()
+
+    def _paused_reply(self, chat_id: int) -> Reply:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            lang = get_chat_lang(session, chat_id)
+        return Reply(t("bot_paused", lang))
 
     def _release_reply(self, command: str) -> Reply:
         """Снятие эскалации админом: /release <chat_id> (Ф1.5, BRIEF разд. 14.A).
