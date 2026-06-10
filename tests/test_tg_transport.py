@@ -113,3 +113,49 @@ def test_webhook_unknown_path_is_404(app_session_factory, admin_engine, clinic_a
         assert queue_update_ids(admin_engine) == []
     finally:
         server.stop()
+
+
+# ── C-2: setWebhook с подтверждением — сбой не роняет процесс ────────────────
+
+from navbat.telegram.api import TelegramAPIError
+from navbat.telegram.transport import ensure_webhook
+from test_dialog_booking import RecordingNotifier
+
+
+class FakeWebhookAPI:
+    def __init__(self, failures: int = 0) -> None:
+        self.failures = failures
+        self.calls: list[tuple[str, str]] = []
+
+    def set_webhook(self, url, secret_token):
+        self.calls.append((url, secret_token))
+        if self.failures:
+            self.failures -= 1
+            raise TelegramAPIError("bad webhook: HTTPS url must be provided")
+        return True
+
+
+def test_ensure_webhook_success_first_try():
+    api = FakeWebhookAPI()
+    assert ensure_webhook(api, "https://x.uz/", "s", path="/webhook/abc",
+                          waiter=lambda _: None) is True
+    assert api.calls == [("https://x.uz/webhook/abc", "s")]
+
+
+def test_ensure_webhook_retries_then_succeeds():
+    api = FakeWebhookAPI(failures=2)
+    notifier = RecordingNotifier()
+    assert ensure_webhook(api, "https://x.uz", "s", notifier=notifier,
+                          path="/webhook/abc", waiter=lambda _: None) is True
+    assert len(api.calls) == 3
+    assert notifier.calls == []  # успех — алерта нет
+
+
+def test_ensure_webhook_exhausted_alerts_and_survives():
+    api = FakeWebhookAPI(failures=99)
+    notifier = RecordingNotifier()
+    assert ensure_webhook(api, "https://x.uz", "s", notifier=notifier,
+                          path="/webhook/abc", waiter=lambda _: None) is False
+    assert len(api.calls) == 3  # WEBHOOK_SETUP_RETRIES
+    assert len(notifier.calls) == 1
+    assert "webhook" in notifier.calls[0][1].lower()

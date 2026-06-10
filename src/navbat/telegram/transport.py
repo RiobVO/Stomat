@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -122,3 +123,36 @@ class WebhookServer:
         self._server.server_close()
         if self._thread:
             self._thread.join(timeout=5)
+
+
+WEBHOOK_SETUP_RETRIES = 3
+WEBHOOK_SETUP_BACKOFF = (2.0, 5.0)  # паузы между попытками, сек
+
+
+def ensure_webhook(api, url: str, secret: str, notifier=None, path: str = "",
+                   waiter=time.sleep) -> bool:
+    """setWebhook с подтверждением: сбой — алерт, не падение процесса.
+
+    TelegramAPI._call сам ретраит сеть/5xx/429; здесь добиваем логические
+    отказы (кривой URL, битый cert) и шлём алерт после исчерпания —
+    nginx/certbot могут подняться позже, процесс должен жить.
+    """
+    full_url = url.rstrip("/") + path
+    for attempt in range(WEBHOOK_SETUP_RETRIES):
+        try:
+            api.set_webhook(full_url, secret_token=secret)
+            log.info("webhook установлен: %s", full_url)
+            return True
+        except TelegramAPIError as e:
+            log.error("setWebhook (попытка %d/%d): %s",
+                      attempt + 1, WEBHOOK_SETUP_RETRIES, e)
+            if attempt < WEBHOOK_SETUP_RETRIES - 1:
+                waiter(WEBHOOK_SETUP_BACKOFF[
+                    min(attempt, len(WEBHOOK_SETUP_BACKOFF) - 1)])
+    if notifier is not None:
+        notifier.notify(
+            0,
+            f"webhook не установлен после {WEBHOOK_SETUP_RETRIES} попыток — "
+            f"бот глух для Telegram. Проверьте домен/cert. URL: {full_url}",
+            {})
+    return False
