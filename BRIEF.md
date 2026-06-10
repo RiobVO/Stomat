@@ -366,19 +366,30 @@ CREATE TABLE appointment (
       аутэйдж провайдера дрифтом не считаются.
 
 **C. Деплой и эксплуатация (VPS — теперь ДО пилота, не после продажи)**
-- [ ] VPS Ташкент: полный docker-compose (app + postgres + nginx + certbot),
-      restart: unless-stopped, миграции при старте.
-- [ ] Webhook + HTTPS; /health endpoint: SELECT 1 + возраст последней синхры
-      календаря + срок cert (+ дешёвый LLM-пинг). Cert протух → TG молчит —
-      ловить заранее.
-- [ ] GCal: watch-каналы (push вместо 60-сек поллинга), верификация
-      Google-приложения (иначе sensitive-токены умирают за 7 дней), алерт при
-      провале OAuth-refresh.
-- [ ] Бэкапы: WAL-архивинг (PITR) + бэкап раз в 1–2 ч в S3 + ПРОВЕРЕННЫЙ
-      runbook восстановления (restore прогнан руками, RTO записан).
-- [ ] Наблюдаемость: structured-логи, error-tracking (Sentry-класс), метрики
-      (% без человека, % эскалаций, p95 ответа, доставка напоминаний).
-- [ ] Kill-switch: выключение LLM/бота на клинику и глобально одной командой.
+- [x] VPS-заготовка (provider-agnostic, без покупки — решение 10.06.2026):
+      deploy/docker-compose.prod.yml (app + postgres + nginx + certbot +
+      backup), restart: unless-stopped, миграции в entrypoint, SIGTERM
+      graceful, образ с тегом по git SHA (откат одной переменной).
+      Runbook «голый VPS → клиника» — docs/DEPLOY.md, smoke прогнан локально.
+- [x] Webhook + HTTPS (nginx+certbot, profile web, limit_req); /health:
+      db, очередь, возраст синка, срок cert, свежесть бэкапов, LLM-ключи
+      и дрифт за день, p95. Живой LLM-пинг сознательно НЕ делается (деньги).
+      Cert-алерт владельцу за 14 дней, раз в день.
+- [x] GCal: watch-каналы per врач (продление заранее, сбой → поллинг
+      прикрывает), push будит синк; алерт OAuth-refresh — в первый же цикл.
+      Верификация Google-приложения — шаг DEPLOY.md на стороне пользователя
+      (7-дневный TTL testing-токена описан там же).
+- [x] Бэкапы: WAL-архив + pg_basebackup раз в 2 ч с ротацией; restore
+      ПРОГНАН РУКАМИ 10.06.2026, RTO = 24 с, runbook + PITR в OPERATIONS.md;
+      свежесть бэкапов сторожит /health (алерт владельцу). S3-выгрузка —
+      env-хук, включается при появлении хранилища. Ротация NAVBAT_ENC_KEY —
+      python -m navbat.rotate_key (одной транзакцией, идемпотентна).
+- [x] Наблюдаемость: JSON-логи (NAVBAT_LOG_FORMAT), p95 в /stats+дайджесте+
+      health, канал владельца NAVBAT_OWNER_CHAT_ID (веер системных алертов).
+      Sentry-класс закрыт минимально: ERROR в JSON-логах + rate-limited
+      алерт — полноценный error-tracking осознанно в Ф3.
+- [x] Kill-switch: /pause /resume (клиника), /llm on|off (NLU), глобальный
+      NAVBAT_LLM_DISABLED; процедуры в OPERATIONS.md.
 
 **D. Комплаенс и данные (внешние зависимости — стартовать сразу)**
 - Юрист по ПД РУз — СНЯТ решением пользователя 07.06.2026, тему не
