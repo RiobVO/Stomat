@@ -123,3 +123,15 @@ def test_expiring_cert_degrades(app_session_factory, clinic_a, tmp_path):
     ok, checks = checker.snapshot()
     assert ok is False
     assert checks["cert_days_left"] <= CERT_WARN_DAYS - 5
+
+
+def test_p95_reported_in_health(app_session_factory, admin_engine, clinic_a):
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO message_queue (clinic_id, update_id, tg_chat_id, "
+            "payload, status, created_at, completed_at) VALUES "
+            "(:c, 1, 100, '{}', 'done', now() - interval '2 seconds', now())"),
+            {"c": clinic_a})
+    ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
+    assert ok is True
+    assert checks["p95_response_sec_1h"] is not None

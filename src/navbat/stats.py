@@ -28,6 +28,7 @@ class DailyStats:
     nlu_repairs: int
     prevented_noshows: int
     saved_revenue: int
+    p95_response_sec: float | None = None  # C-3: SLA-метрика (нет данных = None)
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -73,6 +74,18 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
         {"tz": str(tz), "day": day},
     ).one()
 
+    # p95 ответа за локальный день: от приёма апдейта до отправленного ответа
+    p95 = session.execute(
+        text("""
+            SELECT extract(epoch FROM percentile_cont(0.95)
+                   WITHIN GROUP (ORDER BY completed_at - created_at))
+            FROM message_queue
+            WHERE status = 'done' AND completed_at IS NOT NULL
+              AND (completed_at AT TIME ZONE :tz)::date = :day
+        """),
+        {"tz": str(tz), "day": day},
+    ).scalar_one()
+
     return DailyStats(
         booked=audit_count("confirm"),
         cancelled=audit_count("cancel"),
@@ -84,11 +97,14 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
         nlu_repairs=llm.repairs if llm else 0,
         prevented_noshows=money.prevented,
         saved_revenue=int(money.saved),
+        p95_response_sec=round(float(p95), 1) if p95 is not None else None,
     )
 
 
 def render_stats(stats: DailyStats, day: date) -> str:
     saved = f"{stats.saved_revenue:,}".replace(",", " ")
+    p95_line = (f"\n• p95 ответа: {stats.p95_response_sec} с (SLA < 5 с)"
+                if stats.p95_response_sec is not None else "")
     return (f"Сводка за {day:%d.%m}:\n"
             f"• записей подтверждено: {stats.booked}\n"
             f"• отмен: {stats.cancelled}\n"
@@ -97,7 +113,8 @@ def render_stats(stats: DailyStats, day: date) -> str:
             f"• эскалаций к администратору: {stats.escalated}\n"
             f"• напоминаний доставлено: {stats.reminders_sent}\n"
             f"• LLM: {stats.llm_requests} запросов, {stats.llm_tokens} токенов, "
-            f"сбоев: {stats.nlu_failures}, repair: {stats.nlu_repairs}")
+            f"сбоев: {stats.nlu_failures}, repair: {stats.nlu_repairs}"
+            + p95_line)
 
 
 def should_send_digest(now_local: datetime, last_digest: date | None,
