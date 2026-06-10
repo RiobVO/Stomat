@@ -22,7 +22,7 @@ from navbat.dialog.escalation import (
     LoggingEscalation,
     system_alert,
 )
-from navbat.nlu.extractor import ExtractionError, Extractor
+from navbat.nlu.extractor import ExtractionError, Extractor, LLMDisabledError
 from navbat.nlu.schema import Extraction
 
 log = logging.getLogger("navbat.nlu")
@@ -184,4 +184,26 @@ class BudgetedExtractor:
         if self._recorder.cap_exceeded():
             self._recorder.alert_once()
             raise BudgetExceededError("дневной token cap исчерпан")
+        return self._inner.extract(message)
+
+
+class GatedExtractor:
+    """Рубильник LLM (C-4): env NAVBAT_LLM_DISABLED=1 (глобально) или
+    clinic.llm_enabled=false (/llm off) → LLMDisabledError, вызова нет."""
+
+    def __init__(self, inner: Extractor, session_factory, clinic_id) -> None:
+        self._inner = inner
+        self._session_factory = session_factory
+        self._clinic_id = clinic_id
+
+    def extract(self, message: str) -> Extraction:
+        if os.environ.get("NAVBAT_LLM_DISABLED"):
+            raise LLMDisabledError("LLM выключен глобально (NAVBAT_LLM_DISABLED)")
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            enabled = session.execute(text(
+                "SELECT llm_enabled FROM clinic "
+                "WHERE id = current_setting('app.clinic_id')::uuid"
+            )).scalar_one()
+        if not enabled:
+            raise LLMDisabledError("LLM выключен для клиники (/llm on — включить)")
         return self._inner.extract(message)

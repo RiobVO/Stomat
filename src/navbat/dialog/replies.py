@@ -121,6 +121,18 @@ TEMPLATES = {
         "uz": "Kechirasiz, tushunmadim. Boshqacha yozib ko'ring — masalan: "
               "«ertaga tish tozalashga yozilmoqchiman».",
     },
+    "llm_off_menu": {
+        "ru": "Сейчас запись принимается через кнопки меню — выберите "
+              "нужное действие.",
+        "uz": "Hozir yozilish menyu tugmalari orqali qabul qilinadi — "
+              "kerakli amalni tanlang.",
+    },
+    "bot_paused": {
+        "ru": "Запись через бота временно приостановлена. Позвоните в клинику "
+              "или загляните позже.",
+        "uz": "Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga qo'ng'iroq "
+              "qiling yoki keyinroq urinib ko'ring.",
+    },
     "escalated": {
         "ru": "Передаю администратору — он ответит вам здесь в ближайшее время.",
         "uz": "Administratorga ulab berdim — u tez orada shu yerda "
