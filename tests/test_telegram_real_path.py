@@ -44,7 +44,12 @@ def test_real_path_masks_phone_before_llm(app_session_factory, clinic_a,
 
 
 def test_fake_path_uses_fixtures(app_session_factory, clinic_a):
+    from navbat.nlu.wrappers import GatedExtractor
+
     extractor = build_dialog_extractor(
         use_real=False, session_factory=app_session_factory,
         clinic_id=clinic_a, notifier=RecordingNotifier())
-    assert isinstance(extractor, FakeExtractor)
+    # C-4: снаружи рубильник (/llm off действует и на фейковом пути),
+    # внутри — фикстурный NLU без API-вызовов
+    assert isinstance(extractor, GatedExtractor)
+    assert isinstance(extractor._inner, FakeExtractor)
