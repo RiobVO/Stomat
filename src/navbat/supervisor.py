@@ -23,6 +23,7 @@ from sqlalchemy import text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.dialog.fsm import DialogEngine
 from navbat.envfile import load_env_file
+from navbat.health import HealthChecker, HealthServer
 from navbat.nlu.wrappers import (
     BudgetedExtractor,
     DeidentifyingExtractor,
@@ -34,7 +35,7 @@ from navbat.reminders import ReminderService
 from navbat.telegram.api import TelegramAPI, TelegramAPIError
 from navbat.telegram.app import build_dialog_extractor, load_clinic_credentials
 from navbat.telegram.escalation import TelegramEscalation
-from navbat.telegram.transport import PollingTransport
+from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_webhook
 from navbat.telegram.worker import UpdateWorker
 
 log = logging.getLogger("navbat")
@@ -195,6 +196,11 @@ def main() -> int:
                         help="минуты до приёма, CSV; демо: 2,1")
     parser.add_argument("--sync-interval", type=int, default=60)
     parser.add_argument("--no-calendar", action="store_true")
+    parser.add_argument("--webhook-url", default=None,
+                        help="публичный https-URL; без него — long polling")
+    parser.add_argument("--webhook-port", type=int, default=8443)
+    parser.add_argument("--health-port", type=int,
+                        default=int(os.environ.get("NAVBAT_HEALTH_PORT", "8080")))
     parser.add_argument("--check", action="store_true",
                         help="преддемо-чеклист и выход")
     args = parser.parse_args()
@@ -278,13 +284,38 @@ def main() -> int:
         thread.start()
     log.info("система поднята: %d воркера, напоминания %s",
              args.workers, args.reminder_offsets)
+
+    health = HealthServer(
+        HealthChecker(session_factory, args.clinic,
+                      sync_interval_sec=args.sync_interval,
+                      cert_path=os.environ.get("NAVBAT_CERT_PATH")),
+        port=args.health_port)
+    health.start()
+
+    webhook_server = None
     try:
-        tg_api.delete_webhook()  # иначе getUpdates вернёт 409
-        PollingTransport(session_factory, args.clinic, tg_api).run(stop)
+        if args.webhook_url:
+            if not credentials.webhook_secret:
+                sys.exit("[FAIL] webhook-режим требует webhook-секрет "
+                         "(onboard --tg-token генерирует)")
+            webhook_server = WebhookServer(
+                session_factory, args.clinic,
+                secret=credentials.webhook_secret, port=args.webhook_port)
+            webhook_server.start()
+            ensure_webhook(tg_api, args.webhook_url,
+                           credentials.webhook_secret,
+                           notifier=notifier, path=webhook_server.path)
+            stop.wait()  # до SIGTERM/Ctrl+C
+        else:
+            tg_api.delete_webhook()  # иначе getUpdates вернёт 409
+            PollingTransport(session_factory, args.clinic, tg_api).run(stop)
     except KeyboardInterrupt:
         log.info("останавливаюсь…")
     finally:
         stop.set()
+        if webhook_server:
+            webhook_server.stop()
+        health.stop()
         for thread in threads:
             thread.join(timeout=10)
     return 0
