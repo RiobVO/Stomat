@@ -1,4 +1,4 @@
-# C-3 Наблюдаемость — Implementation Plan
+﻿# C-3 Наблюдаемость — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -28,7 +28,7 @@
 - Modify: `deploy/docker-compose.prod.yml`, `deploy/.env.example`
 - Test: `tests/test_logging_setup.py`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_logging_setup.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_logging_setup.py`:
 
 ```python
 """JSON-формат логов (C-3): контейнер пишет машинно-разбираемые строки."""
@@ -68,9 +68,9 @@ def test_plain_formatter_keeps_legacy_format():
     assert line == "INFO navbat.test: hello world"
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_logging_setup.py -q` → FAIL (нет модуля)
+- [x] **Step 2: Run** `python -m pytest tests/test_logging_setup.py -q` → FAIL (нет модуля)
 
-- [ ] **Step 3: Create `src/navbat/logging_setup.py`**:
+- [x] **Step 3: Create `src/navbat/logging_setup.py`**:
 
 ```python
 """Конфигурация логов: plain для консоли разработчика, json для контейнера.
@@ -116,7 +116,7 @@ def setup_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 ```
 
-- [ ] **Step 4: Переключить три __main__** — в каждом заменить basicConfig-блок (и httpx-строку, где она есть) на:
+- [x] **Step 4: Переключить три __main__** — в каждом заменить basicConfig-блок (и httpx-строку, где она есть) на:
 
 ```python
 from navbat.logging_setup import setup_logging
@@ -124,11 +124,11 @@ from navbat.logging_setup import setup_logging
     setup_logging()
 ```
 
-- [ ] **Step 5: compose + .env.example** — в `deploy/docker-compose.prod.yml` к environment app добавить `NAVBAT_LOG_FORMAT: json`; в `.env.example` секцию «Опционально» дополнить `# NAVBAT_LOG_FORMAT=json` с комментарием.
+- [x] **Step 5: compose + .env.example** — в `deploy/docker-compose.prod.yml` к environment app добавить `NAVBAT_LOG_FORMAT: json`; в `.env.example` секцию «Опционально» дополнить `# NAVBAT_LOG_FORMAT=json` с комментарием.
 
-- [ ] **Step 6: Run** `python -m pytest tests/test_logging_setup.py -q` → 3 passed; `python -m navbat --check` → [OK] (plain-формат не сломан)
+- [x] **Step 6: Run** `python -m pytest tests/test_logging_setup.py -q` → 3 passed; `python -m navbat --check` → [OK] (plain-формат не сломан)
 
-- [ ] **Step 7: Commit** `feat(obs): JSON log format via NAVBAT_LOG_FORMAT`
+- [x] **Step 7: Commit** `feat(obs): JSON log format via NAVBAT_LOG_FORMAT`
 
 ---
 
@@ -139,7 +139,7 @@ from navbat.logging_setup import setup_logging
 - Modify: `src/navbat/telegram/queue.py` (complete), `src/navbat/stats.py`, `src/navbat/health.py`
 - Test: `tests/test_queue.py`, `tests/test_stats.py`, `tests/test_health.py`
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
 
 В `tests/test_queue.py` (конец файла):
 
@@ -218,9 +218,9 @@ def test_p95_reported_in_health(app_session_factory, admin_engine, clinic_a):
     assert checks["p95_response_sec_1h"] is not None
 ```
 
-- [ ] **Step 2: Run** оба новых стат/квалификационных теста → FAIL (нет колонки/поля)
+- [x] **Step 2: Run** оба новых стат/квалификационных теста → FAIL (нет колонки/поля)
 
-- [ ] **Step 3: Migration `0013_queue_completed_at.py`** (паттерн 0011, `down_revision = "0012"`):
+- [x] **Step 3: Migration `0013_queue_completed_at.py`** (паттерн 0011, `down_revision = "0012"`):
 
 ```python
 """C-3: момент завершения обработки — для метрики p95 ответа.
@@ -246,7 +246,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE message_queue DROP COLUMN IF EXISTS completed_at")
 ```
 
-- [ ] **Step 4: Код.**
+- [x] **Step 4: Код.**
 
 `queue.py` `complete()`:
 
@@ -298,9 +298,9 @@ def complete(session: Session, queue_id: int) -> None:
                                          if p95 is not None else None)
 ```
 
-- [ ] **Step 5: Run** `python -m pytest tests/test_queue.py tests/test_stats.py tests/test_health.py -q` → PASS
+- [x] **Step 5: Run** `python -m pytest tests/test_queue.py tests/test_stats.py tests/test_health.py -q` → PASS
 
-- [ ] **Step 6: Commit** `feat(obs): p95 response metric in stats, digest and health`
+- [x] **Step 6: Commit** `feat(obs): p95 response metric in stats, digest and health`
 
 ---
 
@@ -312,7 +312,7 @@ def complete(session: Session, queue_id: int) -> None:
 - Modify: `deploy/.env.example`
 - Test: `tests/test_tg_escalation.py`
 
-- [ ] **Step 1: Write the failing tests** (в конец `tests/test_tg_escalation.py`; фейк уже импортирован в шапке — `FakeTelegramAPI` из test_tg_worker, элементы `api.sent` — 3-кортежи):
+- [x] **Step 1: Write the failing tests** (в конец `tests/test_tg_escalation.py`; фейк уже импортирован в шапке — `FakeTelegramAPI` из test_tg_worker, элементы `api.sent` — 3-кортежи):
 
 ```python
 # ── C-3: системные алерты — админ-чаты + канал владельца ────────────────────
@@ -344,9 +344,9 @@ def test_system_alert_falls_back_to_notify():
     assert notifier.calls == [(42, "проблема")]
 ```
 
-- [ ] **Step 2: Run** → FAIL (нет notify_system / system_alert)
+- [x] **Step 2: Run** → FAIL (нет notify_system / system_alert)
 
-- [ ] **Step 3: Реализация.**
+- [x] **Step 3: Реализация.**
 
 `dialog/escalation.py` — добавить:
 
@@ -398,9 +398,9 @@ def system_alert(notifier, reason: str, context: dict, chat_id: int = 0) -> None
 NAVBAT_OWNER_CHAT_ID=
 ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_tg_escalation.py tests/test_calendar_sync_loop.py tests/test_nlu_drift.py tests/test_nlu_wrappers.py tests/test_tg_worker.py tests/test_reminders.py tests/test_tg_transport.py -q` → PASS (фейки живут на фолбэке)
+- [x] **Step 4: Run** `python -m pytest tests/test_tg_escalation.py tests/test_calendar_sync_loop.py tests/test_nlu_drift.py tests/test_nlu_wrappers.py tests/test_tg_worker.py tests/test_reminders.py tests/test_tg_transport.py -q` → PASS (фейки живут на фолбэке)
 
-- [ ] **Step 5: Commit** `feat(obs): owner alert channel for system alerts`
+- [x] **Step 5: Commit** `feat(obs): owner alert channel for system alerts`
 
 ---
 
@@ -410,7 +410,7 @@ NAVBAT_OWNER_CHAT_ID=
 - Modify: `src/navbat/health.py`, `src/navbat/supervisor.py` (передать notifier)
 - Test: `tests/test_health.py`
 
-- [ ] **Step 1: Write the failing test** (конец test_health.py):
+- [x] **Step 1: Write the failing test** (конец test_health.py):
 
 ```python
 def test_expiring_cert_alerts_owner_once_per_day(app_session_factory, clinic_a,
@@ -427,9 +427,9 @@ def test_expiring_cert_alerts_owner_once_per_day(app_session_factory, clinic_a,
     assert "cert" in notifier.calls[0][1].lower() or "серт" in notifier.calls[0][1]
 ```
 
-- [ ] **Step 2: Run** → FAIL (нет параметра notifier)
+- [x] **Step 2: Run** → FAIL (нет параметра notifier)
 
-- [ ] **Step 3: Реализация** — `HealthChecker.__init__` принимает `notifier=None`, хранит `self._notifier`, `self._cert_alerted_on: date | None = None` (импорт date). `_check_cert` при `days < CERT_WARN_DAYS`:
+- [x] **Step 3: Реализация** — `HealthChecker.__init__` принимает `notifier=None`, хранит `self._notifier`, `self._cert_alerted_on: date | None = None` (импорт date). `_check_cert` при `days < CERT_WARN_DAYS`:
 
 ```python
         if days < CERT_WARN_DAYS and self._notifier is not None:
@@ -444,21 +444,21 @@ def test_expiring_cert_alerts_owner_once_per_day(app_session_factory, clinic_a,
 
 (импорт `from navbat.dialog.escalation import system_alert`). В `supervisor.py` HealthChecker получает `notifier=notifier`.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_health.py tests/test_supervisor.py -q` → PASS
+- [x] **Step 4: Run** `python -m pytest tests/test_health.py tests/test_supervisor.py -q` → PASS
 
-- [ ] **Step 5: Commit** `feat(obs): daily owner alert on expiring TLS cert`
+- [x] **Step 5: Commit** `feat(obs): daily owner alert on expiring TLS cert`
 
 ---
 
 ### Task 5: финал — полный сьют, smoke JSON-логов, push
 
-- [ ] **Step 1:** `python -m pytest -q` → `579 passed` (568 + 3 logging + 4 p95/queue/health + 3 escalation + 1 cert-алерт).
-- [ ] **Step 2:** smoke: пересборка app-образа, `up -d`, проверить `docker compose ... logs app | tail` — строки парсятся как JSON (`{"ts": ...`); `/health` содержит `p95_response_sec_1h`; down.
-- [ ] **Step 3:** `python -m navbat.onboard --demo`, `python -m navbat --check` → [OK]; отметить чекбоксы плана; `git push`.
+- [x] **Step 1:** `python -m pytest -q` → `579 passed` (568 + 3 logging + 4 p95/queue/health + 3 escalation + 1 cert-алерт).
+- [x] **Step 2:** smoke: пересборка app-образа, `up -d`, проверить `docker compose ... logs app | tail` — строки парсятся как JSON (`{"ts": ...`); `/health` содержит `p95_response_sec_1h`; down.
+- [x] **Step 3:** `python -m navbat.onboard --demo`, `python -m navbat --check` → [OK]; отметить чекбоксы плана; `git push`.
 
 ## Definition of Done (C-3)
 
-- [ ] Новые тесты зелёные, полный сьют зелёный (число зафиксировано).
-- [ ] В контейнере stdout — JSON-строки; /health отдаёт p95.
-- [ ] Системные алерты доходят до владельца (юнит-доказательство веером).
-- [ ] Демо восстановлено, --check [OK], всё в origin.
+- [x] Новые тесты зелёные, полный сьют зелёный (число зафиксировано).
+- [x] В контейнере stdout — JSON-строки; /health отдаёт p95.
+- [x] Системные алерты доходят до владельца (юнит-доказательство веером).
+- [x] Демо восстановлено, --check [OK], всё в origin.
