@@ -68,3 +68,30 @@ def test_no_alert_when_healthy(app_session_factory, admin_engine, clinic_a):
         loop.run_once()
     assert notifier.calls == []
     assert sync.calls == FAILURE_ALERT_THRESHOLD + 2  # синк реально звался
+
+
+# ── C-2: успешный цикл штампует clinic.gcal_last_sync_at (для /health) ──────
+
+def _last_sync_at(admin_engine, clinic_id):
+    with admin_engine.begin() as conn:
+        return conn.execute(
+            text("SELECT gcal_last_sync_at FROM clinic WHERE id = :c"),
+            {"c": clinic_id},
+        ).scalar_one()
+
+
+def test_success_stamps_last_sync(app_session_factory, admin_engine, clinic_a):
+    sync, notifier = _Sync(fail=False), RecordingNotifier()
+    loop = _loop_with_calendar_doctor(app_session_factory, admin_engine, clinic_a,
+                                      sync, notifier)
+    assert _last_sync_at(admin_engine, clinic_a) is None
+    loop.run_once()
+    assert _last_sync_at(admin_engine, clinic_a) is not None
+
+
+def test_failure_does_not_stamp(app_session_factory, admin_engine, clinic_a):
+    sync, notifier = _Sync(fail=True), RecordingNotifier()
+    loop = _loop_with_calendar_doctor(app_session_factory, admin_engine, clinic_a,
+                                      sync, notifier)
+    loop.run_once()
+    assert _last_sync_at(admin_engine, clinic_a) is None

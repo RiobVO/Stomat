@@ -72,3 +72,11 @@ class CalendarSyncLoop:
                 "синхронизация Google Calendar восстановлена.", {})
         self._consecutive_failures = 0
         self._alerted = False
+        self._stamp_last_sync()
+
+    def _stamp_last_sync(self) -> None:
+        """Успешный прогон = календарь жив; /health меряет возраст метки."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(text(
+                "UPDATE clinic SET gcal_last_sync_at = now() "
+                "WHERE id = current_setting('app.clinic_id')::uuid"))
