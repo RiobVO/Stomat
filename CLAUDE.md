@@ -62,7 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   stdlib-минимализм, всё проверяется локально в Docker). Решение: после
   группы C — батч «витрина для покупателя» (демо-показ, /stats глазами
   владельца). Планы по инкрементам: docs/superpowers/plans/2026-06-10-*.
-- ЗАКРЫТЫ C-1…C-5 (всё в origin/master, по плану на инкремент, TDD):
+- ЗАКРЫТЫ C-1…C-6 (всё в origin/master, по плану на инкремент, TDD):
   C-1 контейнеризация — Dockerfile (editable: parents[3]/spike_nlu!),
   entrypoint с alembic upgrade, SIGTERM graceful, validate_real_env,
   deploy/docker-compose.prod.yml, smoke на чистом томе (ExitCode=0);
@@ -85,10 +85,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   после бэкапа доехал из WAL, RTO = 24 сек, runbook + PITR-вариант в
   docs/OPERATIONS.md (грабли: stopped-контейнер держит том → rm -f -s;
   вложенные кавычки из PowerShell → printf \047). Python-кода ноль,
-  pytest не гонялся — дев-демо цело, --check [OK].
-- СЛЕДУЮЩИЙ ШАГ: C-6 (GCal watch +
-  мгновенный алерт OAuth-refresh), затем C-7 финал: docs/DEPLOY.md
-  («голый VPS → клиника»), smoke, чекбоксы BRIEF разд. 14 группы C,
+  pytest не гонялся — дев-демо цело, --check [OK];
+  C-6 GCal watch — 0015 (поля канала в doctor), API watch_events/
+  stop_channel, GcalWatchManager (продление = новый канал за RENEW_LEAD
+  до expiration + stop старого; сбой watch → warning, поллинг прикрывает;
+  только при заданном --webhook-url), POST /gcal/push/<channel_id> на
+  WebhookServer (валидация по doctor.gcal_channel_id, тело не парсится)
+  взводит sync_wake → календарный цикл просыпается сразу; CalendarAuthError
+  в sync_loop → алерт в ПЕРВЫЙ цикл (раз в день, без дубля порогового),
+  восстановление перевзводит. Тестов 607.
+- СЛЕДУЮЩИЙ ШАГ: C-7 финал: docs/DEPLOY.md
+  («голый VPS → клиника», включая верификацию Google-приложения и
+  7-дневный TTL refresh-токена testing-режима), smoke прод-стека,
+  чекбоксы BRIEF разд. 14 группы C,
   серия 8/8, обновить этот якорь. Рабочие заметки: Docker Desktop может
   быть выключен — стартануть и ждать демона; deploy/.env сгенерирован
   локально (gitignored, tg-токен скопирован из корневого .env);
