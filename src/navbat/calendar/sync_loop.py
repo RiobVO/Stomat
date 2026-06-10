@@ -12,6 +12,7 @@ import logging
 from sqlalchemy import text
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog.escalation import system_alert
 from navbat.telegram.escalation import _as_chat_tuple
 
 log = logging.getLogger("navbat.calendar.sync_loop")
@@ -57,19 +58,20 @@ class CalendarSyncLoop:
             self._consecutive_failures += 1
             if (self._consecutive_failures >= FAILURE_ALERT_THRESHOLD
                     and not self._alerted):
-                self._notifier.notify(
-                    self._admin_chat_id,
+                system_alert(
+                    self._notifier,
                     f"синхронизация Google Calendar не работает "
                     f"{self._consecutive_failures} циклов подряд — проверьте "
                     f"доступ Google (возможно, протух токен). Пока синк стоит, "
                     f"бот может записать пациента на занятое врачом время.",
-                    {"consecutive_failures": self._consecutive_failures})
+                    {"consecutive_failures": self._consecutive_failures},
+                    chat_id=self._admin_chat_id)
                 self._alerted = True
             return
         if self._alerted:
-            self._notifier.notify(
-                self._admin_chat_id,
-                "синхронизация Google Calendar восстановлена.", {})
+            system_alert(self._notifier,
+                         "синхронизация Google Calendar восстановлена.", {},
+                         chat_id=self._admin_chat_id)
         self._consecutive_failures = 0
         self._alerted = False
         self._stamp_last_sync()

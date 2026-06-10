@@ -23,7 +23,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import get_chat_lang
-from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import (
+    EscalationNotifier,
+    LoggingEscalation,
+    system_alert,
+)
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
 from navbat.telegram.api import ChatUnavailableError
@@ -81,10 +85,11 @@ class UpdateWorker:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
                 status = fail(session, claimed.id)
             if status == "failed":
-                self._notifier.notify(
-                    claimed.tg_chat_id,
+                system_alert(
+                    self._notifier,
                     f"апдейт {claimed.update_id} в dead letter: {e}",
                     {"update_id": claimed.update_id},
+                    chat_id=claimed.tg_chat_id,
                 )
             return True
         with tenant_transaction(self._session_factory, self._clinic_id) as session:

@@ -150,8 +150,10 @@ def ensure_webhook(api, url: str, secret: str, notifier=None, path: str = "",
                 waiter(WEBHOOK_SETUP_BACKOFF[
                     min(attempt, len(WEBHOOK_SETUP_BACKOFF) - 1)])
     if notifier is not None:
-        notifier.notify(
-            0,
+        from navbat.dialog.escalation import system_alert
+
+        system_alert(
+            notifier,
             f"webhook не установлен после {WEBHOOK_SETUP_RETRIES} попыток — "
             f"бот глух для Telegram. Проверьте домен/cert. URL: {full_url}",
             {})

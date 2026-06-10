@@ -21,7 +21,11 @@ from navbat.dialog.conversation import (
     load_conversation,
     save_conversation,
 )
-from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import (
+    EscalationNotifier,
+    LoggingEscalation,
+    system_alert,
+)
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.retention import cleanup_old_data
 from navbat.stats import collect_daily_stats, render_stats, should_send_digest
@@ -143,11 +147,12 @@ class ReminderService:
                     {"id": row.id, "max": MAX_ATTEMPTS},
                 ).scalar_one()
             if status == "failed":
-                self._notifier.notify(
-                    row.tg_chat_id or 0,
+                system_alert(
+                    self._notifier,
                     f"напоминание о записи {row.appointment_id} не доставлено "
                     f"после {MAX_ATTEMPTS} попыток",
-                    {"reminder": row.id})
+                    {"reminder": row.id},
+                    chat_id=row.tg_chat_id or 0)
             return False
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             session.execute(
