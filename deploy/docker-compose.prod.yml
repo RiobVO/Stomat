@@ -2,9 +2,28 @@
 # Запускать из deploy/; конфигурация — deploy/.env (см. .env.example).
 # nginx/certbot добавляются в C-2, backup-sidecar — в C-5.
 services:
+  # named volume отдаётся root'ом, archive_command от postgres писать
+  # в него не сможет — одноразовый chown до старта БД
+  wal-perms:
+    image: postgres:16-alpine
+    user: root
+    entrypoint: ["/bin/sh", "-c", "chown postgres:postgres /wal_archive && chmod 700 /wal_archive"]
+    volumes:
+      - wal_archive:/wal_archive
+    restart: "no"
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # WAL-архив для PITR: test ! -f защищает от перезаписи сегмента
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /wal_archive/%f && cp %p /wal_archive/%f
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${NAVBAT_PG_PASSWORD:?задай в deploy/.env}
@@ -13,6 +32,10 @@ services:
     volumes:
       - ./initdb:/docker-entrypoint-initdb.d:ro
       - pgdata:/var/lib/postgresql/data
+      - wal_archive:/wal_archive
+    depends_on:
+      wal-perms:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d navbat"]
       interval: 5s
@@ -75,7 +98,25 @@ services:
       - certbot-webroot:/var/www/certbot
     profiles: ["web"]
 
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${NAVBAT_PG_PASSWORD}
+      NAVBAT_BACKUP_INTERVAL_SEC: ${NAVBAT_BACKUP_INTERVAL_SEC:-7200}
+      NAVBAT_BACKUP_KEEP: ${NAVBAT_BACKUP_KEEP:-12}
+      NAVBAT_BACKUP_RCLONE_REMOTE: ${NAVBAT_BACKUP_RCLONE_REMOTE:-}
+    volumes:
+      - ./scripts/backup-loop.sh:/backup-loop.sh:ro
+      - backups:/backups
+    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  wal_archive:
+  backups:
   letsencrypt:
   certbot-webroot:
