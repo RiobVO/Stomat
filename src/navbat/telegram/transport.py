@@ -13,6 +13,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
@@ -24,6 +25,8 @@ log = logging.getLogger("navbat.telegram")
 POLL_ERROR_WAIT = 5.0  # сек паузы после сбоя getUpdates
 
 SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
+
+GCAL_PUSH_PREFIX = "/gcal/push/"
 
 
 def _chat_of(update: dict) -> int:
@@ -69,7 +72,8 @@ class WebhookServer:
     def __init__(self, session_factory: sessionmaker[Session],
                  clinic_id: uuid.UUID, secret: str,
                  host: str = "0.0.0.0", port: int = 8443,
-                 path: str | None = None) -> None:
+                 path: str | None = None,
+                 gcal_wake: threading.Event | None = None) -> None:
         self.path = path or f"/webhook/{clinic_id}"
         outer = self
 
@@ -78,6 +82,12 @@ class WebhookServer:
                 # тело вычитывается ДО любого ответа: отказ (403/404) с
                 # непрочитанным телом рвёт сокет на полуслове (WinError 10053)
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                if self.path.startswith(GCAL_PUSH_PREFIX):
+                    # push Google: тело не парсим (X-Goog-* в заголовках),
+                    # факт уведомления = «в календаре что-то поменялось»
+                    self._respond(outer._gcal_push(
+                        self.path[len(GCAL_PUSH_PREFIX):]))
+                    return
                 if self.path != outer.path:
                     self._respond(404)
                     return
@@ -105,6 +115,7 @@ class WebhookServer:
 
         self._session_factory = session_factory
         self._clinic_id = clinic_id
+        self._gcal_wake = gcal_wake
         self._server = ThreadingHTTPServer((host, port), Handler)
         self._thread: threading.Thread | None = None
 
@@ -123,6 +134,20 @@ class WebhookServer:
         self._server.server_close()
         if self._thread:
             self._thread.join(timeout=5)
+
+    def _gcal_push(self, token: str) -> int:
+        """Валидация по channel_id канала; неизвестный/протухший — 404
+        (Google сам перестанет слать после expiration)."""
+        if self._gcal_wake is None:
+            return 404
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            known = session.execute(
+                text("SELECT 1 FROM doctor WHERE gcal_channel_id = :token"),
+                {"token": token}).scalar_one_or_none()
+        if known is None:
+            return 404
+        self._gcal_wake.set()
+        return 200
 
 
 WEBHOOK_SETUP_RETRIES = 3
