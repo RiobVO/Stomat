@@ -152,6 +152,18 @@ class UpdateWorker:
                         and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._forget_reply(message["text"]))
                     return
+                if (message["text"].split()[:1] == ["/pause"]
+                        and chat_id in self._admin_chat_ids):
+                    self._send(chat_id, self._pause_reply(message["text"]))
+                    return
+                if (message["text"].strip() == "/resume"
+                        and chat_id in self._admin_chat_ids):
+                    self._send(chat_id, self._resume_reply())
+                    return
+                if (message["text"].split()[:1] == ["/llm"]
+                        and chat_id in self._admin_chat_ids):
+                    self._send(chat_id, self._llm_reply(message["text"]))
+                    return
                 if self._bot_paused():
                     # пауза (/pause): вежливый ответ вместо диалога; команды
                     # админа выше по коду продолжают работать
@@ -185,6 +197,38 @@ class UpdateWorker:
             self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
+
+    def _set_clinic_flag(self, column: str, value: bool) -> None:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(text(
+                f"UPDATE clinic SET {column} = :v "
+                f"WHERE id = current_setting('app.clinic_id')::uuid"),
+                {"v": value})
+
+    def _pause_reply(self, command: str) -> Reply:
+        """Пауза бота: /pause [причина] (C-4). Пациенты получают вежливое
+        сообщение, напоминания продолжают ходить, /resume — обратно."""
+        reason = command.partition(" ")[2].strip()
+        self._set_clinic_flag("bot_paused", True)
+        suffix = f" ({reason})" if reason else ""
+        return Reply(f"[OK] бот на паузе{suffix}. Пациентам отвечаем "
+                     f"«запись временно по телефону». Вернуть: /resume")
+
+    def _resume_reply(self) -> Reply:
+        self._set_clinic_flag("bot_paused", False)
+        return Reply("[OK] бот снова принимает запись")
+
+    def _llm_reply(self, command: str) -> Reply:
+        """Рубильник NLU: /llm off — кнопки работают, свободный текст → меню."""
+        arg = command.split()[1:2]
+        if arg == ["off"]:
+            self._set_clinic_flag("llm_enabled", False)
+            return Reply("[OK] LLM выключен: кнопки работают, свободный "
+                         "текст уходит в меню. Вернуть: /llm on")
+        if arg == ["on"]:
+            self._set_clinic_flag("llm_enabled", True)
+            return Reply("[OK] LLM включён")
+        return Reply("Формат: /llm on | /llm off")
 
     def _bot_paused(self) -> bool:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
