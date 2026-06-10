@@ -47,7 +47,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: navbat:latest
+    # тег = git SHA при деплое (NAVBAT_IMAGE_TAG в .env) — откат на
+    # предыдущий образ одной строкой; см. docs/DEPLOY.md
+    image: navbat:${NAVBAT_IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file: .env
     environment:

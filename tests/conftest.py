@@ -88,6 +88,25 @@ def app_session_factory(migrated):
     engine.dispose()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def restore_demo_clinic_after_suite(migrated):
+    """pytest TRUNCATE'ит демо-клинику с токеном бота — возвращаем её после
+    сьюта (локальная боль каждого прогона). В CI .env нет — шаг пропускается.
+    NAVBAT_ENC_KEY тестов вырезается: демо шифруется dev-ключом onboard."""
+    yield
+    import subprocess
+    import sys
+
+    if not os.path.exists(os.path.join(os.path.dirname(__file__), "..", ".env")):
+        return
+    env = {k: v for k, v in os.environ.items() if k != "NAVBAT_ENC_KEY"}
+    result = subprocess.run(
+        [sys.executable, "-m", "navbat.onboard", "--demo"],
+        env=env, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        print(f"\n[WARN] демо-клиника не восстановлена: {result.stderr[-300:]}")
+
+
 @pytest.fixture(autouse=True)
 def clean_tables(admin_engine, migrated):
     with admin_engine.begin() as conn:

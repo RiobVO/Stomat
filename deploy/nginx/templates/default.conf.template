@@ -1,6 +1,11 @@
 # Рендерится образом nginx через envsubst (каталог templates).
 # resolver 127.0.0.11 (DNS докера) + переменная в proxy_pass: nginx
 # стартует и проходит -t даже когда app ещё не поднят.
+
+# защита публичных путей от тупого флуда; легитимный трафик одной
+# клиники — единицы запросов в секунду, 20r/s+burst не зажмёт
+limit_req_zone $binary_remote_addr zone=navbat_pub:10m rate=20r/s;
+
 server {
     listen 80;
     server_name ${NAVBAT_DOMAIN};
@@ -25,10 +30,12 @@ server {
 
     # webhook Telegram и push Google — всё остальное наружу закрыто
     location /webhook/ {
+        limit_req zone=navbat_pub burst=40 nodelay;
         proxy_pass $app_upstream;
         proxy_set_header Host $host;
     }
     location /gcal/push/ {
+        limit_req zone=navbat_pub burst=40 nodelay;
         proxy_pass $app_upstream;
     }
     location / {
