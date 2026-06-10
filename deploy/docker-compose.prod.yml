@@ -1,0 +1,41 @@
+# Прод-стек Navbat: docker compose -f docker-compose.prod.yml up -d
+# Запускать из deploy/; конфигурация — deploy/.env (см. .env.example).
+# nginx/certbot добавляются в C-2, backup-sidecar — в C-5.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${NAVBAT_PG_PASSWORD:?задай в deploy/.env}
+      POSTGRES_DB: navbat
+      NAVBAT_APP_PASSWORD: ${NAVBAT_APP_PASSWORD:?задай в deploy/.env}
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d navbat"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # порт наружу НЕ публикуем: БД доступна только внутри compose-сети
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: navbat:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # внутри compose-сети postgres живёт на :5432 под именем сервиса
+      NAVBAT_ADMIN_DSN: postgresql+psycopg://postgres:${NAVBAT_PG_PASSWORD}@postgres:5432/navbat
+      NAVBAT_APP_DSN: postgresql+psycopg://navbat_app:${NAVBAT_APP_PASSWORD}@postgres:5432/navbat
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # polling-цикл проверяет stop раз в long-poll (до 30 с) — даём время
+    stop_grace_period: 40s
+
+volumes:
+  pgdata:
