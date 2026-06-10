@@ -95,3 +95,52 @@ def test_failure_does_not_stamp(app_session_factory, admin_engine, clinic_a):
                                       sync, notifier)
     loop.run_once()
     assert _last_sync_at(admin_engine, clinic_a) is None
+
+
+# ── C-6: OAuth-сбой алертится сразу (сам не чинится), раз в день ────────────
+
+from navbat.calendar.api import CalendarAuthError
+
+
+class _AuthDeadSync:
+    def __init__(self) -> None:
+        self.fail = True
+
+    def sync_doctor(self, doctor_id) -> None:
+        if self.fail:
+            raise CalendarAuthError("refresh не удался (400): invalid_grant")
+
+
+def test_auth_error_alerts_immediately(app_session_factory, admin_engine, clinic_a):
+    sync, notifier = _AuthDeadSync(), RecordingNotifier()
+    loop = _loop_with_calendar_doctor(app_session_factory, admin_engine, clinic_a,
+                                      sync, notifier)
+    loop.run_once()  # ПЕРВЫЙ же цикл — не ждём порога 3
+    assert len(notifier.calls) == 1
+    assert "переавторизац" in notifier.calls[0][1]
+
+
+def test_auth_alert_once_per_day_no_threshold_duplicate(app_session_factory,
+                                                        admin_engine, clinic_a):
+    sync, notifier = _AuthDeadSync(), RecordingNotifier()
+    loop = _loop_with_calendar_doctor(app_session_factory, admin_engine, clinic_a,
+                                      sync, notifier)
+    for _ in range(FAILURE_ALERT_THRESHOLD + 2):
+        loop.run_once()
+    # один auth-алерт; генерический порог-алерт НЕ дублирует его
+    assert len(notifier.calls) == 1
+
+
+def test_auth_recovery_notifies_and_rearms(app_session_factory, admin_engine,
+                                           clinic_a):
+    sync, notifier = _AuthDeadSync(), RecordingNotifier()
+    loop = _loop_with_calendar_doctor(app_session_factory, admin_engine, clinic_a,
+                                      sync, notifier)
+    loop.run_once()
+    sync.fail = False
+    loop.run_once()  # восстановление (переавторизовали)
+    assert len(notifier.calls) == 2
+    assert "восстановлена" in notifier.calls[1][1]
+    sync.fail = True
+    loop.run_once()  # умер снова в тот же день — алертим опять
+    assert len(notifier.calls) == 3
