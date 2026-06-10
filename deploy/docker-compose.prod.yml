@@ -31,11 +31,50 @@ services:
       # внутри compose-сети postgres живёт на :5432 под именем сервиса
       NAVBAT_ADMIN_DSN: postgresql+psycopg://postgres:${NAVBAT_PG_PASSWORD}@postgres:5432/navbat
       NAVBAT_APP_DSN: postgresql+psycopg://navbat_app:${NAVBAT_APP_PASSWORD}@postgres:5432/navbat
+      NAVBAT_CERT_PATH: /etc/letsencrypt/live/${NAVBAT_DOMAIN:-unset}/fullchain.pem
+    volumes:
+      - letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health?check=db', timeout=5); sys.exit(0 if r.status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
     # polling-цикл проверяет stop раз в long-poll (до 30 с) — даём время
     stop_grace_period: 40s
 
+  # web-профиль: только на VPS с доменом; локальный smoke его не поднимает
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      NAVBAT_DOMAIN: ${NAVBAT_DOMAIN:-unset}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - app
+    profiles: ["web"]
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c",
+                 "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    profiles: ["web"]
+
 volumes:
   pgdata:
+  letsencrypt:
+  certbot-webroot:

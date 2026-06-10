@@ -1,0 +1,37 @@
+# Рендерится образом nginx через envsubst (каталог templates).
+# resolver 127.0.0.11 (DNS докера) + переменная в proxy_pass: nginx
+# стартует и проходит -t даже когда app ещё не поднят.
+server {
+    listen 80;
+    server_name ${NAVBAT_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${NAVBAT_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${NAVBAT_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${NAVBAT_DOMAIN}/privkey.pem;
+
+    resolver 127.0.0.11 valid=10s;
+    set $app_upstream http://app:8443;
+
+    # webhook Telegram и push Google — всё остальное наружу закрыто
+    location /webhook/ {
+        proxy_pass $app_upstream;
+        proxy_set_header Host $host;
+    }
+    location /gcal/push/ {
+        proxy_pass $app_upstream;
+    }
+    location / {
+        return 404;
+    }
+}
