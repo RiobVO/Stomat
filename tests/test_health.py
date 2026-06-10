@@ -149,3 +149,54 @@ def test_p95_reported_in_health(app_session_factory, admin_engine, clinic_a):
     ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
     assert ok is True
     assert checks["p95_response_sec_1h"] is not None
+
+
+# ── свежесть бэкапов: тихая смерть backup-sidecar = алерт, не сюрприз ───────
+
+def _backup_dir(tmp_path, name: str):
+    (tmp_path / name).mkdir()
+    return str(tmp_path)
+
+
+def _stamp(delta: timedelta) -> str:
+    return (datetime.now(timezone.utc) - delta).strftime("%Y%m%d-%H%M%S")
+
+
+def test_backups_not_configured_is_ok(app_session_factory, clinic_a):
+    ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
+    assert ok is True
+    assert checks["backups"] == "not-configured"
+
+
+def test_fresh_backup_is_ok(app_session_factory, clinic_a, tmp_path):
+    backups = _backup_dir(tmp_path, _stamp(timedelta(minutes=30)))
+    checker = HealthChecker(app_session_factory, clinic_a, backup_dir=backups,
+                            backup_interval_sec=7200)
+    ok, checks = checker.snapshot()
+    assert ok is True
+    assert checks["backups"].startswith("ok")
+
+
+def test_stale_backup_degrades_and_alerts_daily(app_session_factory, clinic_a,
+                                                tmp_path):
+    from test_dialog_booking import RecordingNotifier
+
+    backups = _backup_dir(tmp_path, _stamp(timedelta(hours=6)))  # > 2 интервала
+    notifier = RecordingNotifier()
+    checker = HealthChecker(app_session_factory, clinic_a, backup_dir=backups,
+                            backup_interval_sec=7200, notifier=notifier)
+    ok, checks = checker.snapshot()
+    assert ok is False
+    assert "stale" in checks["backups"]
+    checker.snapshot()  # тот же день — без повтора
+    assert len(notifier.calls) == 1
+    assert "бэкап" in notifier.calls[0][1].lower()
+
+
+def test_empty_backup_dir_degrades(app_session_factory, clinic_a, tmp_path):
+    # каталог смонтирован, но sidecar ни разу не снял бэкап — это сбой
+    checker = HealthChecker(app_session_factory, clinic_a,
+                            backup_dir=str(tmp_path), backup_interval_sec=7200)
+    ok, checks = checker.snapshot()
+    assert ok is False
+    assert checks["backups"] == "empty"

@@ -303,7 +303,10 @@ def main() -> int:
         HealthChecker(session_factory, args.clinic,
                       sync_interval_sec=args.sync_interval,
                       cert_path=os.environ.get("NAVBAT_CERT_PATH"),
-                      notifier=notifier),
+                      notifier=notifier,
+                      backup_dir=os.environ.get("NAVBAT_BACKUP_DIR"),
+                      backup_interval_sec=int(os.environ.get(
+                          "NAVBAT_BACKUP_INTERVAL_SEC", "7200"))),
         port=args.health_port)
     health.start()
 

@@ -56,8 +56,12 @@ services:
       NAVBAT_APP_DSN: postgresql+psycopg://navbat_app:${NAVBAT_APP_PASSWORD}@postgres:5432/navbat
       NAVBAT_CERT_PATH: /etc/letsencrypt/live/${NAVBAT_DOMAIN:-unset}/fullchain.pem
       NAVBAT_LOG_FORMAT: json
+      # /health следит за свежестью бэкапов (тихая смерть sidecar = алерт)
+      NAVBAT_BACKUP_DIR: /backups
+      NAVBAT_BACKUP_INTERVAL_SEC: ${NAVBAT_BACKUP_INTERVAL_SEC:-7200}
     volumes:
       - letsencrypt:/etc/letsencrypt:ro
+      - backups:/backups:ro
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health?check=db', timeout=5); sys.exit(0 if r.status==200 else 1)"]
