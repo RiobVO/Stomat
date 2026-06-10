@@ -67,20 +67,26 @@ def load_clinic_credentials(session_factory: sessionmaker[Session],
 def build_dialog_extractor(use_real: bool, session_factory, clinic_id, notifier):
     """NLU для канала. --real собирает ТУ ЖЕ цепочку, что супервизор
     (деидентификация + дневной бюджет + дрейф + fallback) — голый
-    OpenAIExtractor слал бы PII в LLM без маскировки (C1)."""
+    OpenAIExtractor слал бы PII в LLM без маскировки (C1).
+    Снаружи всегда GatedExtractor (C-4): рубильник /llm off и глобальный
+    NAVBAT_LLM_DISABLED действуют одинаково на боевом и фейковом NLU."""
+    from navbat.nlu.wrappers import GatedExtractor
+
     if use_real:
         if not os.environ.get("OPENAI_API_KEY"):
             sys.exit("[FAIL] --real требует OPENAI_API_KEY")
         from navbat.supervisor import build_real_extractor
 
         log.warning("NLU: gpt-4o-mini — каждое сообщение стоит денег")
-        return build_real_extractor(session_factory, clinic_id, notifier)
+        return GatedExtractor(
+            build_real_extractor(session_factory, clinic_id, notifier),
+            session_factory, clinic_id)
     if not FIXTURES.exists():
         sys.exit(f"[FAIL] нет фикстур {FIXTURES} — без --real нужен spike_nlu")
     extractor = FakeExtractor.from_fixtures(FIXTURES)
     log.info("NLU: фейковый экстрактор, %d фраз спайка (без API-вызовов)",
              len(extractor))
-    return extractor
+    return GatedExtractor(extractor, session_factory, clinic_id)
 
 
 def main() -> int:
