@@ -1,4 +1,4 @@
-# C-2 Публичная поверхность — Implementation Plan
+﻿# C-2 Публичная поверхность — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -29,7 +29,7 @@
 - Modify: `src/navbat/calendar/sync_loop.py`
 - Test: `tests/test_calendar_sync_loop.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Добавить в конец `tests/test_calendar_sync_loop.py`:
 
@@ -61,12 +61,12 @@ def test_failure_does_not_stamp(app_session_factory, admin_engine, clinic_a):
     assert _last_sync_at(admin_engine, clinic_a) is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_calendar_sync_loop.py -q`
 Expected: 2 FAIL — `column "gcal_last_sync_at" does not exist` (миграции ещё нет)
 
-- [ ] **Step 3: Create migration `migrations/versions/0011_gcal_last_sync.py`**
+- [x] **Step 3: Create migration `migrations/versions/0011_gcal_last_sync.py`**
 
 ```python
 """C-2: метка последнего успешного синка календаря.
@@ -93,7 +93,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE clinic DROP COLUMN IF EXISTS gcal_last_sync_at")
 ```
 
-- [ ] **Step 4: Implement в sync_loop**
+- [x] **Step 4: Implement в sync_loop**
 
 В `src/navbat/calendar/sync_loop.py` заменить хвост `_record` (после ветки `if failed:`):
 
@@ -114,12 +114,12 @@ def downgrade() -> None:
                 "WHERE id = current_setting('app.clinic_id')::uuid"))
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_calendar_sync_loop.py -q`
 Expected: 5 passed (3 старых + 2 новых)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add migrations/versions/0011_gcal_last_sync.py src/navbat/calendar/sync_loop.py tests/test_calendar_sync_loop.py
@@ -138,7 +138,7 @@ git commit -m "feat(health): stamp clinic.gcal_last_sync_at on successful sync c
 - Modify: `src/navbat/onboard.py` (запись секрета)
 - Test: `tests/test_tg_app.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Добавить в конец `tests/test_tg_app.py`:
 
@@ -179,12 +179,12 @@ def test_credentials_without_secret_is_none(app_session_factory, admin_engine,
     assert creds.webhook_secret is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_tg_app.py -q -k credentials`
 Expected: FAIL — `column "tg_webhook_secret_encrypted" does not exist`
 
-- [ ] **Step 3: Create migration `migrations/versions/0012_webhook_secret_encrypted.py`**
+- [x] **Step 3: Create migration `migrations/versions/0012_webhook_secret_encrypted.py`**
 
 ```python
 """C-2: webhook-секрет шифруется как токен бота.
@@ -235,7 +235,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE clinic DROP COLUMN IF EXISTS tg_webhook_secret_encrypted")
 ```
 
-- [ ] **Step 4: Update код чтения и записи секрета**
+- [x] **Step 4: Update код чтения и записи секрета**
 
 `src/navbat/telegram/app.py`, `load_clinic_credentials` — SELECT и сборка:
 
@@ -283,17 +283,17 @@ def downgrade() -> None:
              "secret": encrypt_text(secrets.token_urlsafe(32)), "id": clinic_id},
 ```
 
-- [ ] **Step 5: Проверить, что других чтений старой колонки нет**
+- [x] **Step 5: Проверить, что других чтений старой колонки нет**
 
 Run: `grep -rn "tg_webhook_secret\b" src/ tests/ --include=*.py | grep -v encrypted`
 Expected: пусто (все обращения — к `tg_webhook_secret_encrypted`)
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `python -m pytest tests/test_tg_app.py tests/test_onboard_clinic.py -q`
 Expected: PASS (включая 2 новых)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add migrations/versions/0012_webhook_secret_encrypted.py src/navbat/telegram/app.py src/navbat/onboard.py tests/test_tg_app.py
@@ -311,7 +311,7 @@ git commit -m "feat(privacy): encrypt clinic webhook secret at rest"
 - Modify: `src/navbat/telegram/app.py` (webhook-ветка)
 - Test: `tests/test_tg_transport.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Добавить в конец `tests/test_tg_transport.py`:
 
@@ -362,12 +362,12 @@ def test_ensure_webhook_exhausted_alerts_and_survives():
     assert "webhook" in notifier.calls[0][1].lower()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_tg_transport.py -q -k ensure_webhook`
 Expected: 3 FAIL — `ImportError: cannot import name 'ensure_webhook'`
 
-- [ ] **Step 3: Implement в transport.py**
+- [x] **Step 3: Implement в transport.py**
 
 Добавить `import time` к импортам `transport.py` и в конец файла:
 
@@ -417,12 +417,12 @@ def ensure_webhook(api, url: str, secret: str, notifier=None, path: str = "",
 
 и импорт: `from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_webhook`
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python -m pytest tests/test_tg_transport.py -q`
 Expected: все PASS (6 старых + 3 новых)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/navbat/telegram/transport.py src/navbat/telegram/app.py tests/test_tg_transport.py
@@ -437,7 +437,7 @@ git commit -m "feat(deploy): verified setWebhook with retries and admin alert"
 - Create: `src/navbat/health.py`
 - Test: `tests/test_health.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Создать `tests/test_health.py`:
 
@@ -569,12 +569,12 @@ def test_expiring_cert_degrades(app_session_factory, clinic_a, tmp_path):
     assert checks["cert_days_left"] <= CERT_WARN_DAYS - 5
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_health.py -q`
 Expected: FAIL на импорте — `ModuleNotFoundError: No module named 'navbat.health'`
 
-- [ ] **Step 3: Create `src/navbat/health.py`**
+- [x] **Step 3: Create `src/navbat/health.py`**
 
 ```python
 """Health-эндпоинт: docker healthcheck + ручная диагностика (C-2).
@@ -752,12 +752,12 @@ class HealthServer:
             self._thread.join(timeout=5)
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python -m pytest tests/test_health.py -q`
 Expected: 8 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/navbat/health.py tests/test_health.py
@@ -773,7 +773,7 @@ git commit -m "feat(health): /health endpoint - db, queue, calendar age, cert ex
 - Modify: `deploy/entrypoint.sh`
 - Modify: `deploy/.env.example`
 
-- [ ] **Step 1: Add args + wiring в supervisor.main()**
+- [x] **Step 1: Add args + wiring в supervisor.main()**
 
 Аргументы (после `--no-calendar`):
 
@@ -831,7 +831,7 @@ from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_we
     return 0
 ```
 
-- [ ] **Step 2: entrypoint + .env.example**
+- [x] **Step 2: entrypoint + .env.example**
 
 `deploy/entrypoint.sh` — добавить к exec-строке:
 
@@ -857,12 +857,12 @@ NAVBAT_WEBHOOK_URL=
 # NAVBAT_HEALTH_PORT=8080
 ```
 
-- [ ] **Step 3: Run быстрая проверка**
+- [x] **Step 3: Run быстрая проверка**
 
 Run: `python -m pytest tests/test_supervisor.py tests/test_health.py -q && python -m navbat --check`
 Expected: тесты PASS; --check все [OK] (поведение не изменилось)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/navbat/supervisor.py deploy/entrypoint.sh deploy/.env.example
@@ -878,7 +878,7 @@ git commit -m "feat(deploy): supervisor webhook mode + health server thread"
 - Create: `deploy/scripts/check-nginx-config.sh`
 - Modify: `deploy/docker-compose.prod.yml`
 
-- [ ] **Step 1: Create `deploy/nginx/templates/default.conf.template`**
+- [x] **Step 1: Create `deploy/nginx/templates/default.conf.template`**
 
 ```nginx
 # Рендерится образом nginx через envsubst (каталог templates).
@@ -920,7 +920,7 @@ server {
 }
 ```
 
-- [ ] **Step 2: Create `deploy/scripts/check-nginx-config.sh`**
+- [x] **Step 2: Create `deploy/scripts/check-nginx-config.sh`**
 
 ```sh
 #!/bin/sh
@@ -949,7 +949,7 @@ rm -rf "$TMP"
 (На Windows-хосте git-bash может покалечить пути volume — тогда проверка
 выполняется на VPS при деплое; это зафиксировано в DEPLOY.md в C-7.)
 
-- [ ] **Step 3: Дополнить `deploy/docker-compose.prod.yml`**
+- [x] **Step 3: Дополнить `deploy/docker-compose.prod.yml`**
 
 К сервису `app` добавить:
 
@@ -1010,7 +1010,7 @@ rm -rf "$TMP"
 Профиль `web`: локальный smoke (`up -d`) поднимает postgres+app без nginx
 (домена нет); на VPS — `docker compose --profile web up -d`.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml config --quiet && echo CONFIG-OK
@@ -1018,7 +1018,7 @@ bash deploy/scripts/check-nginx-config.sh
 ```
 Expected: `CONFIG-OK`; от nginx — `syntax is ok` + `test is successful` + `[OK] nginx-шаблон валиден` (либо задокументированный отказ из-за путей Windows).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add deploy/nginx/templates/default.conf.template deploy/scripts/check-nginx-config.sh deploy/docker-compose.prod.yml
@@ -1029,7 +1029,7 @@ git commit -m "feat(deploy): nginx TLS termination + certbot renewal in prod com
 
 ### Task 7: миграция дев-базы, полный сьют, smoke, push
 
-- [ ] **Step 1: Бэкфилл дев-базы с проверкой round-trip**
+- [x] **Step 1: Бэкфилл дев-базы с проверкой round-trip**
 
 Дев-БД содержит демо-клинику с plaintext-секретом — живая проверка backfill 0012.
 PowerShell:
@@ -1054,12 +1054,12 @@ Remove-Item Env:NAVBAT_ENC_KEY
 
 Expected: `[OK] backfill round-trip`
 
-- [ ] **Step 2: Полный сьют**
+- [x] **Step 2: Полный сьют**
 
 Run: `python -m pytest -q`
-Expected: `569 passed` (554 + 2 sync_loop + 2 credentials + 3 ensure_webhook + 8 health).
+Expected: `568 passed (один тест плана влит в существующий, а не добавлен отдельно)` (554 + 2 sync_loop + 2 credentials + 3 ensure_webhook + 8 health).
 
-- [ ] **Step 3: Smoke прод-стека (postgres+app, без web-профиля)**
+- [x] **Step 3: Smoke прод-стека (postgres+app, без web-профиля)**
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml down -v
@@ -1074,7 +1074,7 @@ docker compose -f deploy/docker-compose.prod.yml down
 ```
 Expected: JSON со `"status": "ok"`; в `ps` — статус `healthy` (docker healthcheck по /health?check=db).
 
-- [ ] **Step 4: Восстановить дев-демо и запушить**
+- [x] **Step 4: Восстановить дев-демо и запушить**
 
 ```bash
 python -m navbat.onboard --demo
@@ -1087,8 +1087,8 @@ Expected: все [OK]; push успешен.
 
 ## Definition of Done (C-2)
 
-- [ ] ~15 новых тестов зелёные, полный сьют зелёный, число зафиксировано.
-- [ ] Backfill 0012 проверен round-trip'ом на живой дев-базе.
-- [ ] Smoke: app-контейнер `healthy` по docker healthcheck, /health отдаёт ok.
-- [ ] nginx-шаблон прошёл `nginx -t` (или отказ задокументирован как Windows-путь-лимитация).
-- [ ] Демо-клиника восстановлена, `--check` [OK], всё запушено.
+- [x] ~15 новых тестов зелёные, полный сьют зелёный, число зафиксировано.
+- [x] Backfill 0012 проверен round-trip'ом на живой дев-базе.
+- [x] Smoke: app-контейнер `healthy` по docker healthcheck, /health отдаёт ok.
+- [x] nginx-шаблон прошёл `nginx -t` (или отказ задокументирован как Windows-путь-лимитация).
+- [x] Демо-клиника восстановлена, `--check` [OK], всё запушено.
