@@ -77,10 +77,21 @@ TEMPLATES = {
         "ru": "Сейчас клиника закрыта.\nБлижайшее свободное время — {date}:",
         "uz": "Hozir klinika yopiq.\nEng yaqin bo'sh vaqt — {date}:",
     },
-    "no_slots_at_all": {
-        "ru": "В ближайшие две недели свободного времени нет — передаю администратору.",
-        "uz": "Yaqin ikki haftada bo'sh vaqt yo'q — sizni administratorga "
-              "ulayman.",
+    "no_slots_calendar": {
+        "ru": "В ближайшие две недели свободного времени нет. Выберите день "
+              "в календаре — или загляните позже.",
+        "uz": "Yaqin ikki haftada bo'sh vaqt yo'q. Kalendardan kun tanlang "
+              "yoki keyinroq urinib ko'ring.",
+    },
+    "btn_pick_date": {"ru": "📅 Выбрать дату", "uz": "📅 Sanani tanlash"},
+    "btn_back_calendar": {"ru": "◀ Календарь", "uz": "◀ Kalendar"},
+    "cal_no_slots": {
+        "ru": "Свободного времени нет",
+        "uz": "Bo'sh vaqt yo'q",
+    },
+    "cal_past_day": {
+        "ru": "Этот день уже прошёл",
+        "uz": "Bu kun o'tib ketdi",
     },
     "doctor_not_found": {
         "ru": "Врача с таким именем не нашёл, показываю всё свободное время.",

@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from navbat.db.base import tenant_transaction
 from navbat.dialog import clinic_repo, doctors_repo, questions_repo, services_repo
 from navbat.dialog.booking_flow import _BookingFlowMixin
+from navbat.dialog.calendar_flow import _CalendarFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
     Conversation, load_conversation, save_conversation)
@@ -74,7 +75,7 @@ _MENU_ACTIONS = {
 
 
 class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
-                   _RescheduleFlowMixin, _CancelFlowMixin):
+                   _RescheduleFlowMixin, _CancelFlowMixin, _CalendarFlowMixin):
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -94,6 +95,8 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         # источник «сейчас» (aware UTC); тесты инжектируют фиксированный момент
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._tz: ZoneInfo | None = None
+        # дедуп FYI «нет слотов на 2 недели» (П-5): раз в день, в памяти
+        self._no_slots_fyi_date: object | None = None
 
     # ── Входные точки ────────────────────────────────────────────────────
 
@@ -321,19 +324,20 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         return mentions_availability(message)
 
     def _availability_reply(self, session: Session, conv: Conversation) -> Reply:
-        # без услуги сетку после выбора дня считаем по осмотру — тот же
-        # дефолт, что в book-бэкстопе; перенос услугу не трогает
-        if not conv.context.resched_id and not conv.context.service \
-                and self._service_id(session, "checkup") is not None:
-            conv.context.service = "checkup"
+        self._ensure_service(session, conv)  # дефолт checkup, как в бэкстопе
         return self._ask_date(session, conv)
 
     def _ask_date(self, session: Session, conv: Conversation) -> Reply:
-        """Выбор дня (кнопка «Другое время» и вопросы о наличии)."""
+        """Выбор дня (кнопка «Другое время» и вопросы о наличии):
+        ближайшие дни кнопками + вход в инлайн-календарь (П-5)."""
         lang = self._lang(conv)
         if not conv.context.resched_id:
             conv.state = "booking_collect"
-        return Reply(t("ask_date", lang), self._date_buttons(session, lang))
+        today = self._today(session)
+        buttons = self._date_buttons(session, lang) + (
+            Button(t("btn_pick_date", lang),
+                   f"cal:nav:{today.year:04d}-{today.month:02d}"),)
+        return Reply(t("ask_date", lang), buttons)
 
     def _escalate_on_request(self, session: Session, conv: Conversation) -> Reply:
         """Эскалация по прямой просьбе пациента: заморозка + алерт.
@@ -415,6 +419,9 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return Reply(t("attend_ok", lang))
         if kind == "remind_cancel":
             return self._start_cancel_by_id(session, conv, rest)
+        if kind == "cal":
+            # инлайн-календарь (П-5): сырые короткие callback'и мимо map'а
+            return self._on_calendar(session, conv, rest)
         return Reply(t("other_fallback", lang), menu=menu_rows(lang))
 
     # ── Вопросы ──────────────────────────────────────────────────────────

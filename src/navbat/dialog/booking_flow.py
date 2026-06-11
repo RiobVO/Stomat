@@ -71,11 +71,10 @@ class _BookingFlowMixin:
         day, slots = self._collect_slots(session, doctors, service_id, asked,
                                          ctx.time_ref)
         if not slots:
-            self._notifier.notify(conv.chat_id, "нет слотов на 2 недели вперёд",
-                                  self._escalation_context(conv))
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("no_slots_at_all", lang))
+            # П-5: пациент сам листает календарь (до 3 месяцев), владельцу —
+            # FYI раз в день; диалог НЕ сбрасывается и никого не дёргает
+            return self._no_slots_calendar(session, conv,
+                                           "нет слотов на 2 недели вперёд")
 
         multi_doctor = len(doctors) > 1
         buttons = [
