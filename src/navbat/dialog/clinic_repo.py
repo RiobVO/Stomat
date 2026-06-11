@@ -33,6 +33,22 @@ def clinic_address(session: Session) -> str | None:
     ).scalar_one()
 
 
+def clinic_payment_info(session: Session) -> str | None:
+    """Условия оплаты для FAQ «можно картой?»; NULL — не задано (--payment)."""
+    return session.execute(
+        text("SELECT payment_info FROM clinic "
+             "WHERE id = current_setting('app.clinic_id')::uuid")
+    ).scalar_one()
+
+
+def clinic_phone(session: Session) -> str | None:
+    """Телефон клиники для FAQ «какой номер?»; NULL — не задан (--phone)."""
+    return session.execute(
+        text("SELECT phone FROM clinic "
+             "WHERE id = current_setting('app.clinic_id')::uuid")
+    ).scalar_one()
+
+
 def holidays_on(session: Session, day: date) -> set[date]:
     """Выходные/праздники клиники, попадающие на day (пусто = рабочий)."""
     return set(session.execute(

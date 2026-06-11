@@ -69,6 +69,21 @@ _ADDRESS_RE = re.compile(
     r"|пройти|найти)|куда\s+(?:подойти|прийти|приходить|ехать)"
     r"|manzil|qayerda|qanday\s+bor)",
 )
+# FAQ-темы полировки-2. Оплата: «карт-» только в падежах вопроса об оплате
+# (картой/карта/карты…), «стоит/стоимость» сюда не относится — это прайс;
+# uz «bo'lib» лишь в биграмме с to'l- («bo'lib to'lash» = рассрочка),
+# одиночное bo'lib — служебный глагол («kasal bo'lib qoldim»).
+_PAYMENT_RE = re.compile(
+    r"\b(оплат\w*|рассрочк\w*|карт(?:ой|а|у|ы)|наличн\w*"
+    r"|to'lov\w*|bo'lib\s+to'l\w*|karta|naqd)\b",
+)
+# Телефон: «номер» — только про клинику/«у вас» (иначе ловит «оставил номер
+# соседу» и шаг контакта); «у вас номер» и «номер клиники» — оба порядка.
+_PHONE_RE = re.compile(
+    r"\b(телефон\w*|позвонить|дозвон\w*"
+    r"|номер\s+(?:клиники|телефона)|у\s+вас\s+номер"
+    r"|telefon\w*|qo'ng'iroq|raqam\w*\s+bormi)\b",
+)
 
 
 def mentions_hours_question(message: str) -> bool:
@@ -79,6 +94,16 @@ def mentions_hours_question(message: str) -> bool:
 def mentions_address_question(message: str) -> bool:
     """Вопрос об адресе/как добраться (ru/uz)."""
     return _ADDRESS_RE.search(_normalize(message)) is not None
+
+
+def mentions_payment_question(message: str) -> bool:
+    """Вопрос об оплате/рассрочке (ru/uz)."""
+    return _PAYMENT_RE.search(_normalize(message)) is not None
+
+
+def mentions_phone_question(message: str) -> bool:
+    """Вопрос о телефоне клиники / просьба позвонить (ru/uz)."""
+    return _PHONE_RE.search(_normalize(message)) is not None
 
 
 def _looks_like_question(message: str) -> bool:

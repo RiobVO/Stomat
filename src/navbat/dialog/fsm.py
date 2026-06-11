@@ -45,6 +45,8 @@ from navbat.dialog.dialog_common import (
     mentions_availability,
     mentions_hours_question,
     mentions_human_request,
+    mentions_payment_question,
+    mentions_phone_question,
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import phone_to_hash
@@ -67,7 +69,7 @@ from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import AppointmentNotFoundError
 
 _MENU_KEYS = ("btn_menu_book", "btn_menu_resched", "btn_menu_cancel",
-              "btn_menu_prices", "btn_menu_lang")
+              "btn_menu_prices", "btn_menu_about", "btn_menu_lang")
 # нажатие reply-кнопки приходит ТЕКСТОМ — матчим label'ы обоих языков
 _MENU_ACTIONS = {
     TEMPLATES[key][lang]: key for key in _MENU_KEYS for lang in ("ru", "uz")
@@ -224,6 +226,9 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if key == "btn_menu_prices":
             return self._with_reprompt(session, conv,
                                        self._price_list(session, conv))
+        if key == "btn_menu_about":
+            return self._with_reprompt(session, conv,
+                                       self._about_clinic(session, conv))
         return self._lang_screen(conv)  # btn_menu_lang
 
     def _empty_extraction(self, conv: Conversation, intent: str) -> Extraction:
@@ -468,9 +473,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
     def _faq_answer(self, session: Session, conv: Conversation,
                     message: str) -> Reply | None:
-        """Бытовые вопросы (часы/адрес) — ответ без LLM и без админа (П-2б).
+        """Бытовые вопросы (часы/адрес/оплата/телефон) — ответ без LLM
+        и без админа (П-2б, полировка-2).
 
-        None — не FAQ (или адрес не задан): путь идёт дальше штатно."""
+        None — не FAQ (или поле не задано): путь идёт дальше штатно."""
         if mentions_hours_question(message):
             return self._hours_reply(session, conv)
         if mentions_address_question(message):
@@ -478,6 +484,14 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             if address:
                 return Reply(t("clinic_address", self._lang(conv),
                                address=address))
+        if mentions_payment_question(message):
+            info = clinic_repo.clinic_payment_info(session)
+            if info:
+                return Reply(t("clinic_payment", self._lang(conv), info=info))
+        if mentions_phone_question(message):
+            phone = clinic_repo.clinic_phone(session)
+            if phone:
+                return Reply(t("clinic_phone", self._lang(conv), phone=phone))
         return None
 
     def _hours_reply(self, session: Session, conv: Conversation) -> Reply | None:
@@ -500,6 +514,28 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return Reply(t("hours_next", lang, date=f"{day:%d.%m}",
                            open=f"{lo:%H:%M}", close=f"{hi:%H:%M}"))
         return None  # графиков нет вообще — честное «не понял» дальше
+
+    def _about_clinic(self, session: Session, conv: Conversation) -> Reply:
+        """Карточка «ℹ️ О клинике» (полировка-2): часы + только заполненные
+        поля; пустые строки не рендерятся — карточка не выглядит дырявой."""
+        lang = self._lang(conv)
+        lines = []
+        hours = self._hours_reply(session, conv)
+        if hours is not None:
+            lines.append(hours.text)
+        address = clinic_repo.clinic_address(session)
+        if address:
+            lines.append(t("clinic_address", lang, address=address))
+        payment = clinic_repo.clinic_payment_info(session)
+        if payment:
+            lines.append(t("clinic_payment", lang, info=payment))
+        phone = clinic_repo.clinic_phone(session)
+        if phone:
+            lines.append(t("clinic_phone", lang, phone=phone))
+        header = t("about_header", lang, clinic=self._clinic_name(session))
+        if not lines:
+            return Reply(header)
+        return Reply(header + "\n\n" + "\n".join(lines))
 
     def _with_reprompt(self, session: Session, conv: Conversation,
                        answer: Reply) -> Reply:

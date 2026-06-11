@@ -165,6 +165,30 @@ def set_clinic_address(session_factory, clinic_id: uuid.UUID,
         )
 
 
+def set_clinic_payment(session_factory, clinic_id: uuid.UUID,
+                       info: str) -> None:
+    """Условия оплаты для FAQ «можно картой?» (полировка-2);
+    пустое значение очищает поле — бот перестаёт отвечать."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        session.execute(
+            text("UPDATE clinic SET payment_info = :p "
+                 "WHERE id = current_setting('app.clinic_id')::uuid"),
+            {"p": info or None},
+        )
+
+
+def set_clinic_phone(session_factory, clinic_id: uuid.UUID,
+                     phone: str) -> None:
+    """Телефон клиники для FAQ «какой номер?» (полировка-2);
+    пустое значение очищает поле."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        session.execute(
+            text("UPDATE clinic SET phone = :p "
+                 "WHERE id = current_setting('app.clinic_id')::uuid"),
+            {"p": phone or None},
+        )
+
+
 def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
                         doctor_id: uuid.UUID, intervals: dict) -> None:
     schedule = _validate_intervals(intervals)
@@ -377,6 +401,10 @@ def main() -> int:
     parser.add_argument("--set-price", metavar="KEY", help="изменить цену услуги")
     parser.add_argument("--address", metavar="TEXT",
                         help="адрес клиники для FAQ «где вы находитесь?»")
+    parser.add_argument("--payment", metavar="TEXT",
+                        help="условия оплаты для FAQ «можно картой?»")
+    parser.add_argument("--phone", metavar="TEXT",
+                        help="телефон клиники для FAQ «какой номер?»")
     parser.add_argument("--set-schedule", metavar="DOCTOR_UUID", type=uuid.UUID,
                         help="заменить график врача (с --schedule-json)")
     parser.add_argument("--add-admin", type=int, metavar="CHAT_ID",
@@ -462,6 +490,14 @@ def main() -> int:
     if args.address is not None:
         set_clinic_address(session_factory, args.clinic, args.address)
         print(f"[OK] адрес клиники: {args.address or '(очищен)'}")
+        return 0
+    if args.payment is not None:
+        set_clinic_payment(session_factory, args.clinic, args.payment)
+        print(f"[OK] оплата клиники: {args.payment or '(очищена)'}")
+        return 0
+    if args.phone is not None:
+        set_clinic_phone(session_factory, args.clinic, args.phone)
+        print(f"[OK] телефон клиники: {args.phone or '(очищен)'}")
         return 0
     if args.set_schedule:
         if not args.schedule_json:
