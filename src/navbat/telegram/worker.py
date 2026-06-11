@@ -16,6 +16,7 @@ import logging
 import threading
 import time
 import uuid
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -188,11 +189,16 @@ class UpdateWorker:
         if "callback_query" in payload:
             callback = payload["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
+            data = callback.get("data", "")
+            if data.startswith("stats:") and chat_id in self._admin_chat_ids:
+                # кнопки сводки (В) до проверки паузы: админ-поверхность
+                # живёт и при /pause (конвенция C-4)
+                self._handle_stats_callback(callback, chat_id, data)
+                return
             if self._bot_paused():
                 self._api.answer_callback_query(callback["id"])
                 self._send(chat_id, self._paused_reply(chat_id))
                 return
-            data = callback.get("data", "")
             if data.startswith("cal:"):
                 # сырой короткий callback календаря (П-4): идёт мимо
                 # tg_actions-map — тот перезаписывается любой отправкой
@@ -415,8 +421,6 @@ class UpdateWorker:
 
     def _stats_reply(self, command: str = "/stats") -> Reply:
         """Сводка владельца (П-6): /stats — день, /stats 7|30 — период."""
-        from navbat.stats import collect_stats, render_stats
-
         args = command.split()[1:2]
         days = 1
         if args:
@@ -424,6 +428,15 @@ class UpdateWorker:
                 return Reply("Формат: /stats [дней], например /stats 7 "
                              "или /stats 30")
             days = int(args[0])
+        return self._stats_view(days)
+
+    def _stats_edit_reply(self, days: int) -> Reply:
+        """Кнопка периода (В): тот же рендер, но редактируем на месте."""
+        return replace(self._stats_view(days), edit=True)
+
+    def _stats_view(self, days: int) -> Reply:
+        from navbat.stats import collect_stats, render_stats
+
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             tz = ZoneInfo(session.execute(
                 text("SELECT timezone FROM clinic "
@@ -432,7 +445,26 @@ class UpdateWorker:
             today = datetime.now(tz).date()
             first = today - timedelta(days=days - 1)
             stats = collect_stats(session, first, today, tz)
-        return Reply(render_stats(stats, first, today))
+            # тренды (В): окно того же размера непосредственно перед текущим;
+            # второй collect дёшев — объёмы одной клиники малы
+            prev = collect_stats(session, first - timedelta(days=days),
+                                 first - timedelta(days=1), tz)
+        return Reply(render_stats(stats, first, today, prev=prev),
+                     button_rows=(_period_buttons(days),))
+
+    def _handle_stats_callback(self, callback: dict, chat_id: int,
+                               data: str) -> None:
+        """Кнопки сводки (В): stats:N — edit на месте, stats:full — полная
+        сводка дня НОВЫМ сообщением (дайджест с вопросами остаётся в чате)."""
+        self._api.answer_callback_query(callback["id"])
+        suffix = data[len("stats:"):]
+        if suffix == "full":
+            self._send(chat_id, self._stats_reply())
+            return
+        message_id = callback["message"].get("message_id")
+        if suffix.isdigit() and 1 <= int(suffix) <= 90 and message_id is not None:
+            edit_reply(self._api, self._session_factory, self._clinic_id,
+                       chat_id, message_id, self._stats_edit_reply(int(suffix)))
 
     def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
         """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).
@@ -469,18 +501,27 @@ class UpdateWorker:
             ).scalar_one_or_none()
 
 
+def _period_buttons(active: int) -> tuple[Button, ...]:
+    """Ряд периодов сводки (В): активный помечен ✓; callback'и сырые stats:N —
+    мимо tg_actions, переживают перезапись map'а (как cal: в П-4)."""
+    return tuple(
+        Button(f"{label} ✓" if days == active else label, f"stats:{days}")
+        for days, label in ((1, "📅 День"), (7, "7 дней"), (30, "30 дней")))
+
+
 def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
                     chat_id: int,
                     rows: tuple[tuple[Button, ...], ...]
                     ) -> tuple[tuple[Button, ...], ...]:
     """Длинные action'ы → a:N + map в context['tg_actions']; короткие
-    cal:-действия (П-4) уходят сырыми — переживают перезапись map'а."""
+    cal:- (П-4) и stats:-действия (В) уходят сырыми — переживают
+    перезапись map'а."""
     mapping: dict[str, str] = {}
     out_rows: list[tuple[Button, ...]] = []
     for row in rows:
         out_row = []
         for b in row:
-            if b.action.startswith("cal:"):
+            if b.action.startswith(("cal:", "stats:")):
                 out_row.append(b)
             else:
                 index = str(len(mapping) + 1)

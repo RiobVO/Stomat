@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from conftest import next_monday
+from conftest import at_tashkent, next_monday
 from navbat.db.base import tenant_transaction
 from navbat.nlu.wrappers import UsageRecorder
 from navbat.reminders import ReminderService
@@ -223,6 +223,150 @@ def test_stats_with_arg_from_patient_goes_to_nlu(app_session_factory,
     put_message(app_session_factory, clinic_a, "/stats 7", chat_id=CHAT)
     worker.process_one()
     assert api.sent[0][0] == CHAT, "пациентский /stats 7 — обычный текст"
+
+
+# ── /stats v2 (полировка-2, В): клиенты, топ врачей, хит, тренды ─────────────
+
+def mk_stats(**kw):
+    """DailyStats с нулевыми обязательными полями — паттерн П-6."""
+    from navbat.stats import DailyStats
+
+    base = dict(booked=0, cancelled=0, escalated=0, reminders_sent=0,
+                llm_requests=0, llm_tokens=0, nlu_failures=0, nlu_repairs=0,
+                prevented_noshows=0, saved_revenue=0)
+    base.update(kw)
+    return DailyStats(**base)
+
+
+def test_new_and_returning_patients(app_session_factory, admin_engine, clinic_a,
+                                    doctor_a, service_cleaning, sched):
+    from navbat.stats import collect_stats
+
+    day = next_monday()
+    # новый: первая не-hold запись пациента — в периоде
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning, day,
+         "09:00", chat_id=CHAT)
+    # вернувшийся: запись до периода + запись в периоде
+    old_id, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                     day, "11:00", chat_id=CHAT + 1)
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning, day,
+         "14:00", chat_id=CHAT + 1)
+    # голый hold — не визит
+    sched.hold(doctor_a, service_cleaning, at_tashkent(day, "15:00"),
+               tg_chat_id=CHAT + 2)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE appointment SET created_at = "
+                          "created_at - interval '10 days' WHERE id = :i"),
+                     {"i": old_id})
+
+    today = datetime.now(TASHKENT).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today, today, TASHKENT)
+    assert stats.new_patients == 1
+    assert stats.returning_patients == 1
+
+
+def test_top_doctors_and_hit_service(app_session_factory, admin_engine,
+                                     clinic_a):
+    from conftest import make_doctor, make_service
+    from navbat.stats import collect_stats
+
+    day = next_monday()
+    aziz = make_doctor(admin_engine, clinic_a, name="Азиз Каримов")
+    noname = make_doctor(admin_engine, clinic_a)
+    filling = make_service(admin_engine, clinic_a, "filling", 30, price=200_000)
+    checkup = make_service(admin_engine, clinic_a, "checkup", 30)  # цена NULL
+    book(app_session_factory, clinic_a, aziz, filling, day, "09:00",
+         chat_id=CHAT)
+    book(app_session_factory, clinic_a, aziz, checkup, day, "11:00",
+         chat_id=CHAT + 1)
+    book(app_session_factory, clinic_a, noname, filling, day, "09:00",
+         chat_id=CHAT + 2)
+
+    today = datetime.now(TASHKENT).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today, today, TASHKENT)
+    assert stats.top_doctors[0] == ("Азиз Каримов", 2, 200_000), \
+        "сортировка по confirm'ам, NULL-цена не суммируется"
+    assert stats.top_doctors[1] == ("Врач", 1, 200_000), "врач без имени"
+    assert stats.hit_service == ("filling", 2)
+
+
+def test_trend_thresholds():
+    from navbat.stats import _trend
+
+    assert _trend(12, 10) == " ↑20%"
+    assert _trend(12, 15) == " ↓20%"
+    assert _trend(4, 8) == "", "выборка < 10 — процент не показываем"
+    assert _trend(12, 9) == ""
+    assert _trend(12, 0) == ""
+    assert _trend(10, 10) == ""
+
+
+def test_render_stats_v2_sections():
+    from navbat.stats import render_stats
+
+    full = mk_stats(booked=12, new_patients=3, returning_patients=2,
+                    top_doctors=(("Азиз Каримов", 7, 1_400_000), ("Врач", 5, 0)),
+                    hit_service=("cleaning", 6))
+    out = render_stats(full, date(2026, 6, 5), date(2026, 6, 11),
+                       prev=mk_stats(booked=10))
+    assert "👥" in out and "👨‍⚕️" in out and "✨" in out
+    assert "↑20%" in out, "тренд booked против prev-периода"
+    assert "Азиз Каримов" in out and "Врач" in out
+    assert "Чистка" in out, "хит-услуга человекочитаемым label'ом"
+    assert out.index("💰") < out.index("👥") < out.index("⚙️"), \
+        "новые секции между «Ценностью» и «Служебным»"
+
+    empty = render_stats(mk_stats(), date(2026, 6, 11))
+    assert "👥" not in empty and "👨‍⚕️" not in empty and "✨" not in empty, \
+        "пустые секции не показываем"
+
+
+def test_render_digest_short():
+    from navbat.stats import render_digest_short
+
+    out = render_digest_short(mk_stats(booked=5, after_hours_booked=2,
+                                       prevented_noshows=1,
+                                       saved_revenue=150_000, escalated=0))
+    assert "5" in out and "вне рабочих часов" in out
+    assert "150 000" in out
+    assert "эскалаций: 0" in out
+    assert "⚙️" not in out and "LLM" not in out, "дайджест короткий, без техники"
+
+
+def test_stats_reply_has_period_buttons(app_session_factory, admin_engine,
+                                        clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, "/stats", chat_id=ADMIN_CHAT)
+    worker.process_one()
+    row = api.row_keyboards[-1][0]
+    assert [b.label for b in row] == ["📅 День ✓", "7 дней", "30 дней"]
+    assert [b.action for b in row] == ["stats:1", "stats:7", "stats:30"], \
+        "сырые stats:-callback'и, мимо tg_actions"
+
+    put_message(app_session_factory, clinic_a, "/stats 7", chat_id=ADMIN_CHAT)
+    worker.process_one()
+    assert [b.label for b in api.row_keyboards[-1][0]] == \
+        ["📅 День", "7 дней ✓", "30 дней"], "активный период помечен"
+
+
+def test_digest_short_with_details_button(app_session_factory, admin_engine,
+                                          clinic_a, doctor_a, service_cleaning):
+    seed_activity(app_session_factory, admin_engine, clinic_a, doctor_a,
+                  service_cleaning)
+    api = FakeTelegramAPI()
+    service = ReminderService(app_session_factory, clinic_a, tg_api=api,
+                              digest_chat_id=ADMIN_CHAT)
+    evening = datetime.now(TASHKENT).replace(hour=21, minute=30)
+    assert service.maybe_send_digest(now_local=evening) is True
+
+    chat_id, text_, buttons = api.sent[-1]
+    assert chat_id == ADMIN_CHAT
+    assert "⚙️" not in text_ and "LLM" not in text_, "короткий дайджест"
+    assert [(b.label, b.action) for b in buttons] == \
+        [("📊 Подробнее", "stats:full")]
 
 
 # ── Вечерний дайджест ────────────────────────────────────────────────────────
