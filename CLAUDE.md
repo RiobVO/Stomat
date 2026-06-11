@@ -247,6 +247,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   deploy/.env сгенерирован локально (gitignored);
   .recon_group_c.md в корне — рабочий артефакт, не коммитить;
   финализатор pytest теперь сам восстанавливает демо-клинику.
+- Запуск с двух машин: СТРОГО один бот за раз (два процесса на один
+  TG-токен = 409 Conflict — остановить второго перед стартом).
+  Windows-.env полный (7 ключей, вкл. OPENAI_API_KEY и
+  NAVBAT_GCAL_CLIENT_ID/SECRET); на мак .env через git НЕ едет —
+  донести руками OPENAI_API_KEY + NAVBAT_GCAL_CLIENT_ID/SECRET.
+  База на каждой машине своя: после git pull на маке — alembic
+  upgrade head (0017–0018), onboard --demo, FAQ-поля
+  (--address/--payment/--phone), --doctor <uuid> --calendar primary,
+  calendar.auth (клик в браузере той машины), --check, потом --real.
+  photo_2026-06-11_*.jpg в корне Windows-копии — скрины пользователя,
+  не коммитить.
 - На стороне пользователя (когда решит): VPS+домен, S3-хранилище,
   верификация Google-приложения, NAVBAT_OWNER_CHAT_ID. Платные прогоны
   (P4 T1/T2), глубокий узбекский (носитель), m2/m4 — гейты прежние.
