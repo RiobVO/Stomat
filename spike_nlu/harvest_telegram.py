@@ -52,6 +52,14 @@ PROMO_RE = re.compile(
     r"skidka|скидк|aksiya|акци[яи]|chegirma|чегирма|до\s*-?\d+\s*%|\d+\s*%",
     re.IGNORECASE)
 
+# посты самой клиники (маркетинг/отзывы-врезки) — НЕ речь пациента: рамки
+# «Bemorlarimiz / Xulosa / fikri», декоративные эмодзи-заголовки, призывы
+CLINIC_POST_RE = re.compile(
+    r"bemorlarimiz|xulosa\s*:|fikri\s*:|aziz\s+(do'st|mijoz)|"
+    r"manzil\s*:|telefon\s*:|ro'yxatdan\s+o'ting|qo'ng'iroq\s+qiling|"
+    r"bizning\s+klinika|biz\s+bilan\s+bog'lan",
+    re.IGNORECASE)
+
 # стоматологическая лексика: стемы uz-латиница / uz-кириллица / ru
 DENTAL_STEMS = (
     "tish", "plomba", "breket", "implant", "stomatolog", "qoplama",
@@ -104,20 +112,56 @@ def is_promo(message) -> bool:
     return len(EMOJI_RE.findall(body)) > 3
 
 
-def keep(message, counts: dict) -> str | None:
-    """Текст сообщения, если оно прошло фильтры; иначе None (+счётчик)."""
+# узбекские маркеры (латиница + кириллица) — отсев чисто русского/спама
+# в general-режиме: нам важна именно узбекская/смешанная речь
+UZ_MARKERS = (
+    "ʻ", "ʼ", "oʻ", "gʻ", "o'", "g'", "bo'l", "qil", "kerak", "qancha",
+    "bormi", "mumkin", "iltimos", "rahmat", "yaxshi", "necha", "qachon",
+    "boʻladi", "yozil", "yoz", "narx",
+    "бўл", "керак", "қанча", "борми", "мумкин", "илтимос", "рахмат", "яхши",
+    "неча", "қачон", "ёзил", "нарх",
+)
+
+
+_CYR_RE = re.compile(r"[а-яёўқғҳ]", re.IGNORECASE)
+_LAT_RE = re.compile(r"[a-z]", re.IGNORECASE)
+
+
+def looks_uzbek(body: str) -> bool:
+    low = body.casefold()
+    return any(m in low for m in UZ_MARKERS)
+
+
+def is_conversational(body: str) -> bool:
+    """Разговорный текст на ru или uz (латиница/кириллица) — для general-сбора
+    узбекского сленга И русского (решение пользователя: «чем больше, тем лучше»).
+    Требуем достаточно букв, чтобы отсеять эмодзи/числа/обрывки."""
+    letters = len(_CYR_RE.findall(body)) + len(_LAT_RE.findall(body))
+    return letters >= 12
+
+
+def keep(message, counts: dict, topic: str = "dental") -> str | None:
+    """Текст сообщения, если оно прошло фильтры; иначе None (+счётчик).
+
+    topic=dental — требуем стоматологическую лексику (речь пациентов клиник);
+    topic=general — без неё, но требуем узбекские маркеры (сбор стиля/сленга).
+    """
     body = (message.message or "").strip()
     if not body or not (MIN_LEN <= len(body) <= MAX_LEN):
         counts["len"] += 1
         return None
-    if message.via_bot_id or message.fwd_from or (
+    if message.via_bot_id or message.fwd_from or message.post or (
             getattr(message.sender, "bot", False)):
         counts["bot_fwd"] += 1
         return None
-    if is_promo(message):
+    if is_promo(message) or CLINIC_POST_RE.search(body):
         counts["promo"] += 1
         return None
-    if not is_dental(body):
+    if topic == "general":
+        if not is_conversational(body):
+            counts["off_topic"] += 1
+            return None
+    elif not is_dental(body):
         counts["off_topic"] += 1
         return None
     return anonymize(body)
@@ -139,13 +183,14 @@ def append_seen(hashes: list[str]) -> None:
 async def harvest_source(client, src: dict, cap: int, history: int,
                          posts: int, seen: set[str], counts: dict) -> list[str]:
     """Тексты одного источника, прошедшие фильтры (≤cap)."""
+    topic = src.get("topic", "dental")
     entity = await client.get_entity(src["name"])
     kept: list[str] = []
 
     async def consume(iterator):
         async for message in iterator:
             counts["fetched"] += 1
-            body = keep(message, counts)
+            body = keep(message, counts, topic)
             if body is None:
                 continue
             h = text_hash(body)
@@ -181,7 +226,12 @@ async def run_harvest(args) -> int:
     sources = config.get("sources", [])
 
     client = TelegramClient(SESSION, int(api_id), api_hash)
-    await client.start()  # первый раз: телефон + код из Telegram
+    await client.connect()
+    if not await client.is_user_authorized():
+        print("[FAIL] не залогинен — сначала: python harvest_login.py "
+              "request --phone \"+998...\"  затем  code <КОД>")
+        await client.disconnect()
+        return 1
 
     if args.discover:
         result = await client(SearchRequest(q=args.discover, limit=20))
@@ -202,9 +252,11 @@ async def run_harvest(args) -> int:
     seen = load_seen()
     counts = {"fetched": 0, "len": 0, "bot_fwd": 0, "promo": 0,
               "off_topic": 0, "duplicate": 0}
-    all_kept: list[str] = []
+    all_kept: list[tuple[str, str]] = []  # (topic, text)
     for i, src in enumerate(sources):
-        print(f"[{i + 1}/{len(sources)}] {src['name']} ({src.get('kind', 'group')})…")
+        topic = src.get("topic", "dental")
+        print(f"[{i + 1}/{len(sources)}] {src['name']} "
+              f"({src.get('kind', 'group')}/{topic})…")
         try:
             kept = await harvest_source(client, src, args.per_source_cap,
                                         args.history_limit, args.posts,
@@ -217,7 +269,7 @@ async def run_harvest(args) -> int:
             print(f"    [SKIP] {e}")
             continue
         print(f"    принято {len(kept)}")
-        all_kept.extend(kept)
+        all_kept.extend((topic, body) for body in kept)
         if i + 1 < len(sources):
             await asyncio.sleep(PAUSE_BETWEEN_SOURCES)
     await client.disconnect()
@@ -227,12 +279,12 @@ async def run_harvest(args) -> int:
         BASE / "data" / "inbox" / f"harvest_{stamp}.jsonl")
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:
-        for n, body in enumerate(all_kept, 1):
+        for n, (topic, body) in enumerate(all_kept, 1):
             fh.write(json.dumps(
-                {"id": f"hv_{stamp}_{n:04d}", "text": body,
-                 "source": "harvest", "category": "harvest_raw", "gold": None},
+                {"id": f"hv_{stamp}_{n:04d}", "text": body, "source": "harvest",
+                 "category": f"harvest_{topic}", "gold": None},
                 ensure_ascii=False) + "\n")
-    append_seen([text_hash(b) for b in all_kept])
+    append_seen([text_hash(b) for _, b in all_kept])
 
     print(f"\nвсего прочитано: {counts['fetched']}; отброшено — "
           f"длина: {counts['len']}, боты/форварды: {counts['bot_fwd']}, "
