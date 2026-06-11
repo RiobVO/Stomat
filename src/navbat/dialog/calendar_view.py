@@ -1,87 +1,62 @@
-"""Инлайн-календарь выбора даты (П-5): чистое построение сетки месяца.
+"""Выбор даты (П-5б): список ТОЛЬКО доступных дней, 2 колонки.
 
-Визуал «максимум эмодзи» (одобрен пользователем 11.06): 🟢N — день со
-свободным слотом (кликабелен), 📍 — сегодня, прочие ячейки пусты.
-Callback'и — сырые короткие cal:* (П-4): живут дольше tg_actions-map'а.
-Доступность дней считает вызывающий (calendar_flow) — здесь только view,
-тестируемый без БД.
+Редизайн по живому тыку 11.06: месячная сетка показывала мёртвые пустые
+ячейки — «очень тупо». Паттерн взят из маникюр-бота пользователя
+(dates_keyboard): каждая кнопка — реальный день со слотами, лейбл
+«11 июн · чт», занятых/выходных просто нет в списке. Пагинация «Ещё
+даты ▶» листает вперёд (горизонт у вызывающего), «◀ Ближайшие» —
+возврат на первую страницу. Чистое view — доступность считает
+calendar_flow; callback'и — сырые короткие cal:* (П-4).
 """
 from __future__ import annotations
 
-import calendar as _calendar
-from datetime import date
+from datetime import date, timedelta
 
-from navbat.dialog.replies import Button
+from navbat.dialog.replies import Button, t
 
-MONTHS_AHEAD = 2  # навигация: текущий месяц + 2 вперёд
+DAYS_PER_PAGE = 10   # 5 рядов по 2
+DAYS_PER_ROW = 2
+HORIZON_DAYS = 90    # дальше трёх месяцев вперёд не листаем
 
-# Брайлевский пробел: Telegram требует непустой text у кнопки,
-# а ячейка должна выглядеть пустой
-BLANK = "⠀"
-
-WEEKDAYS = {
-    "ru": ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"),
-    "uz": ("Du", "Se", "Cho", "Pa", "Ju", "Sha", "Ya"),
+# конвенция лейблов — как в маникюр-боте: «11 июн · чт» / «11 iyn · pa»
+_MONTHS_SHORT = {
+    "ru": ("янв", "фев", "мар", "апр", "май", "июн",
+           "июл", "авг", "сен", "окт", "ноя", "дек"),
+    "uz": ("yan", "fev", "mar", "apr", "may", "iyn",
+           "iyl", "avg", "sen", "okt", "noy", "dek"),
 }
-MONTH_NAMES = {
-    "ru": ("Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль",
-           "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"),
-    "uz": ("Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul",
-           "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr"),
+_WEEKDAYS_SHORT = {
+    "ru": ("пн", "вт", "ср", "чт", "пт", "сб", "вс"),
+    "uz": ("du", "se", "ch", "pa", "ju", "sh", "ya"),
 }
-CAPTION = {
-    "ru": "📅 {month} {year}\n🟢 — есть свободное время",
-    "uz": "📅 {month} {year}\n🟢 — bo'sh vaqt bor",
-}
+_CAPTION = {"ru": "Выберите день 👇", "uz": "Kunni tanlang 👇"}
 
 
-def add_months(year: int, month: int, delta: int) -> tuple[int, int]:
-    index = year * 12 + (month - 1) + delta
-    return index // 12, index % 12 + 1
+def day_label(day: date, lang: str) -> str:
+    return (f"{day.day} {_MONTHS_SHORT[lang][day.month - 1]}"
+            f" · {_WEEKDAYS_SHORT[lang][day.weekday()]}")
 
 
-def months_between(start: date, year: int, month: int) -> int:
-    return (year - start.year) * 12 + month - start.month
-
-
-def month_view(year: int, month: int, available: set[date], today: date,
+def dates_view(days: list[date], start: date, today: date, has_more: bool,
                lang: str) -> tuple[str, tuple[tuple[Button, ...], ...]]:
-    """Сетка месяца: (текст сообщения, ряды inline-кнопок).
+    """Страница доступных дней: (текст сообщения, ряды inline-кнопок).
 
-    Кликабельны только дни из available (🟢 / 📍 для сегодня); будущий
-    день без слотов — cal:none (toast «времени нет»), паддинг и прошлое —
-    cal:noop (молча)."""
-    rows: list[tuple[Button, ...]] = [
-        tuple(Button(d, "cal:noop") for d in WEEKDAYS[lang])
-    ]
-    for week in _calendar.Calendar().monthdatescalendar(year, month):
-        cells = []
-        for day in week:
-            if day.month != month or day < today:
-                cells.append(Button(BLANK, "cal:noop"))
-            elif day in available:
-                mark = "📍" if day == today else "🟢"
-                cells.append(Button(f"{mark}{day.day}",
-                                    f"cal:day:{day.isoformat()}"))
-            elif day == today:
-                cells.append(Button("📍", "cal:none"))
-            else:
-                cells.append(Button(BLANK, "cal:none"))
-        rows.append(tuple(cells))
-
+    days — ТОЛЬКО дни со свободными слотами (никаких заглушек);
+    start > today означает не-первую страницу (даём «◀ Ближайшие»)."""
+    rows: list[tuple[Button, ...]] = []
+    for i in range(0, len(days), DAYS_PER_ROW):
+        rows.append(tuple(
+            Button(day_label(day, lang), f"cal:day:{day.isoformat()}")
+            for day in days[i:i + DAYS_PER_ROW]
+        ))
     nav: list[Button] = []
-    offset = months_between(today, year, month)
-    if offset > 0:
-        py, pm = add_months(year, month, -1)
-        nav.append(Button(f"◀ {MONTH_NAMES[lang][pm - 1]}",
-                          f"cal:nav:{py:04d}-{pm:02d}"))
-    if offset < MONTHS_AHEAD:
-        ny, nm = add_months(year, month, 1)
-        nav.append(Button(f"{MONTH_NAMES[lang][nm - 1]} ▶",
-                          f"cal:nav:{ny:04d}-{nm:02d}"))
+    if start > today:
+        nav.append(Button(t("btn_first_dates", lang),
+                          f"cal:nav:{today.isoformat()}"))
+    if has_more and days:
+        following = max(days) + timedelta(days=1)
+        nav.append(Button(t("btn_more_dates", lang),
+                          f"cal:nav:{following.isoformat()}"))
     if nav:
         rows.append(tuple(nav))
-
-    caption = CAPTION[lang].format(month=MONTH_NAMES[lang][month - 1],
-                                   year=year)
-    return caption, tuple(rows)
+    return _CAPTION[lang], tuple(rows)
