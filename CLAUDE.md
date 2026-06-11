@@ -417,6 +417,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Правила работы
 
+- КОММИТЫ: автор и коммиттер — ВСЕГДА
+  `dejavuu <95645082+RiobVO@users.noreply.github.com>` (noreply-адрес
+  GitHub: контрибуции считаются в граф, личная почта не светится).
+  Перед первым коммитом на новой машине проверить
+  `git config user.email` — auto-configured identity
+  (`@hostname.local`) ломает граф. В сообщениях НИКАКИХ
+  Co-Authored-By / «Generated with» / упоминаний ассистента —
+  решение пользователя 11.06.2026, история уже вычищена filter-branch.
 - ДЕНЬГИ: вызовы LLM API (OpenAI, Gemini; eval.py, любые LLM-запросы) — ТОЛЬКО
   по явной команде пользователя. Тесты и разработка — на фейковом/записанном
   экстракторе, никаких «прогоню разок проверить». Бюджет токенов ограничен.
