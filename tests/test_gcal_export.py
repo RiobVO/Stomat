@@ -10,6 +10,8 @@ from sqlalchemy import text
 
 from conftest import at_tashkent, next_monday
 from navbat.calendar.sync import CalendarSync
+from navbat.db.base import tenant_transaction
+from navbat.dialog.patients import create_patient
 from navbat.scheduling.engine import SchedulingEngine
 
 CAL = "doc-cal"
@@ -83,10 +85,10 @@ def make_sync(app_session_factory, clinic_id, api=None):
 
 
 def book(app_session_factory, clinic_id, doctor_id, service_id, day, hhmm,
-         chat_id=100):
+         chat_id=100, patient_id=None):
     sched = SchedulingEngine(app_session_factory, clinic_id)
     appointment_id = sched.hold(doctor_id, service_id, at_tashkent(day, hhmm),
-                                tg_chat_id=chat_id)
+                                patient_id=patient_id, tg_chat_id=chat_id)
     sched.confirm(appointment_id)
     return appointment_id, sched
 
@@ -150,6 +152,63 @@ def test_bot_reschedule_patches_event(app_session_factory, admin_engine,
     assert api.patch_calls == 1
     event = next(iter(api.events().values()))
     assert event["start"]["dateTime"] == new_start.isoformat()
+
+
+# ── Тело события: услуга по-русски, имя, телефон (полировка-3 Г) ──────────
+
+def test_export_event_has_label_name_and_phone(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a, service_cleaning):
+    """Владелец живёт в календаре: событие отвечает «кто и зачем»."""
+    bind_calendar(admin_engine, doctor_a)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        patient_id = create_patient(session, tg_chat_id=100, name="Алишер",
+                                    phone="+998 90 123-45-67")
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00", patient_id=patient_id)
+    sync, api = make_sync(app_session_factory, clinic_a)
+
+    sync.sync_doctor(doctor_a)
+
+    event = next(iter(api.events().values()))
+    assert event["summary"] == "Чистка — Алишер (Navbat)"
+    assert "Телефон: +998901234567" in event["description"]
+
+
+def test_export_event_without_patient_degrades(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a, service_cleaning):
+    """Запись без пациента (брошенный путь) — без имени и телефона."""
+    bind_calendar(admin_engine, doctor_a)
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+
+    sync.sync_doctor(doctor_a)
+
+    event = next(iter(api.events().values()))
+    assert event["summary"] == "Чистка (Navbat)"
+    assert "description" not in event
+
+
+def test_export_event_patient_with_null_pii_degrades(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """NULL-колонки (старые пациенты до 0018, /forget) — строки пропущены."""
+    bind_calendar(admin_engine, doctor_a)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        patient_id = create_patient(session, tg_chat_id=100, name="Алишер",
+                                    phone="901234567")
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE patient SET name_encrypted = NULL, "
+                          "phone_encrypted = NULL WHERE id = :id"),
+                     {"id": patient_id})
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00", patient_id=patient_id)
+    sync, api = make_sync(app_session_factory, clinic_a)
+
+    sync.sync_doctor(doctor_a)
+
+    event = next(iter(api.events().values()))
+    assert event["summary"] == "Чистка (Navbat)"
+    assert "description" not in event
 
 
 def test_doctor_without_calendar_is_skipped(app_session_factory, admin_engine,
