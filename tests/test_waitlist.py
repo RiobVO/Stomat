@@ -117,3 +117,43 @@ def test_has_future_booked(app_session_factory, admin_engine, clinic_a,
          next_monday(), "10:00", chat_id=CHAT)
     with tenant_transaction(app_session_factory, clinic_a) as s:
         assert wl.has_future_booked(s, CHAT, service_cleaning) is True
+
+
+# ── К-3: вход «встать в очередь» из «нет слотов» ─────────────────────────────
+
+def _no_slots_engine(app_session_factory, admin_engine, clinic_a):
+    """Клиника с врачом БЕЗ расписания → слотов нет никогда."""
+    from conftest import at_tashkent, make_doctor, next_monday
+    from test_dialog_booking import explicit, extr
+    from test_inline_calendar import make
+    # пустые дни (truthy dict — иначе make_doctor подставит полное расписание)
+    no_days = {d: [] for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    make_doctor(admin_engine, clinic_a, intervals=no_days)
+    monday = next_monday()
+    engine, _ = make(app_session_factory, clinic_a,
+                     [extr(service="cleaning", date_ref=explicit(monday))],
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    engine.handle_action(CHAT, "lang:ru")
+    return engine
+
+
+def _actions(reply):
+    return [b.action for row in (reply.button_rows or ()) for b in row] + \
+           [b.action for b in reply.buttons]
+
+
+def test_no_slots_offers_join_button(app_session_factory, admin_engine,
+                                     clinic_a, service_cleaning):
+    engine = _no_slots_engine(app_session_factory, admin_engine, clinic_a)
+    reply = engine.handle_text(CHAT, "чистку в понедельник")
+    assert "wl:join:cleaning" in _actions(reply), "кнопка очереди в «нет слотов»"
+
+
+def test_join_creates_waiting_and_idempotent(app_session_factory, admin_engine,
+                                             clinic_a, service_cleaning):
+    engine = _no_slots_engine(app_session_factory, admin_engine, clinic_a)
+    engine.handle_text(CHAT, "чистку в понедельник")  # нет слотов
+    r1 = engine.handle_action(CHAT, "wl:join:cleaning")
+    r2 = engine.handle_action(CHAT, "wl:join:cleaning")
+    assert "очеред" in r1.text and "уже" in r2.text
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "waiting")]

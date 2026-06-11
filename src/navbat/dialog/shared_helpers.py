@@ -10,11 +10,17 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from navbat.dialog import appointments_repo, clinic_repo, doctors_repo, services_repo
+from navbat.dialog import (
+    appointments_repo,
+    clinic_repo,
+    doctors_repo,
+    services_repo,
+    waitlist_repo,
+)
 from navbat.dialog.conversation import Conversation, DialogContext
 from navbat.dialog.dates import exact_time_ref, matches_time_ref
 from navbat.dialog.dialog_common import NEAREST_DAY_SCAN
-from navbat.dialog.replies import SERVICE_EMOJI, Button, service_label, t
+from navbat.dialog.replies import SERVICE_EMOJI, Button, Reply, service_label, t
 from navbat.nlu.extractor import ExtractionError
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.calendar_rules import open_bounds
@@ -64,6 +70,28 @@ class _SharedHelpersMixin:
 
     def _service_id(self, session: Session, service_key: str) -> uuid.UUID | None:
         return services_repo.service_id(session, service_key)
+
+    def _on_waitlist(self, session: Session, conv: Conversation,
+                     rest: str) -> Reply:
+        """Лист ожидания: wl:join:<service_key> | wl:leave:<id>."""
+        lang = self._lang(conv)
+        op, _, arg = rest.partition(":")
+        if op == "leave":
+            if arg.isdigit():
+                waitlist_repo.mark_cancelled(session, int(arg))
+            return Reply(t("waitlist_left", lang))
+        # join: услуга из action, иначе из контекста, иначе осмотр (бэкстоп)
+        service_id = self._service_id(session, arg or conv.context.service
+                                      or "checkup")
+        if service_id is None:
+            return Reply(t("not_understood", lang))
+        patient_id = uuid.UUID(conv.patient_id) if conv.patient_id else None
+        wid = waitlist_repo.add(session, service_id, conv.chat_id,
+                                patient_id, lang)
+        self._clear_booking(conv)
+        conv.state = "idle"
+        return Reply(t("waitlist_already" if wid is None else "waitlist_joined",
+                       lang))
 
     def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
         names = services_repo.service_keys(session)

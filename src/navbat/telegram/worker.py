@@ -221,10 +221,10 @@ class UpdateWorker:
                 self._api.answer_callback_query(callback["id"])
                 self._send(chat_id, self._paused_reply(chat_id))
                 return
-            if data.startswith("cal:"):
-                # сырой короткий callback календаря (П-4): идёт мимо
-                # tg_actions-map — тот перезаписывается любой отправкой
-                # кнопок (например, напоминанием), а календарь живёт долго
+            if data.startswith(("cal:", "wl:")):
+                # сырые короткие callback'и: календарь (П-4) и лист ожидания —
+                # идут мимо tg_actions-map (тот перезаписывается любой отправкой
+                # кнопок); wl:-пуш приходит часами позже отмены, должен жить
                 action = data
             else:
                 action = self._lookup_action(chat_id, data) or "stale"
@@ -544,7 +544,7 @@ def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID
     for row in rows:
         out_row = []
         for b in row:
-            if b.action.startswith(("cal:", "stats:", "adm:")):
+            if b.action.startswith(("cal:", "stats:", "adm:", "wl:")):
                 out_row.append(b)
             else:
                 index = str(len(mapping) + 1)

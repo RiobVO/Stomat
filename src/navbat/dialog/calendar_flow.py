@@ -178,8 +178,13 @@ class _CalendarFlowMixin:
             self._no_slots_fyi_date = today
             self._notifier.notify(conv.chat_id, reason,
                                   self._escalation_context(conv))
+        lang = self._lang(conv)
+        # «встать в очередь»: при отмене бот сам пришлёт освободившийся слот
+        join = (Button(t("btn_join_waitlist", lang),
+                       f"wl:join:{conv.context.service or 'checkup'}"),)
         reply = self._month_reply(session, conv, today, edit=False)
         if reply.button_rows:
-            return replace(reply, text=(f"{t('no_slots_calendar', self._lang(conv))}"
-                                        f"\n\n{reply.text}"))
-        return reply
+            return replace(reply,
+                           text=f"{t('no_slots_calendar', lang)}\n\n{reply.text}",
+                           button_rows=reply.button_rows + (join,))
+        return replace(reply, button_rows=(join,))

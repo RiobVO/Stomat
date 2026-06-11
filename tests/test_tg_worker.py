@@ -444,3 +444,23 @@ def test_stats_full_sends_new_message(app_session_factory, admin_engine,
     assert "Сводка за" in api.sent[-1][1]
     assert [b.action for b in api.row_keyboards[-1][0]] == \
         ["stats:1", "stats:7", "stats:30"], "кнопки периодов как у /stats"
+
+
+def test_waitlist_callback_routed_raw(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a, service_cleaning):
+    # сырой wl: callback маршрутизируется в диалог (не в stale) — запись
+    # в очередь создаётся; кнопка пуша переживает перезапись tg_actions-map
+    worker, api, _ = make_worker(app_session_factory, clinic_a,
+                                 [extr(intent="other")])
+    put_message(app_session_factory, clinic_a, "/start")
+    worker.process_one()
+    put_callback(app_session_factory, clinic_a, "lang:ru")
+    worker.process_one()
+    put_callback(app_session_factory, clinic_a, "wl:join:cleaning")
+    worker.process_one()
+
+    with admin_engine.begin() as conn:
+        n = conn.execute(text("SELECT count(*) FROM waitlist "
+                              "WHERE clinic_id = :c AND status = 'waiting'"),
+                         {"c": clinic_a}).scalar_one()
+    assert n == 1, "wl: дошёл до handle_action, не превратился в stale"
