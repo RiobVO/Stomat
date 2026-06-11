@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -132,9 +132,9 @@ class UpdateWorker:
                 self._send(chat_id, reply)
                 return
             if "text" in message:
-                if (message["text"].strip() == "/stats"
+                if (message["text"].split()[:1] == ["/stats"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._stats_reply())
+                    self._send(chat_id, self._stats_reply(message["text"]))
                     return
                 if (message["text"].split()[:1] == ["/release"]
                         and chat_id in self._admin_chat_ids):
@@ -410,17 +410,26 @@ class UpdateWorker:
         return ("Формат: /dayoff DD.MM [причина] — закрыть день, "
                 "/dayopen DD.MM — снова открыть.\n" + upcoming)
 
-    def _stats_reply(self) -> Reply:
-        from navbat.stats import collect_daily_stats, render_stats
+    def _stats_reply(self, command: str = "/stats") -> Reply:
+        """Сводка владельца (П-6): /stats — день, /stats 7|30 — период."""
+        from navbat.stats import collect_stats, render_stats
 
+        args = command.split()[1:2]
+        days = 1
+        if args:
+            if not args[0].isdigit() or not 1 <= int(args[0]) <= 90:
+                return Reply("Формат: /stats [дней], например /stats 7 "
+                             "или /stats 30")
+            days = int(args[0])
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             tz = ZoneInfo(session.execute(
                 text("SELECT timezone FROM clinic "
                      "WHERE id = current_setting('app.clinic_id')::uuid")
             ).scalar_one())
             today = datetime.now(tz).date()
-            stats = collect_daily_stats(session, today, tz)
-        return Reply(render_stats(stats, today))
+            first = today - timedelta(days=days - 1)
+            stats = collect_stats(session, first, today, tz)
+        return Reply(render_stats(stats, first, today))
 
     def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
         """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).
