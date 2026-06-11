@@ -1,19 +1,19 @@
-"""Сценарий выбора даты списком (_CalendarFlowMixin, П-5/П-5б).
+"""Сценарий выбора даты месячной сеткой (_CalendarFlowMixin, П-5, ревизия 11.06).
 
 Общий для записи и переноса: кнопки слотов в day-view — штатные
 slot:/reslot:, дальше работает существующий путь hold→confirm. Сообщение
-с датами живёт долго — устаревшие клики валидируются (toast/перерисовка),
+с сеткой живёт долго — устаревшие клики валидируются (toast/перерисовка),
 не падают. Вынесен mixin'ом по R4-структуре; хелперы и роутер — через self.
 """
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import replace
 from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from navbat.dialog.calendar_view import (
-    DAYS_PER_PAGE, HORIZON_DAYS, dates_view)
+from navbat.dialog.calendar_view import HORIZON_DAYS, month_view
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.replies import Button, Reply, t
 
@@ -27,24 +27,25 @@ class _CalendarFlowMixin:
         """Диспетчер cal:-callback'ов."""
         lang = self._lang(conv)
         kind, _, value = rest.partition(":")
-        if kind == "noop":
-            return Reply("")  # заглушки старых сообщений: молча
-        if kind == "none":
+        if kind in ("noop", "none"):
+            # мёртвые ячейки сетки (занятый/прошлый день, заглушки,
+            # шапка дней недели) и legacy cal:none: только toast
             return Reply("", toast=t("cal_no_slots", lang))
         if kind == "nav":
             start = self._parse_nav(session, value)
             if start is None:
                 return self._with_reprompt(session, conv,
                                            Reply(t("stale_button", lang)))
-            return self._dates_reply(session, conv, start, edit=True)
+            return self._month_reply(session, conv, start, edit=True)
         if kind == "day":
             return self._on_calendar_day(session, conv, value)
         return self._with_reprompt(session, conv, Reply(t("stale_button", lang)))
 
     def _parse_nav(self, session: Session, value: str) -> date | None:
-        """Старт страницы дат. ISO-дата; legacy YYYY-MM из старых сообщений
-        (месячная сетка П-5) → 1 число месяца. Вне [today, today+90] —
-        первая страница; мусор — None (stale)."""
+        """Якорь сетки. ISO-дата (стрелки шлют 1-е число месяца; legacy
+        список дат П-5б — любую дату); legacy YYYY-MM первой сетки →
+        1 число месяца. Вне [today, today+90] — сегодня (текущий месяц);
+        мусор — None (stale)."""
         try:
             start = date.fromisoformat(value if len(value) > 7 else f"{value}-01")
         except ValueError:
@@ -54,44 +55,51 @@ class _CalendarFlowMixin:
             return today
         return start
 
-    def _dates_reply(self, session: Session, conv: Conversation,
-                     start: date, edit: bool) -> Reply:
+    def _month_reply(self, session: Session, conv: Conversation,
+                     anchor: date, edit: bool) -> Reply:
+        """Сетка месяца, в который попадает anchor (клампится в горизонт)."""
         if not conv.context.resched_id:
             conv.state = "booking_collect"
         self._ensure_service(session, conv)
-        days, has_more = self._available_days_from(session, conv, start)
-        if not days:
-            # в горизонте пусто: честный текст без мёртвых кнопок
+        today = self._today(session)
+        horizon_end = today + timedelta(days=HORIZON_DAYS)
+        first = min(max(anchor, today), horizon_end).replace(day=1)
+        month_last = first.replace(day=monthrange(first.year, first.month)[1])
+        free = self._free_days_between(session, conv, first, month_last)
+        if not free and not self._free_days_between(session, conv, today,
+                                                    horizon_end, limit=1):
+            # во всём горизонте пусто: честный текст без мёртвой сетки
             return Reply(t("no_slots_horizon", self._lang(conv)), edit=edit)
-        caption, rows = dates_view(days, start, self._today(session),
-                                   has_more, self._lang(conv))
+        caption, rows = month_view(first, set(free), today, horizon_end,
+                                   self._lang(conv))
         return Reply(caption, button_rows=rows, edit=edit)
 
-    def _available_days_from(self, session: Session, conv: Conversation,
-                             start: date) -> tuple[list[date], bool]:
-        """Первые DAYS_PER_PAGE доступных дней от start (скан с ранним
-        выходом, горизонт HORIZON_DAYS от сегодня) + есть ли дальше."""
+    def _free_days_between(self, session: Session, conv: Conversation,
+                           first: date, last: date,
+                           limit: int | None = None) -> list[date]:
+        """Дни со свободным слотом в [first, last] ∩ [today, today+горизонт]
+        (скан по дням, ранний выход по limit)."""
         ctx = conv.context
         service_id = self._service_id(session, ctx.service) if ctx.service else None
         if service_id is None:
-            return [], False
+            return []
         doctor_filter = ctx.resched_doctor if ctx.resched_id else ctx.doctor_id
         doctors = self._doctors(session, doctor_filter)
         today = self._today(session)
         now = self._clock()
-        last_day = today + timedelta(days=HORIZON_DAYS)
+        last = min(last, today + timedelta(days=HORIZON_DAYS))
         days: list[date] = []
-        day = max(start, today)
-        while day <= last_day:
+        day = max(first, today)
+        while day <= last:
             for doctor_id, _name in doctors:
                 slots = self._sched.find_free_slots(doctor_id, service_id, day)
                 if any(slot.start > now for slot in slots):
-                    if len(days) == DAYS_PER_PAGE:
-                        return days, True  # нашёлся 11-й — будет «Ещё даты»
                     days.append(day)
                     break
+            if limit is not None and len(days) >= limit:
+                break
             day += timedelta(days=1)
-        return days, False
+        return days
 
     def _on_calendar_day(self, session: Session, conv: Conversation,
                          value: str) -> Reply:
@@ -103,8 +111,8 @@ class _CalendarFlowMixin:
                                        Reply(t("stale_button", lang)))
         today = self._today(session)
         if day < today:
-            # клик в старое сообщение: честный toast + свежая первая страница
-            reply = self._dates_reply(session, conv, today, edit=True)
+            # клик в старое сообщение: честный toast + свежая сетка месяца
+            reply = self._month_reply(session, conv, today, edit=True)
             return replace(reply, toast=t("cal_past_day", lang))
         conv.context.date = day.isoformat()
         return self._calendar_day_reply(session, conv, day)
@@ -128,8 +136,8 @@ class _CalendarFlowMixin:
                     if slot.start > now:
                         found.append((slot.start, doctor_id, doctor_name))
         if not found:
-            # день опустел, пока пациент думал: toast + свежий список дат
-            reply = self._dates_reply(session, conv, day, edit=True)
+            # день опустел, пока пациент думал: toast + свежая сетка месяца
+            reply = self._month_reply(session, conv, day, edit=True)
             return replace(reply, toast=t("cal_no_slots", lang))
         found.sort(key=lambda item: (item[0], str(item[1])))
 
@@ -161,7 +169,7 @@ class _CalendarFlowMixin:
 
     def _no_slots_calendar(self, session: Session, conv: Conversation,
                            reason: str) -> Reply:
-        """Пустые 2 недели: пациенту — список дальних доступных дней (или
+        """Пустые 2 недели: пациенту — сетка месяца с дальними «•» (или
         честное «времени нет»), владельцу — FYI раз в день (чаще это
         незаведённый график, чем спрос). Дедуп в памяти процесса: после
         рестарта повторится — для FYI ок."""
@@ -170,7 +178,7 @@ class _CalendarFlowMixin:
             self._no_slots_fyi_date = today
             self._notifier.notify(conv.chat_id, reason,
                                   self._escalation_context(conv))
-        reply = self._dates_reply(session, conv, today, edit=False)
+        reply = self._month_reply(session, conv, today, edit=False)
         if reply.button_rows:
             return replace(reply, text=(f"{t('no_slots_calendar', self._lang(conv))}"
                                         f"\n\n{reply.text}"))
