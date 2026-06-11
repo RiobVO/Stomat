@@ -9,3 +9,4 @@ spike_nlu/data/*backup*.jsonl
 spike_nlu/data/inbox/
 spike_nlu/.harvest.session*
 spike_nlu/data/ft_*.jsonl
+spike_nlu/.harvest_login.json
