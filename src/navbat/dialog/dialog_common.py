@@ -74,14 +74,14 @@ _ADDRESS_RE = re.compile(
 # uz «bo'lib» лишь в биграмме с to'l- («bo'lib to'lash» = рассрочка),
 # одиночное bo'lib — служебный глагол («kasal bo'lib qoldim»).
 _PAYMENT_RE = re.compile(
-    r"\b(оплат\w*|рассрочк\w*|карт(?:ой|а|у|ы)|наличн\w*"
-    r"|to'lov\w*|bo'lib\s+to'l\w*|karta|naqd)\b",
+    r"\b(оплат\w*|рассрочк\w*|карт(?:ой|а|у|ы|е)|наличн\w*"
+    r"|to'lov\w*|bo'lib\s+to'l\w*|karta|naqd\w*|payme|click|humo)\b",
 )
 # Телефон: «номер» — только про клинику/«у вас» (иначе ловит «оставил номер
 # соседу» и шаг контакта); «у вас номер» и «номер клиники» — оба порядка.
 _PHONE_RE = re.compile(
     r"\b(телефон\w*|позвонить|дозвон\w*"
-    r"|номер\s+(?:клиники|телефона)|у\s+вас\s+номер"
+    r"|номер\s+клиники|у\s+вас\s+номер"
     r"|telefon\w*|qo'ng'iroq|raqam\w*\s+bormi)\b",
 )
 
