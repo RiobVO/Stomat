@@ -150,6 +150,20 @@ TEMPLATES = {
         "ru": "Цену на «{service}» уточнит администратор.",
         "uz": "«{service}» narxini administrator aniqlashtiradi.",
     },
+    "hours_today": {
+        "ru": "Сегодня клиника работает с {open} до {close}.",
+        "uz": "Bugun klinika {open} dan {close} gacha ishlaydi.",
+    },
+    "hours_next": {
+        "ru": "Сегодня клиника не работает. Ближайший рабочий день — {date}: "
+              "с {open} до {close}.",
+        "uz": "Bugun klinika ishlamaydi. Eng yaqin ish kuni — {date}: "
+              "{open} dan {close} gacha.",
+    },
+    "clinic_address": {
+        "ru": "Наш адрес: {address}.",
+        "uz": "Manzilimiz: {address}.",
+    },
     "not_understood": {
         "ru": "Я не понял. Помогу записаться, перенести или отменить приём — "
               "выберите действие в меню. Нужен человек — напишите "

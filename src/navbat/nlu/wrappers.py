@@ -45,6 +45,11 @@ class BudgetExceededError(ExtractionError):
     """Дневной token cap исчерпан — LLM не дёргаем (FSM мягко эскалирует)."""
 
 
+def redact_phones(message: str) -> str:
+    """Маскирует телефоноподобные последовательности (PII-граница)."""
+    return _PHONE_RE.sub("[phone]", message)
+
+
 class DeidentifyingExtractor:
     """Маскирует телефоны до отправки текста в LLM."""
 
@@ -52,7 +57,7 @@ class DeidentifyingExtractor:
         self._inner = inner
 
     def extract(self, message: str) -> Extraction:
-        return self._inner.extract(_PHONE_RE.sub("[phone]", message))
+        return self._inner.extract(redact_phones(message))
 
 
 class UsageRecorder:

@@ -66,6 +66,9 @@ SAMPLE_VALUES = {
     "doctor": ", Dilshod Karimov",
     "price": "150 000",
     "clinic": "Shifo Dent",
+    "open": "09:00",
+    "close": "18:00",
+    "address": "Toshkent, Navoiy ko'chasi 10",
 }
 
 

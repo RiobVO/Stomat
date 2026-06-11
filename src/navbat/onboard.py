@@ -154,6 +154,17 @@ def set_service_price(session_factory, clinic_id: uuid.UUID, name: str,
         raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
 
 
+def set_clinic_address(session_factory, clinic_id: uuid.UUID,
+                       address: str) -> None:
+    """Адрес для FAQ «где вы находитесь?» (П-2б); пустой — бот не отвечает."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        session.execute(
+            text("UPDATE clinic SET address = :a "
+                 "WHERE id = current_setting('app.clinic_id')::uuid"),
+            {"a": address or None},
+        )
+
+
 def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
                         doctor_id: uuid.UUID, intervals: dict) -> None:
     schedule = _validate_intervals(intervals)
@@ -364,6 +375,8 @@ def main() -> int:
     parser.add_argument("--duration", type=int, help="длительность услуги, мин")
     parser.add_argument("--price", type=int, help="цена услуги, сум")
     parser.add_argument("--set-price", metavar="KEY", help="изменить цену услуги")
+    parser.add_argument("--address", metavar="TEXT",
+                        help="адрес клиники для FAQ «где вы находитесь?»")
     parser.add_argument("--set-schedule", metavar="DOCTOR_UUID", type=uuid.UUID,
                         help="заменить график врача (с --schedule-json)")
     parser.add_argument("--add-admin", type=int, metavar="CHAT_ID",
@@ -445,6 +458,10 @@ def main() -> int:
         except ValueError as exc:
             sys.exit(f"[FAIL] {exc}")
         print(f"[OK] цена {args.set_price}: {args.price} сум")
+        return 0
+    if args.address is not None:
+        set_clinic_address(session_factory, args.clinic, args.address)
+        print(f"[OK] адрес клиники: {args.address or '(очищен)'}")
         return 0
     if args.set_schedule:
         if not args.schedule_json:

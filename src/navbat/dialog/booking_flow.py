@@ -126,7 +126,8 @@ class _BookingFlowMixin:
         if _looks_like_question(message):
             extraction = self._try_extract(message)
             if extraction is not None and extraction.intent == "question":
-                answer = self._answer_question(session, conv, extraction)
+                answer = self._faq_answer(session, conv, message) \
+                    or self._answer_question(session, conv, extraction, message)
                 return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
         conv.context.pending_name = message.strip()
         conv.state = "awaiting_phone"
@@ -144,7 +145,8 @@ class _BookingFlowMixin:
         if _looks_like_question(message):
             extraction = self._try_extract(message)
             if extraction is not None and extraction.intent == "question":
-                answer = self._answer_question(session, conv, extraction)
+                answer = self._faq_answer(session, conv, message) \
+                    or self._answer_question(session, conv, extraction, message)
                 return Reply(f"{answer.text}\n\n{t('ask_phone', lang)}",
                              contact_request=t("btn_share_contact", lang))
         return Reply(t("press_contact_button", lang),

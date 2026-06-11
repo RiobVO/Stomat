@@ -127,7 +127,7 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             session.execute(text("SELECT 1 FROM reminder LIMIT 0"))  # миграции 0006+
             clinic = session.execute(
                 text("SELECT name, tg_bot_token_encrypted, tg_admin_chat_ids, "
-                     "gcal_refresh_token_encrypted, nlu_prompt_version "
+                     "gcal_refresh_token_encrypted, nlu_prompt_version, address "
                      "FROM clinic WHERE id = :id"),
                 {"id": clinic_id},
             ).one_or_none()
@@ -144,6 +144,9 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
     report(True, "клиника", clinic.name)
     report(doctors > 0 and services > 0, "врачи и услуги",
            f"{doctors} врач(а), {services} услуг")
+    # подсказка, не FAIL: без адреса бот на «где вы?» отвечает меню (П-2б)
+    report(True, "адрес клиники (FAQ «где вы находитесь?»)",
+           clinic.address or "не задан — onboard --address")
 
     if clinic.tg_bot_token_encrypted:
         from navbat.crypto import decrypt_text

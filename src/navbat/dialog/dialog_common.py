@@ -54,6 +54,33 @@ def mentions_human_request(message: str) -> bool:
     return _HUMAN_REQUEST_RE.search(_normalize(message)) is not None
 
 
+# FAQ-слой (П-2б): два самых частых бытовых вопроса бот закрывает сам,
+# без LLM. «во сколько» — только в связке с работой/открытием, иначе
+# ловит «во сколько меня записали».
+_HOURS_RE = re.compile(
+    r"(до\s+скольк|со\s+скольк|час\w*\s+работ|график|режим\w*\s+работ"
+    r"|когда\s+(?:вы\s+)?(?:работа|открыва|закрыва)"
+    r"|во\s+сколько\s+(?:вы\s+)?(?:работа|открыва|закрыва)"
+    r"|ish\s+vaqti|qachongacha|soat\s+nechagacha"
+    r"|qachon\s+(?:ochil|yopil|ishla))",
+)
+_ADDRESS_RE = re.compile(
+    r"(адрес|где\s+вы|где\s+наход|как\s+(?:до\s+вас\s+)?(?:добраться|доехать"
+    r"|пройти|найти)|куда\s+(?:подойти|прийти|приходить|ехать)"
+    r"|manzil|qayerda|qanday\s+bor)",
+)
+
+
+def mentions_hours_question(message: str) -> bool:
+    """Вопрос о часах работы клиники (ru/uz)."""
+    return _HOURS_RE.search(_normalize(message)) is not None
+
+
+def mentions_address_question(message: str) -> bool:
+    """Вопрос об адресе/как добраться (ru/uz)."""
+    return _ADDRESS_RE.search(_normalize(message)) is not None
+
+
 def _looks_like_question(message: str) -> bool:
     # ТОЛЬКО явный «?»: используется на PII-шагах (имя/телефон) для
     # прерывания вопросом вбок. Критерий длины убран — длинное ФИО без «?»

@@ -42,7 +42,12 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "WHERE updated_at < now() - make_interval(days => :days)"),
             {"days": days},
         ).rowcount
-    if messages or dialogs:
-        log.info("retention: удалено %d сообщений, %d диалогов старше %d дней",
-                 messages, dialogs, days)
+        questions = session.execute(
+            text("DELETE FROM unanswered_question "
+                 "WHERE at < now() - make_interval(days => :days)"),
+            {"days": days},
+        ).rowcount
+    if messages or dialogs or questions:
+        log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов "
+                 "старше %d дней", messages, dialogs, questions, days)
     return messages, dialogs

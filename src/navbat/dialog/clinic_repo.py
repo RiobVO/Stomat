@@ -25,6 +25,14 @@ def clinic_timezone(session: Session) -> str:
     ).scalar_one()
 
 
+def clinic_address(session: Session) -> str | None:
+    """Адрес клиники для FAQ-ответа; NULL — не задан (онбординг --address)."""
+    return session.execute(
+        text("SELECT address FROM clinic "
+             "WHERE id = current_setting('app.clinic_id')::uuid")
+    ).scalar_one()
+
+
 def holidays_on(session: Session, day: date) -> set[date]:
     """Выходные/праздники клиники, попадающие на day (пусто = рабочий)."""
     return set(session.execute(
