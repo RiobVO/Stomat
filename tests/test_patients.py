@@ -32,8 +32,19 @@ def test_normalize_phone_variants(raw):
     assert normalize_phone(raw) == "998901234567"
 
 
-@pytest.mark.parametrize("raw", ["12345", "", "abc", "7901234567890"])
+@pytest.mark.parametrize("raw, normalized", [
+    ("+7 916 123-45-67", "79161234567"),     # Россия
+    ("+90 532 123 45 67", "905321234567"),   # Турция
+    ("+1 (212) 555-0123", "12125550123"),    # США
+])
+def test_normalize_phone_accepts_any_country(raw, normalized):
+    # П-2в: номер из кнопки всегда подлинный — страна не повод для отказа
+    assert normalize_phone(raw) == normalized
+
+
+@pytest.mark.parametrize("raw", ["12345", "", "abc", "1234567890123456"])
 def test_normalize_phone_rejects_garbage(raw):
+    # короче 7 или длиннее 15 цифр (E.164) — не телефон
     with pytest.raises(ValueError):
         normalize_phone(raw)
 

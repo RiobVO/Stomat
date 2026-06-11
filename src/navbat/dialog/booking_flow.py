@@ -163,13 +163,11 @@ class _BookingFlowMixin:
             return Reply(t("foreign_contact", lang),
                          contact_request=t("btn_share_contact", lang))
         if phone_hash is None:
-            # свой контакт с не-узбекским номером: ручного ввода нет — тупик,
-            # лид передаётся живому администратору
-            self._notifier.notify(conv.chat_id,
-                                  "контакт с не-узбекским номером",
-                                  self._escalation_context(conv))
-            conv.state = "escalated"
-            return Reply(t("escalated", lang))
+            # номер из контакта не распознан (с кнопки практически
+            # невозможно — она отдаёт номер аккаунта): повторяем кнопку,
+            # эскалации нет (П-2в — принимается номер любой страны)
+            return Reply(t("press_contact_button", lang),
+                         contact_request=t("btn_share_contact", lang))
 
         patient_id = create_patient_with_hash(session, conv.chat_id,
                                               conv.context.pending_name, phone_hash)

@@ -179,13 +179,25 @@ def test_enqueue_redacts_contact_phone(app_session_factory, admin_engine, clinic
         normalize_phone("998901234567"), "test-salt")
 
 
-def test_enqueue_marks_non_uz_contact_invalid(app_session_factory, admin_engine,
+def test_enqueue_redacts_foreign_contact_phone(app_session_factory, admin_engine,
                                                clinic_a):
-    """Не-узбекский номер: открытый номер вырезан, хэша нет (воркер эскалирует)."""
+    """Иностранный номер (П-2в): хэшируется как узбекский — кнопка отдаёт
+    подлинный номер аккаунта, страна не повод для эскалации."""
     put_contact_payload(app_session_factory, clinic_a, "+79161234567")
 
     payload = stored_payload(admin_engine)
     contact = payload["message"]["contact"]
     assert "phone_number" not in contact
-    assert "phone_hash" not in contact
     assert "79161234567" not in json.dumps(payload)
+    assert contact["phone_hash"] == contact_hash("79161234567", "test-salt")
+
+
+def test_enqueue_garbage_contact_left_without_hash(app_session_factory,
+                                                   admin_engine, clinic_a):
+    """Нераспознаваемое (3 цифры): открытый номер вырезан, хэша нет —
+    диалог повторит кнопку контакта."""
+    put_contact_payload(app_session_factory, clinic_a, "112")
+
+    contact = stored_payload(admin_engine)["message"]["contact"]
+    assert "phone_number" not in contact
+    assert "phone_hash" not in contact

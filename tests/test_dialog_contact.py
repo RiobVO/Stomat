@@ -138,21 +138,26 @@ def test_question_on_phone_step_answers_and_reprompts_button(
     assert fsm_state(admin_engine) == "awaiting_phone"
 
 
-# ── Края: не-узбекский номер, контакт вне шага ───────────────────────────────
+# ── Края: иностранный номер, контакт вне шага ────────────────────────────────
 
-def test_own_contact_foreign_number_escalates(app_session_factory, admin_engine,
-                                              clinic_a, doctor_a, service_cleaning):
+def test_own_contact_foreign_number_books(app_session_factory, admin_engine,
+                                          clinic_a, doctor_a, service_cleaning):
+    # П-2в: номер из кнопки всегда подлинный — принимаем любую страну,
+    # запись завершается без админа (раньше — эскалация-тупик)
     notifier = RecordingNotifier()
     engine = DialogEngine(app_session_factory, clinic_a,
                           extractor=FakeExtractor(script=booking_script()),
                           notifier=notifier)
     to_phone_step(engine)
 
-    reply = engine.handle_contact(CHAT, "+79161234567", own=True)
-    assert TEMPLATES["escalated"]["ru"] in reply.text
-    assert fsm_state(admin_engine) == "escalated"
-    assert notifier.calls, "лид с иностранным номером уходит администратору"
-    assert patient_count(admin_engine) == 0
+    engine.handle_contact(CHAT, "+79161234567", own=True)
+    assert fsm_state(admin_engine) == "idle"
+    assert notifier.calls == []
+    assert patient_count(admin_engine) == 1
+    with admin_engine.begin() as conn:
+        stored = conn.execute(text("SELECT contact_hash FROM patient")).scalar_one()
+    assert stored == contact_hash("79161234567", "test-salt"), \
+        "иностранный номер хэшируется как есть (без 998-префикса)"
 
 
 def test_contact_in_idle_is_fallback(app_session_factory, admin_engine,
@@ -180,9 +185,10 @@ def test_hashed_contact_books_with_same_hash(app_session_factory, admin_engine,
     assert stored == phone_hash, "в patient ушёл тот же хэш, что вырезан в очереди"
 
 
-def test_hashed_contact_none_escalates(app_session_factory, admin_engine,
-                                       clinic_a, doctor_a, service_cleaning):
-    """phone_hash=None (не-узбекский номер на enqueue) → лид администратору."""
+def test_hashed_contact_none_reasks_button(app_session_factory, admin_engine,
+                                           clinic_a, doctor_a, service_cleaning):
+    """phone_hash=None (номер не распознан — с кнопки практически невозможно)
+    → повтор кнопки, не эскалация (П-2в)."""
     notifier = RecordingNotifier()
     engine = DialogEngine(app_session_factory, clinic_a,
                           extractor=FakeExtractor(script=booking_script()),
@@ -190,7 +196,7 @@ def test_hashed_contact_none_escalates(app_session_factory, admin_engine,
     to_phone_step(engine)
 
     reply = engine.handle_contact_hashed(CHAT, None, own=True)
-    assert TEMPLATES["escalated"]["ru"] in reply.text
-    assert fsm_state(admin_engine) == "escalated"
-    assert notifier.calls, "лид без узбекского номера уходит администратору"
+    assert reply.contact_request, "кнопка контакта предложена снова"
+    assert fsm_state(admin_engine) == "awaiting_phone"
+    assert notifier.calls == []
     assert patient_count(admin_engine) == 0

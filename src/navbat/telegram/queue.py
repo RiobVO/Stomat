@@ -31,8 +31,8 @@ def _redact_contact_phone(session: Session, payload: dict) -> None:
     """PII-граница очереди: открытый номер из кнопки «Поделиться контактом»
     в durable-payload не сохраняем. Телефон хэшируется здесь (соль доступна
     в tenant-транзакции) — в постоянную таблицу пациента уходит тот же хэш.
-    Не-узбекский номер хэшем не представить: контакт остаётся без хэша,
-    воркер уводит лид администратору (как и при ручном вводе номера).
+    Принимается номер любой страны (П-2в). Нераспознаваемый контакт (мусор
+    в цифрах) остаётся без хэша — диалог повторит кнопку контакта.
     """
     message = payload.get("message")
     if not isinstance(message, dict):
@@ -44,7 +44,7 @@ def _redact_contact_phone(session: Session, payload: dict) -> None:
     try:
         hashed = phone_to_hash(session, raw)
     except ValueError:
-        return  # не-998: открытый номер уже вырезан, хэша нет → воркер эскалирует
+        return  # мусор в цифрах: номер уже вырезан, хэша нет → повтор кнопки
     contact["phone_hash"] = hashed
 
 
