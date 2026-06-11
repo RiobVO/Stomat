@@ -216,3 +216,79 @@ def test_match_no_free_slot_keeps_waiting(app_session_factory, admin_engine,
     assert service.match_waitlist() == 0
     assert api.sent == []
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "waiting")]
+
+
+# ── К-5: снятие / fulfillment / гонки ────────────────────────────────────────
+
+def _slot_action(admin_engine, clinic_id):
+    """Достать slot:-action из tg_actions-map conversation (после пуша)."""
+    import json
+    with admin_engine.begin() as conn:
+        ctx = conn.execute(
+            text("SELECT context FROM waitlist w JOIN conversation c "
+                 "ON c.tg_chat_id = w.tg_chat_id WHERE w.clinic_id = :cid "
+                 "LIMIT 1"), {"cid": clinic_id}).scalar_one()
+    actions = (ctx.get("tg_actions") or {}) if isinstance(ctx, dict) \
+        else json.loads(ctx).get("tg_actions", {})
+    return next(a for a in actions.values() if a.startswith("slot:"))
+
+
+def test_slot_tap_from_offer_books_and_fulfills(app_session_factory, admin_engine,
+                                                clinic_a, doctor_a,
+                                                service_cleaning):
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.dialog.patients import create_patient
+    from navbat.nlu.extractor import FakeExtractor
+    # известный пациент: тап слота → запись сразу (без имени/телефона)
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        create_patient(s, CHAT, "Пациент", "998901112233")
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    slot = _slot_action(admin_engine, clinic_a)
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    reply = engine.handle_action(CHAT, slot)
+    assert "✅" in reply.text or "подтвержд" in reply.text.lower() \
+        or "ЗАПИСЬ" in reply.text
+    with admin_engine.begin() as conn:
+        assert conn.execute(text("SELECT count(*) FROM appointment "
+                                 "WHERE status='booked'")).scalar_one() == 1
+    # следующий цикл матчера снимает с очереди (записался)
+    service.match_waitlist()
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "fulfilled")]
+
+
+def test_auto_fulfilled_if_booked_elsewhere(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a, service_cleaning):
+    from conftest import next_monday
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00", chat_id=CHAT)  # записался обычным путём
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 0, "не уведомляем — уже записан"
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "fulfilled")]
+
+
+def test_wl_leave_cancels(app_session_factory, admin_engine, clinic_a,
+                          service_cleaning):
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.nlu.extractor import FakeExtractor
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wid = wl.add(s, service_cleaning, CHAT, None, "ru")
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    engine.handle_action(CHAT, f"wl:leave:{wid}")
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "cancelled")]
+
+
+def test_chat_unavailable_drops_from_queue(app_session_factory, admin_engine,
+                                           clinic_a, doctor_a, service_cleaning):
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    api.chat_gone = True  # пациент заблокировал бота
+    assert service.match_waitlist() == 0
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "cancelled")]

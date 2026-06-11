@@ -239,12 +239,15 @@ class ReminderService:
         local = start.astimezone(tz)
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             lang = get_chat_lang(session, row.tg_chat_id)
-            svc = service_label(
-                services_repo.service_name(session, row.service_id) or "checkup",
-                lang)
-            # строка conversation обязана существовать: send_reply кладёт
-            # туда map slot:-кнопки (callback придёт позже)
-            save_conversation(session, load_conversation(session, row.tg_chat_id))
+            service_key = services_repo.service_name(session, row.service_id) \
+                or "checkup"
+            svc = service_label(service_key, lang)
+            # ctx.service обязателен: slot:-кнопка услугу не несёт, _on_slot_chosen
+            # читает её из контекста. Заодно строка conversation должна
+            # существовать — send_reply кладёт туда map slot:-кнопки.
+            conv = load_conversation(session, row.tg_chat_id)
+            conv.context.service = service_key
+            save_conversation(session, conv)
         reply = Reply(
             t("waitlist_slot_offer", lang, service=svc, when=f"{local:%d.%m %H:%M}"),
             button_rows=(
