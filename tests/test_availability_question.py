@@ -159,11 +159,11 @@ def test_price_question_with_marker_still_prices(
 def test_unrelated_question_not_availability(
         app_session_factory, admin_engine, clinic_a, doctor_a):
     # вне контекста и без маркеров — это НЕ вопрос о наличии: «не понял»
-    # + меню (П-2а), кнопок дат нет, админа не дёргаем
+    # + кнопка к человеку (полировка-2), кнопок дат нет, админа не дёргаем
     engine, notifier = make(app_session_factory, clinic_a,
                             [extr(intent="question")])
     reply = engine.handle_text(CHAT, "вы принимаете карты?")
 
     assert not date_actions(reply)
-    assert reply.menu
+    assert [b.action for b in reply.buttons] == ["call_admin"]
     assert notifier.calls == []

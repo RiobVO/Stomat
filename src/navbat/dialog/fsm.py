@@ -359,8 +359,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if failures >= MAX_NLU_FAILURES:
             # NLU лежит или текст нечитаем — НЕ эскалируем (П-2а): повторяем
             # текущий шаг кнопками, кнопочный путь работает без LLM (C-4);
-            # человека пациент зовёт сам («позовите администратора»)
-            note = Reply(t("not_understood", lang), menu=menu_rows(lang))
+            # кнопка «позвать администратора» вместо menu (reply_markup один):
+            # reply-меню у пациента и так на экране (is_persistent)
+            note = Reply(t("not_understood", lang),
+                         (Button(t("btn_call_admin", lang), "call_admin"),))
             return self._with_reprompt(session, conv, note)
         # не понятому пациенту всегда доступны кнопки самообслуживания (M7)
         return Reply(t("reask", lang), menu=menu_rows(lang))
@@ -380,6 +382,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
         kind, _, rest = action.partition(":")
+        if kind == "call_admin":
+            # кнопка из фоллбэка = ровно путь «позовите администратора»;
+            # повторный клик не дублирует алерт: escalated перехвачен выше
+            return self._escalate_on_request(session, conv)
         if kind == "lang":
             conv.context.lang = rest
             if not conv.context.greeting_shown:
@@ -453,11 +459,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 return Reply(t("price_unknown", lang, service=label))
             formatted = f"{int(price):,}".replace(",", " ")
             return Reply(t("price_answer", lang, service=label, price=formatted))
-        # вопрос вне компетенции: «не понял» + меню, БЕЗ алерта (П-2а) —
-        # админа зовёт только сам пациент; текст вопроса копится анонимно
-        # (телефоны замаскированы) и придёт владельцу в дайджесте (П-2б)
+        # вопрос вне компетенции: «не понял» + кнопка к человеку, БЕЗ алерта
+        # (П-2а) — админа зовёт только сам пациент; текст вопроса копится
+        # анонимно (телефоны замаскированы) и придёт в дайджесте (П-2б)
         questions_repo.add(session, redact_phones(message))
-        return Reply(t("not_understood", lang), menu=menu_rows(lang))
+        return Reply(t("not_understood", lang),
+                     (Button(t("btn_call_admin", lang), "call_admin"),))
 
     def _faq_answer(self, session: Session, conv: Conversation,
                     message: str) -> Reply | None:

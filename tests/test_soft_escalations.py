@@ -137,7 +137,8 @@ def test_unanswerable_question_not_understood_no_alert(
 
     assert notifier.calls == []
     assert fsm_state(admin_engine) != "escalated"
-    assert reply.menu, "меню самообслуживания в ответе"
+    # полировка-2: вместо menu — кнопка явного выхода к человеку
+    assert [b.action for b in reply.buttons] == ["call_admin"]
     assert "администратора" in reply.text, "подсказка пути к человеку"
 
 
@@ -154,7 +155,9 @@ def test_repeated_nlu_failures_never_escalate(app_session_factory, admin_engine,
 
     assert notifier.calls == []
     assert fsm_state(admin_engine) != "escalated"
-    assert second.menu and third.menu
+    # 2-й и 3-й сбой — кнопка «позвать администратора» (полировка-2)
+    assert [b.action for b in second.buttons] == ["call_admin"]
+    assert [b.action for b in third.buttons] == ["call_admin"]
 
 
 def test_nlu_failures_mid_booking_repeat_step_buttons(

@@ -222,6 +222,11 @@ TEMPLATES = {
               "Administrator kerak bo'lsa — «administratorni chaqiring» "
               "deb yozing.",
     },
+    # кнопка в фоллбэках («не понял»): явный выход к человеку (полировка-2)
+    "btn_call_admin": {
+        "ru": "👤 Позвать администратора",
+        "uz": "👤 Administratorni chaqirish",
+    },
     "escalated_closed": {
         "ru": "👤 Передаю администратору. Клиника сейчас закрыта — он ответит "
               "вам здесь утром.",
