@@ -24,6 +24,7 @@ _BOOKING_FIELDS = (
     "service", "date", "time_ref", "doctor_id", "doctor_miss",
     "appointment_id", "slot_start", "slot_doctor", "pending_name",
     "resched_id", "resched_doctor", "cancel_id", "cancel_when", "cancel_via",
+    "confirm_failures",
 )
 
 # поля с PII пациента — НЕ выносить в эскалацию админу (m1)
@@ -52,6 +53,7 @@ class DialogContext:
     cancel_id: str | None = None
     cancel_when: str | None = None
     cancel_via: str | None = None
+    confirm_failures: int = 0  # подряд; 2 — эскалация (П-2а)
     # ключи под управлением адаптеров (tg_actions и пр.) — passthrough
     extras: dict[str, Any] = field(default_factory=dict)
 

@@ -49,14 +49,17 @@ def test_price_unknown_defers_to_admin(app_session_factory, admin_engine, clinic
     assert "администратор" in reply.text.lower()
 
 
-def test_general_question_falls_back_and_notifies(app_session_factory, admin_engine,
-                                                  clinic_a, doctor_a, service_cleaning):
+def test_general_question_not_understood_without_alert(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # П-2а: вопрос вне компетенции — «не понял» + меню, админа не дёргаем
+    # (адрес научится отвечать FAQ-слой П-2б)
     notifier = RecordingNotifier()
     engine = DialogEngine(app_session_factory, clinic_a,
                           extractor=FakeExtractor(script=[extr(intent="question")]),
                           notifier=notifier)
     reply = engine.handle_text(CHAT, "а где вы находитесь?")
     assert not reply.buttons
-    assert len(notifier.calls) == 1
+    assert reply.menu, "кнопки самообслуживания в ответе"
+    assert notifier.calls == []
     # вопрос без записи — не эскалация диалога, бот продолжает работать
     assert fsm_state(admin_engine) == "idle"

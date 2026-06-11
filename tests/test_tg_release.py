@@ -15,10 +15,8 @@ ADMIN_CHAT = 777
 
 
 def escalate_chat(worker, app_session_factory, clinic_id):
-    """Два сбоя NLU подряд → чат пациента в escalated."""
-    put_message(app_session_factory, clinic_id, "абракадабра")
-    put_message(app_session_factory, clinic_id, "опять абракадабра")
-    worker.process_one()
+    """Прямая просьба человека → чат пациента в escalated (П-2а)."""
+    put_message(app_session_factory, clinic_id, "позовите администратора")
     worker.process_one()
 
 
