@@ -41,6 +41,7 @@ class DailyStats:
     returning_patients: int = 0  # были раньше И записались в периоде
     top_doctors: tuple[tuple[str, int, int], ...] = ()  # (имя, записей, сумма)
     hit_service: tuple[str, int] | None = None          # (ключ услуги, записей)
+    waitlist_waiting: int = 0  # «сейчас в очереди ожидания» (снимок, не за период)
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -194,6 +195,9 @@ def collect_stats(session: Session, first: date, last: date,
         returning_patients=clients.returning_count,
         top_doctors=top_doctors,
         hit_service=(hit.name, hit.cnt) if hit else None,
+        waitlist_waiting=session.execute(text(
+            "SELECT count(*) FROM waitlist WHERE status IN "
+            "('waiting', 'notified')")).scalar_one(),
     )
 
 
@@ -284,6 +288,9 @@ def render_stats(stats: DailyStats, day: date, last: date | None = None,
         key, cnt = stats.hit_service
         sections.append(f"✨ Хит-услуга\n• {service_label(key, 'ru')} — "
                         f"{cnt} зап.")
+    if stats.waitlist_waiting:
+        sections.append(f"🔔 Очередь ожидания\n• сейчас ждут слота: "
+                        f"{stats.waitlist_waiting}")
     middle = "".join(f"{section}\n" for section in sections)
 
     return (f"{header}\n"
@@ -309,11 +316,13 @@ def render_digest_short(stats: DailyStats) -> str:
     """
     after = (f" (из них {stats.after_hours_booked} — вне рабочих часов)"
              if stats.after_hours_booked else "")
+    queue = (f"\n• 🔔 в очереди ожидания: {stats.waitlist_waiting}"
+             if stats.waitlist_waiting else "")
     return (f"📊 <b>Итог дня</b>\n"
             f"• записей: {stats.booked}{after}\n"
             f"• предотвращено неявок: {stats.prevented_noshows} "
             f"(≈ {_money(stats.saved_revenue)} сум)\n"
-            f"• эскалаций: {stats.escalated}")
+            f"• эскалаций: {stats.escalated}{queue}")
 
 
 QUESTIONS_IN_DIGEST = 10  # cap: дайджест — сводка, не лог
