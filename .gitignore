@@ -3,3 +3,4 @@ __pycache__/
 *.egg-info/
 spike_nlu/results/raw_*.jsonl
 spike_nlu/data/*backup*.jsonl
+.venv/
