@@ -14,7 +14,7 @@ from navbat.dialog import appointments_repo, clinic_repo, doctors_repo, services
 from navbat.dialog.conversation import Conversation, DialogContext
 from navbat.dialog.dates import exact_time_ref, matches_time_ref
 from navbat.dialog.dialog_common import NEAREST_DAY_SCAN
-from navbat.dialog.replies import Button, service_label, t
+from navbat.dialog.replies import SERVICE_EMOJI, Button, service_label, t
 from navbat.nlu.extractor import ExtractionError
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.calendar_rules import open_bounds
@@ -67,7 +67,10 @@ class _SharedHelpersMixin:
 
     def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
         names = services_repo.service_keys(session)
-        return tuple(Button(service_label(n, lang), f"service:{n}") for n in names)
+        return tuple(
+            Button(f"{SERVICE_EMOJI.get(n, '🦷')} {service_label(n, lang)}",
+                   f"service:{n}")
+            for n in names)
 
     def _date_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
         today = self._today(session)

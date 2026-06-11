@@ -15,24 +15,26 @@ from navbat.dialog.replies import TEMPLATES, t
 
 # точные значения, принятые по итогам ревью; ключ -> новый uz-текст
 REVIEWED_UZ = {
+    # П-7: hero-обвязка; ревью-формулировки сохранены внутри
     "greeting": (
-        "Assalomu alaykum! Men «{clinic}» klinikasining virtual "
-        "administratoriman: qabulga yozilish, uni boshqa vaqtga ko'chirish "
-        "yoki bekor qilishda yordam beraman. Tibbiy savollarga shifokor "
-        "javob beradi."
+        "🦷 <b>{clinic}</b>\nVirtual administrator · yozilish 24/7\n\n"
+        "Qabulga yozilish, uni boshqa vaqtga ko'chirish yoki bekor "
+        "qilishda yordam beraman — tashrif oldidan eslatib qo'yaman. "
+        "Tibbiy savollarga shifokor javob beradi.\n\n"
+        "Boshlaymizmi? 👇"
     ),
     "hold_expired": (
         "Tanlangan vaqtni band qilish muddati tugadi. Mana yangi variantlar:"
     ),
-    "cancel_confirm_q": "{when} dagi qabulni bekor qilaymi?",
-    "cancel_done": "Qabul bekor qilindi. Sizni yana kutib qolamiz.",
+    "cancel_confirm_q": "❌ {when} dagi qabulni bekor qilaymi?",
+    "cancel_done": "✅ Qabul bekor qilindi. Sizni yana kutib qolamiz.",
     "cancel_kept": "Yaxshi, qabul o'z kuchida qoladi.",
     "cancel_none": "Faol qabul topilmadi. Yozilishni xohlaysizmi?",
     "resched_none": (
         "Boshqa vaqtga ko'chirish uchun faol qabul topilmadi. "
         "Yozilishni xohlaysizmi?"
     ),
-    "resched_done": "Qabulni {when} ga ko'chirdim. Sizni kutamiz!",
+    "resched_done": "✅ <b>KO'CHIRILDI</b>\n\n📅 {when}\n\nSizni kutamiz!",
     "conflict_moved": (
         "Afsuski, {old} vaqti band bo'lib qoldi — qabulni {new} ga "
         "ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:"
@@ -46,7 +48,7 @@ REVIEWED_UZ = {
         "«ertaga tish tozalashga yozilmoqchiman»."
     ),
     "escalated": (
-        "Administratorga ulab berdim — u tez orada shu yerda javob beradi."
+        "👤 Administratorga ulab berdim — u tez orada shu yerda javob beradi."
     ),
     "stale_button": "Bu tugma endi faol emas.",
     "btn_remind_cancel": "Qabulni bekor qilish",

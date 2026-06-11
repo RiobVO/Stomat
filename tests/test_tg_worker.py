@@ -36,7 +36,8 @@ class FakeTelegramAPI:
         self.chat_gone = False  # пациент заблокировал бота / удалил чат
 
     def send_message(self, chat_id, text, buttons=(),
-                     contact_request=None, menu=None, button_rows=()):
+                     contact_request=None, menu=None, button_rows=(),
+                     parse_mode=None):
         if self.chat_gone:
             raise ChatUnavailableError("Forbidden: bot was blocked by the user")
         if self.send_failures > 0:
@@ -48,7 +49,7 @@ class FakeTelegramAPI:
         return {"message_id": len(self.sent)}
 
     def edit_message_text(self, chat_id, message_id, text, buttons=(),
-                          button_rows=()):
+                          button_rows=(), parse_mode=None):
         self.edited.append((chat_id, message_id, text, tuple(button_rows)))
         return {"message_id": message_id}
 

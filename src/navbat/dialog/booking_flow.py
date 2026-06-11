@@ -214,7 +214,8 @@ class _BookingFlowMixin:
                 return Reply(t("escalated", lang))
             return self._offer_slots(session, conv, note="confirm_retry")
         local = datetime.fromisoformat(ctx.slot_start).astimezone(self._clinic_tz(session))
-        doctor = f", {ctx.slot_doctor}" if ctx.slot_doctor else ""
+        # отдельная строка карточки (П-7); экранирует t() вместе с именем
+        doctor = f"\n👨‍⚕️ {ctx.slot_doctor}" if ctx.slot_doctor else ""
         reply = Reply(t("booked", lang, service=service_label(ctx.service, lang),
                         when=f"{local:%d.%m %H:%M}", doctor=doctor))
         self._clear_booking(conv)

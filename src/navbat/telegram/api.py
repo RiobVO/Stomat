@@ -66,8 +66,13 @@ class TelegramAPI:
                      buttons: Sequence[Button] = (),
                      contact_request: str | None = None,
                      menu: Sequence[Sequence[str]] | None = None,
-                     button_rows: Sequence[Sequence[Button]] = ()) -> dict:
+                     button_rows: Sequence[Sequence[Button]] = (),
+                     parse_mode: str | None = None) -> dict:
         params: dict = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            # HTML — только пациентские пути/дайджест (П-7): подстановки
+            # там экранированы; алерты с сырым контекстом остаются plain
+            params["parse_mode"] = parse_mode
         if contact_request:
             # one_time_keyboard: клавиатура прячется после нажатия сама
             params["reply_markup"] = {
@@ -88,12 +93,15 @@ class TelegramAPI:
 
     def edit_message_text(self, chat_id: int, message_id: int, text: str,
                           buttons: Sequence[Button] = (),
-                          button_rows: Sequence[Sequence[Button]] = ()):
+                          button_rows: Sequence[Sequence[Button]] = (),
+                          parse_mode: str | None = None):
         """Редактирование сообщения на месте (П-4): календарь листается без
         спама в чат. «message is not modified» (повторный клик по той же
         сетке) — не ошибка, гасится тихо."""
         params: dict = {"chat_id": chat_id, "message_id": message_id,
                         "text": text}
+        if parse_mode:
+            params["parse_mode"] = parse_mode
         if buttons or button_rows:
             params["reply_markup"] = _inline_keyboard(buttons, button_rows)
         try:

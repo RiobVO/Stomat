@@ -29,7 +29,7 @@ _WEEKDAYS_SHORT = {
     "ru": ("пн", "вт", "ср", "чт", "пт", "сб", "вс"),
     "uz": ("du", "se", "ch", "pa", "ju", "sh", "ya"),
 }
-_CAPTION = {"ru": "Выберите день 👇", "uz": "Kunni tanlang 👇"}
+_CAPTION = {"ru": "📅 <b>Выберите день</b> 👇", "uz": "📅 <b>Kunni tanlang</b> 👇"}
 
 
 def day_label(day: date, lang: str) -> str:
