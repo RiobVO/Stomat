@@ -104,6 +104,35 @@ def test_ask_date_has_calendar_button(app_session_factory, admin_engine,
     assert cal_buttons[0].action == f"cal:nav:{monday:%Y-%m}"
 
 
+def test_booking_date_step_has_calendar_button(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # «Записаться» → услуга → вопрос дня ДОЛЖЕН содержать календарь
+    # (живой тык 11.06: кнопки не было на happy path выбора даты)
+    monday = next_monday()
+    engine, _ = make(app_session_factory, clinic_a, [],
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    engine.handle_action(CHAT, "lang:ru")
+    engine.handle_text(CHAT, TEMPLATES["btn_menu_book"]["ru"])  # меню
+    reply = engine.handle_action(CHAT, "service:cleaning")
+
+    assert any(b.action.startswith("cal:nav:") for b in reply.buttons), \
+        "шаг «на какой день?» содержит «📅 Выбрать дату»"
+
+
+def test_reschedule_date_step_has_calendar_button(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    monday = next_monday()
+    book_directly(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                  monday, "09:00")
+    engine, _ = make(app_session_factory, clinic_a,
+                     [extr(intent="reschedule")],  # без даты
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    reply = engine.handle_text(CHAT, "перенесите мою запись")
+
+    assert any(b.action.startswith("cal:nav:") for b in reply.buttons)
+    assert fsm_state(admin_engine) == "resched_offer_slots"
+
+
 # ── Навигация и сетка ────────────────────────────────────────────────────────
 
 def test_nav_renders_month_with_working_days_only(

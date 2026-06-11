@@ -50,8 +50,8 @@ class _BookingFlowMixin:
             conv.state = "booking_collect"
             return Reply(t("ask_service", lang), self._service_buttons(session, lang))
         if not ctx.date:
-            conv.state = "booking_collect"
-            return Reply(t("ask_date", lang), self._date_buttons(session, lang))
+            # единый ответ выбора дня: Сегодня/Завтра/Послезавтра + календарь
+            return self._ask_date(session, conv)
         return self._offer_slots(session, conv)
 
     def _offer_slots(self, session: Session, conv: Conversation,

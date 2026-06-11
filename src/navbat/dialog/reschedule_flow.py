@@ -37,7 +37,9 @@ class _RescheduleFlowMixin:
         self._merge_when(session, ctx, extraction)
         conv.state = "resched_offer_slots"
         if not ctx.date:
-            return Reply(t("ask_date", lang), self._date_buttons(session, lang))
+            # единый ответ выбора дня (с календарём); resched-state
+            # сохраняется — _ask_date его не трогает при resched_id
+            return self._ask_date(session, conv)
         return self._offer_resched_slots(session, conv)
 
     def _offer_resched_slots(self, session: Session, conv: Conversation,
