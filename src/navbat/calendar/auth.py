@@ -51,6 +51,30 @@ def exchange_code(client: httpx.Client, code: str, client_id: str,
     return refresh_token
 
 
+def _make_handler(received: dict, got_code: threading.Event) -> type:
+    """Фабрика обработчика loopback-callback'а (вынесена для тестируемости)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — API stdlib
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            code = (query.get("code") or [None])[0]
+            # код фиксируем один раз: браузер следом просит /favicon.ico,
+            # и GET без ?code= не должен затереть уже пойманный код (гонка
+            # давала Google «Missing required parameter: code»)
+            if code and "code" not in received:
+                received["code"] = code
+                got_code.set()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write("Готово — вернитесь в консоль.".encode())
+
+        def log_message(self, fmt, *args) -> None:
+            log.debug("oauth-callback: " + fmt, *args)
+
+    return Handler
+
+
 def run_loopback_flow(clinic_id: uuid.UUID, port: int) -> None:
     client_id = os.environ.get("NAVBAT_GCAL_CLIENT_ID")
     client_secret = os.environ.get("NAVBAT_GCAL_CLIENT_SECRET")
@@ -61,20 +85,7 @@ def run_loopback_flow(clinic_id: uuid.UUID, port: int) -> None:
     received: dict = {}
     got_code = threading.Event()
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 — API stdlib
-            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            received["code"] = (query.get("code") or [None])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write("Готово — вернитесь в консоль.".encode())
-            got_code.set()
-
-        def log_message(self, fmt, *args) -> None:
-            log.debug("oauth-callback: " + fmt, *args)
-
-    server = ThreadingHTTPServer(("localhost", port), Handler)
+    server = ThreadingHTTPServer(("localhost", port), _make_handler(received, got_code))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     consent_url = AUTH_URL + "?" + urllib.parse.urlencode({
