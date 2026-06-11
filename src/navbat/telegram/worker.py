@@ -191,10 +191,22 @@ class UpdateWorker:
                 self._api.answer_callback_query(callback["id"])
                 self._send(chat_id, self._paused_reply(chat_id))
                 return
-            action = self._lookup_action(chat_id, callback.get("data", ""))
-            reply = self._dialog.handle_action(chat_id, action or "stale")
-            self._api.answer_callback_query(callback["id"])
-            self._send(chat_id, reply)
+            data = callback.get("data", "")
+            if data.startswith("cal:"):
+                # сырой короткий callback календаря (П-4): идёт мимо
+                # tg_actions-map — тот перезаписывается любой отправкой
+                # кнопок (например, напоминанием), а календарь живёт долго
+                action = data
+            else:
+                action = self._lookup_action(chat_id, data) or "stale"
+            reply = self._dialog.handle_action(chat_id, action)
+            self._api.answer_callback_query(callback["id"], text=reply.toast)
+            message_id = callback["message"].get("message_id")
+            if reply.edit and message_id is not None:
+                edit_reply(self._api, self._session_factory, self._clinic_id,
+                           chat_id, message_id, reply)
+            elif reply.text:
+                self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
 
@@ -445,15 +457,25 @@ class UpdateWorker:
             ).scalar_one_or_none()
 
 
-def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
-               chat_id: int, reply: Reply) -> None:
-    """Отправка Reply в чат: кнопки нумеруются, map уходит в context.
-
-    Используется воркером и календарным sync'ом (уведомления о переносе).
-    """
-    buttons = reply.buttons
-    if buttons:
-        mapping = {str(i): b.action for i, b in enumerate(buttons, 1)}
+def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
+                    chat_id: int,
+                    rows: tuple[tuple[Button, ...], ...]
+                    ) -> tuple[tuple[Button, ...], ...]:
+    """Длинные action'ы → a:N + map в context['tg_actions']; короткие
+    cal:-действия (П-4) уходят сырыми — переживают перезапись map'а."""
+    mapping: dict[str, str] = {}
+    out_rows: list[tuple[Button, ...]] = []
+    for row in rows:
+        out_row = []
+        for b in row:
+            if b.action.startswith("cal:"):
+                out_row.append(b)
+            else:
+                index = str(len(mapping) + 1)
+                mapping[index] = b.action
+                out_row.append(Button(b.label, f"a:{index}"))
+        out_rows.append(tuple(out_row))
+    if mapping:
         with tenant_transaction(session_factory, clinic_id) as session:
             session.execute(
                 text("UPDATE conversation "
@@ -462,7 +484,35 @@ def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID
                      "WHERE tg_chat_id = :chat"),
                 {"mapping": json.dumps(mapping, ensure_ascii=False), "chat": chat_id},
             )
-        buttons = tuple(Button(b.label, f"a:{i}") for i, b in enumerate(buttons, 1))
+    return tuple(out_rows)
+
+
+def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
+               chat_id: int, reply: Reply) -> None:
+    """Отправка Reply в чат: кнопки нумеруются, map уходит в context.
+
+    Используется воркером и календарным sync'ом (уведомления о переносе).
+    """
+    if reply.button_rows:
+        rows = _number_buttons(session_factory, clinic_id, chat_id,
+                               reply.button_rows)
+        api.send_message(chat_id, reply.text, button_rows=rows,
+                         contact_request=reply.contact_request, menu=reply.menu)
+        return
+    buttons = reply.buttons
+    if buttons:
+        rows = _number_buttons(session_factory, clinic_id, chat_id,
+                               tuple((b,) for b in buttons))
+        buttons = tuple(row[0] for row in rows)
     api.send_message(chat_id, reply.text, buttons,
                      contact_request=reply.contact_request,
                      menu=reply.menu)
+
+
+def edit_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID,
+               chat_id: int, message_id: int, reply: Reply) -> None:
+    """Редактирование сообщения-источника callback'а (П-4): календарь
+    листается на месте, без спама в чат. Нумерация — та же, что в send."""
+    rows = _number_buttons(session_factory, clinic_id, chat_id,
+                           reply.button_rows or tuple((b,) for b in reply.buttons))
+    api.edit_message_text(chat_id, message_id, reply.text, button_rows=rows)
