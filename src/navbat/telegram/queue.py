@@ -20,8 +20,9 @@ from datetime import timedelta
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from navbat.crypto import encrypt_text
 from navbat.db.base import tenant_transaction
-from navbat.dialog.patients import phone_to_hash
+from navbat.dialog.patients import normalize_phone, phone_to_hash
 
 MAX_ATTEMPTS = 3
 STALE_AFTER = timedelta(minutes=5)
@@ -30,9 +31,11 @@ STALE_AFTER = timedelta(minutes=5)
 def _redact_contact_phone(session: Session, payload: dict) -> None:
     """PII-граница очереди: открытый номер из кнопки «Поделиться контактом»
     в durable-payload не сохраняем. Телефон хэшируется здесь (соль доступна
-    в tenant-транзакции) — в постоянную таблицу пациента уходит тот же хэш.
-    Принимается номер любой страны (П-2в). Нераспознаваемый контакт (мусор
-    в цифрах) остаётся без хэша — диалог повторит кнопку контакта.
+    в tenant-транзакции) — в постоянную таблицу пациента уходит тот же хэш —
+    и шифруется AES-256-GCM (пересмотр 11.06: номер нужен владельцу в
+    календаре; паритет с именем). Принимается номер любой страны (П-2в).
+    Нераспознаваемый контакт (мусор в цифрах) остаётся без хэша и
+    шифртекста — диалог повторит кнопку контакта.
     """
     message = payload.get("message")
     if not isinstance(message, dict):
@@ -46,6 +49,7 @@ def _redact_contact_phone(session: Session, payload: dict) -> None:
     except ValueError:
         return  # мусор в цифрах: номер уже вырезан, хэша нет → повтор кнопки
     contact["phone_hash"] = hashed
+    contact["phone_encrypted"] = encrypt_text(normalize_phone(raw))
 
 
 @dataclass(frozen=True)

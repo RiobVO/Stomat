@@ -9,6 +9,7 @@ import json
 
 from sqlalchemy import text
 
+from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.telegram.queue import (
@@ -168,7 +169,7 @@ def stored_payload(admin_engine) -> dict:
 
 
 def test_enqueue_redacts_contact_phone(app_session_factory, admin_engine, clinic_a):
-    """Узбекский номер: в payload вместо открытого телефона — только хэш."""
+    """Узбекский номер: в payload вместо открытого телефона — хэш + шифртекст."""
     put_contact_payload(app_session_factory, clinic_a, "998901234567")
 
     payload = stored_payload(admin_engine)
@@ -177,6 +178,8 @@ def test_enqueue_redacts_contact_phone(app_session_factory, admin_engine, clinic
     assert "998901234567" not in json.dumps(payload), "номер не утёк ни в одно поле"
     assert contact["phone_hash"] == contact_hash(
         normalize_phone("998901234567"), "test-salt")
+    # пересмотр 11.06: рядом с хэшем — AES-шифртекст (номер нужен в календаре)
+    assert decrypt_text(contact["phone_encrypted"]) == "998901234567"
 
 
 def test_enqueue_redacts_foreign_contact_phone(app_session_factory, admin_engine,
@@ -190,6 +193,7 @@ def test_enqueue_redacts_foreign_contact_phone(app_session_factory, admin_engine
     assert "phone_number" not in contact
     assert "79161234567" not in json.dumps(payload)
     assert contact["phone_hash"] == contact_hash("79161234567", "test-salt")
+    assert decrypt_text(contact["phone_encrypted"]) == "79161234567"
 
 
 def test_enqueue_garbage_contact_left_without_hash(app_session_factory,
@@ -201,3 +205,4 @@ def test_enqueue_garbage_contact_left_without_hash(app_session_factory,
     contact = stored_payload(admin_engine)["message"]["contact"]
     assert "phone_number" not in contact
     assert "phone_hash" not in contact
+    assert "phone_encrypted" not in contact

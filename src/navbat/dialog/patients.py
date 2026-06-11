@@ -63,22 +63,28 @@ def create_patient(
     session: Session, tg_chat_id: int, name: str, phone: str
 ) -> uuid.UUID:
     return create_patient_with_hash(
-        session, tg_chat_id, name, phone_to_hash(session, phone))
+        session, tg_chat_id, name, phone_to_hash(session, phone),
+        encrypt_text(normalize_phone(phone)))
 
 
 def create_patient_with_hash(
-    session: Session, tg_chat_id: int, name: str, phone_hash: str
+    session: Session, tg_chat_id: int, name: str, phone_hash: str,
+    phone_encrypted: str | None = None,
 ) -> uuid.UUID:
     """Создаёт пациента с УЖЕ посчитанным хэшем телефона: открытый номер
-    хэшируется на границе очереди и в durable-payload не сохраняется."""
+    хэшируется на границе очереди и в durable-payload не сохраняется.
+    phone_encrypted — AES-шифртекст номера оттуда же (пересмотр 11.06:
+    номер нужен владельцу в событии календаря; паритет с именем)."""
     return session.execute(
-        text("INSERT INTO patient (clinic_id, tg_chat_id, name_encrypted, contact_hash) "
-             "VALUES (current_setting('app.clinic_id')::uuid, :chat, :name, :hash) "
-             "RETURNING id"),
+        text("INSERT INTO patient (clinic_id, tg_chat_id, name_encrypted, "
+             "contact_hash, phone_encrypted) "
+             "VALUES (current_setting('app.clinic_id')::uuid, :chat, :name, "
+             ":hash, :phone) RETURNING id"),
         {
             "chat": tg_chat_id,
             "name": encrypt_text(name),
             "hash": phone_hash,
+            "phone": phone_encrypted,
         },
     ).scalar_one()
 

@@ -13,6 +13,7 @@ from sqlalchemy import text
 from conftest import next_monday
 from navbat.db.base import tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.crypto import decrypt_text
 from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.dialog.replies import Reply, TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
@@ -191,10 +192,10 @@ class RecordingDialog:
 
     def __init__(self, reply: Reply) -> None:
         self.reply = reply
-        self.contacts: list[tuple[int, str | None, bool]] = []
+        self.contacts: list[tuple[int, str | None, str | None, bool]] = []
 
-    def handle_contact_hashed(self, chat_id, phone_hash, own):
-        self.contacts.append((chat_id, phone_hash, own))
+    def handle_contact_hashed(self, chat_id, phone_hash, phone_encrypted, own):
+        self.contacts.append((chat_id, phone_hash, phone_encrypted, own))
         return self.reply
 
 
@@ -236,9 +237,12 @@ def test_contact_update_routed_with_own_flag(app_session_factory, admin_engine,
                 contact_user_id=CHAT, from_id=CHAT)
     worker.process_one()
 
-    # воркер передаёт хэш из payload — открытого номера в очереди уже нет
+    # воркер передаёт хэш и шифртекст из payload — открытого номера в очереди нет
     expected_hash = contact_hash(normalize_phone("998901234567"), "test-salt")
-    assert dialog.contacts == [(CHAT, expected_hash, True)]
+    chat_id, got_hash, got_encrypted, own = dialog.contacts[0]
+    assert (chat_id, got_hash, own) == (CHAT, expected_hash, True)
+    assert decrypt_text(got_encrypted) == "998901234567", \
+        "шифртекст номера доехал до диалога (пересмотр 11.06)"
     assert api.keyboards[-1] == (None, menu), "menu дошёл до API"
     assert queue_statuses(admin_engine) == ["done"]
 
@@ -255,7 +259,7 @@ def test_foreign_or_missing_user_id_not_own(app_session_factory, admin_engine,
     worker.process_one()
     worker.process_one()
 
-    assert [own for _, _, own in dialog.contacts] == [False, False]
+    assert [own for *_, own in dialog.contacts] == [False, False]
     assert api.keyboards[-1] == ("📱", None), "кнопка предложена снова"
 
 

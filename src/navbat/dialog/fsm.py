@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from navbat.crypto import encrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog import clinic_repo, doctors_repo, questions_repo, services_repo
 from navbat.dialog.booking_flow import _BookingFlowMixin
@@ -49,7 +50,7 @@ from navbat.dialog.dialog_common import (
     mentions_phone_question,
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
-from navbat.dialog.patients import phone_to_hash
+from navbat.dialog.patients import normalize_phone, phone_to_hash
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -132,25 +133,30 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         return reply
 
     def handle_contact(self, chat_id: int, phone: str, own: bool) -> Reply:
-        """Сырой номер (демо / прямой вызов): хэшируем и делегируем хэш-пути.
-
-        В боевом потоке телефон хэшируется на границе enqueue и открытым сюда
-        не попадает; этот вход остаётся для каналов без durable-очереди."""
+        """Сырой номер (демо / прямой вызов): хэшируем, шифруем и делегируем
+        хэш-пути. В боевом потоке телефон хэшируется и шифруется на границе
+        enqueue и открытым сюда не попадает; этот вход остаётся для каналов
+        без durable-очереди."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             try:
                 phone_hash: str | None = phone_to_hash(session, phone)
+                phone_encrypted: str | None = encrypt_text(normalize_phone(phone))
             except ValueError:
                 phone_hash = None  # номер не распознан → повтор кнопки
-        return self.handle_contact_hashed(chat_id, phone_hash, own)
+                phone_encrypted = None
+        return self.handle_contact_hashed(chat_id, phone_hash, phone_encrypted, own)
 
     def handle_contact_hashed(self, chat_id: int, phone_hash: str | None,
-                              own: bool) -> Reply:
-        """Контакт из кнопки «Поделиться»: телефон уже хэширован (открытый номер
-        в очередь не попал). Принимается номер любой страны (П-2в);
-        phone_hash=None — номер не распознан; own — собственный контакт."""
+                              phone_encrypted: str | None, own: bool) -> Reply:
+        """Контакт из кнопки «Поделиться»: телефон уже хэширован и зашифрован
+        (открытый номер в очередь не попал; шифртекст — пересмотр 11.06,
+        номер нужен владельцу в календаре). Принимается номер любой страны
+        (П-2в); phone_hash=None — номер не распознан; own — собственный
+        контакт."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
-            reply = self._process_contact(session, conv, phone_hash, own)
+            reply = self._process_contact(session, conv, phone_hash,
+                                          phone_encrypted, own)
             save_conversation(session, conv)
         return reply
 

@@ -30,6 +30,7 @@ ENCRYPTED_COLUMNS = (
     ("clinic", "gcal_refresh_token_encrypted"),
     ("doctor", "name_encrypted"),
     ("patient", "name_encrypted"),
+    ("patient", "phone_encrypted"),
 )
 
 
