@@ -220,6 +220,17 @@ def test_pause_toggle(app_session_factory, admin_engine, clinic_a):
     assert ac.BTN_PAUSE in flat(last_menu(api))
 
 
+def test_admin_unknown_callback_stays_in_console(app_session_factory, clinic_a):
+    # старая пациентская кнопка (a:N) в админ-чате НЕ уходит в пациентский
+    # диалог — админ-чат остаётся чистой консолью и для callback'ов
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "a:1")
+
+    assert api.answered, "callback подтверждён"
+    assert "Админ-консоль" in last_to(api, ADMIN_CHAT)
+
+
 def test_console_alive_while_paused(app_session_factory, admin_engine, clinic_a,
                                     service_cleaning):
     set_paused(admin_engine, clinic_a, True)
