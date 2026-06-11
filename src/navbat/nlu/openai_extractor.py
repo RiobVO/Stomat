@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -25,13 +26,16 @@ LLM_TIMEOUT = 8.0  # BRIEF: таймаут LLM 8 сек → graceful degradation
 
 
 class OpenAIExtractor:
-    def __init__(self, model: str = DEFAULT_MODEL, on_usage=None,
+    def __init__(self, model: str | None = None, on_usage=None,
                  on_repair=None, prompt: str | None = None) -> None:
         # ленивый импорт: openai — optional-зависимость [llm]
         from openai import OpenAI
 
         self._client = OpenAI(timeout=LLM_TIMEOUT, max_retries=2)
-        self._model = model
+        # env-переключатель (как NAVBAT_GEMINI_MODEL): включение fine-tuned
+        # модели одной переменной в .env, откат — её удалением
+        self._model = model or os.environ.get("NAVBAT_OPENAI_MODEL",
+                                              DEFAULT_MODEL)
         self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
         self._on_repair = on_repair  # callable() — метрика NLU-дрифта
         # prompt — версия из БД (B.2); None → встроенный файл
