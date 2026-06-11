@@ -66,7 +66,8 @@ class _RescheduleFlowMixin:
         prefix = t(note, lang) + "\n" if note else ""
         ctx.date = day.isoformat()
         conv.state = "resched_offer_slots"
-        return Reply(prefix + self._offer_body(session, lang, asked, day),
+        return Reply(prefix + self._offer_body(session, lang, asked, day,
+                                               ctx.time_ref),
                      tuple(buttons))
 
     def _on_reslot(self, session: Session, conv: Conversation, start_iso: str) -> Reply:

@@ -150,6 +150,10 @@ TEMPLATES = {
         "ru": "Цену на «{service}» уточнит администратор.",
         "uz": "«{service}» narxini administrator aniqlashtiradi.",
     },
+    "outside_hours": {
+        "ru": "Клиника работает с {open} до {close}.",
+        "uz": "Klinika {open} dan {close} gacha ishlaydi.",
+    },
     "hours_today": {
         "ru": "Сегодня клиника работает с {open} до {close}.",
         "uz": "Bugun klinika {open} dan {close} gacha ishlaydi.",
