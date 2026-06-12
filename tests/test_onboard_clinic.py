@@ -35,6 +35,20 @@ def test_add_remove_admin(app_session_factory, admin_engine):
     assert _admins(admin_engine, cid) == [222]
 
 
+def test_seed_demo_clinic_fills_faq_defaults(app_session_factory, admin_engine):
+    # живая грабля 12.06: pytest TRUNCATE'ит базу, финализатор восстанавливал
+    # демо-клинику БЕЗ FAQ-полей → на показе «где вы находитесь?» = «не понял».
+    # Демо-клиника создаётся сразу с демо-адресом/оплатой/телефоном
+    from navbat.onboard import DEMO_CLINIC_ID, seed_demo_clinic
+
+    seed_demo_clinic(app_session_factory)
+    with admin_engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT address, payment_info, phone FROM clinic WHERE id = :id"),
+            {"id": DEMO_CLINIC_ID}).one()
+    assert row.address and row.payment_info and row.phone
+
+
 def _clinic_row(admin_engine, clinic_id):
     with admin_engine.begin() as conn:
         return conn.execute(
