@@ -17,6 +17,7 @@ import sys
 import threading
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import text
 
@@ -39,6 +40,44 @@ from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_we
 from navbat.telegram.worker import UpdateWorker
 
 log = logging.getLogger("navbat")
+
+
+def migrations_head() -> str | None:
+    """Head ревизия по файлам миграций; None — файлов нет (урезанная
+    инсталляция) и сверка невозможна."""
+    root = Path(__file__).resolve().parents[2]
+    ini = root / "alembic.ini"
+    if not ini.exists() or not (root / "migrations").exists():
+        return None
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(ini))
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+def check_migrations(session_factory, clinic_id: uuid.UUID) -> tuple[bool, str]:
+    """Ревизия БД == head файлов? Живая находка 12.06: проверка «таблица
+    0006 существует» пропускала базу на 0018 при коде с 0019 — бот падал.
+
+    Отдельная транзакция: permission denied (база без 0020) не должен
+    отравить основную проверку --check."""
+    try:
+        with tenant_transaction(session_factory, clinic_id) as session:
+            db_rev = session.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one_or_none()
+    except Exception:
+        # нет GRANT (0020) — база заведомо отстаёт
+        return False, "alembic_version недоступна — выполните: alembic upgrade head"
+    head = migrations_head()
+    if head is None:
+        return True, f"БД {db_rev}; файлов миграций нет — сверка пропущена"
+    if db_rev == head:
+        return True, f"ревизия {db_rev} = head"
+    return False, (f"БД {db_rev}, код ждёт {head} — "
+                   f"выполните: alembic upgrade head")
 
 
 def parse_offsets(raw: str) -> tuple[timedelta, ...]:
@@ -138,6 +177,9 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
     except Exception as e:
         report(False, "БД и миграции", str(e)[:120])
         return 1
+
+    mig_ok, mig_detail = check_migrations(session_factory, clinic_id)
+    report(mig_ok, "ревизия миграций = head", mig_detail)
 
     if clinic is None:
         report(False, "клиника", f"{clinic_id} не найдена — python -m navbat.onboard")

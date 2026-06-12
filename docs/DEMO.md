@@ -11,6 +11,7 @@
 
    ```powershell
    docker compose up -d
+   alembic upgrade head                     # код новее базы = молчаливые падения
    python -m navbat.onboard --demo          # демо-клиника + токен из .env (идемпотентно)
    python -m navbat.onboard --clinic 00000000-0000-4000-8000-000000000d31 --address "Ташкент, ул. Навои, 10"
    python -m navbat.onboard --clinic 00000000-0000-4000-8000-000000000d31 --payment "Наличные, карта, Payme. Рассрочки нет" --phone "+998 71 200-00-00"
