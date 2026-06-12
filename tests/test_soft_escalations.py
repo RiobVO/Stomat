@@ -160,6 +160,24 @@ def test_repeated_nlu_failures_never_escalate(app_session_factory, admin_engine,
     assert [b.action for b in third.buttons] == ["call_admin"]
 
 
+def test_idle_nonsense_other_intent_counts_to_admin_button(
+        app_session_factory, admin_engine, clinic_a, doctor_a):
+    # живой тык 12.06 (S09): LLM парсит «ыыыыы» как ВАЛИДНЫЙ other → счётчик
+    # сбоев не рос и кнопка админа в пустом чате не появлялась никогда —
+    # расходилось с DEMO.md шаг 10. Бессодержательный other = тот же «не
+    # понял», что ExtractionError
+    engine, notifier = make(app_session_factory, clinic_a,
+                            [extr(intent="other"), extr(intent="other")])
+    first = engine.handle_text(CHAT, "ыыыыы")
+    second = engine.handle_text(CHAT, "ыыыыы")
+
+    assert notifier.calls == []
+    assert fsm_state(admin_engine) != "escalated"
+    assert first.menu, "первый раз — мягкий переспрос с меню"
+    assert "call_admin" in [b.action for b in second.buttons], \
+        "со второго раза — кнопка к человеку, как обещает DEMO.md"
+
+
 def test_nlu_failures_mid_booking_repeat_step_buttons(
         app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
     # LLM лёг посреди оформления: бот повторяет шаг кнопками — кнопочный
