@@ -123,6 +123,17 @@ def mentions_price_question(message: str) -> bool:
     return _PRICE_RE.search(_normalize(message)) is not None
 
 
+# Буквы ўқғҳ существуют в узбекской кириллице и отсутствуют в русской:
+# их наличие — детерминированный признак узбекского, надёжнее детекта
+# модели (NLU массово зовёт уз-кириллицу «ru», eval 12.06.2026)
+_UZ_CYRILLIC_RE = re.compile(r"[ўқғҳ]")
+
+
+def looks_uzbek_cyrillic(message: str) -> bool:
+    """Текст содержит специфично-узбекские кириллические буквы."""
+    return _UZ_CYRILLIC_RE.search(message.casefold()) is not None
+
+
 def _looks_like_question(message: str) -> bool:
     # ТОЛЬКО явный «?»: используется на PII-шагах (имя/телефон) для
     # прерывания вопросом вбок. Критерий длины убран — длинное ФИО без «?»

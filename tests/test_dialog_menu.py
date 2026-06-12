@@ -99,6 +99,39 @@ def test_start_after_text_dialog_keeps_detected_lang(app_session_factory, clinic
     assert not reply.buttons
 
 
+def test_uzbek_cyrillic_first_contact_overrides_nlu_ru(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # живой тест 12.06: «Тишим оғрияпти...» → NLU сказал ru → пациент,
+    # пишущий уз-кириллицей, получил русский интерфейс. Буквы ўқғҳ не
+    # существуют в русском — детерминированный код-слой главнее модели
+    engine, _ = counting_engine(
+        app_session_factory, clinic_a,
+        script=[extr(service="cleaning", language="ru")])  # ← ошибка модели
+    reply = engine.handle_text(CHAT, "тиш тозалашга ёзилмоқчиман")
+
+    with admin_engine.begin() as conn:
+        lang = conn.execute(text(
+            "SELECT context ->> 'lang' FROM conversation WHERE tg_chat_id = :c"
+        ), {"c": CHAT}).scalar_one()
+    assert lang == "uz", "уз-кириллица (ўқғҳ) перебивает детект NLU"
+    assert "Qaysi kun" in reply.text
+
+
+def test_russian_first_contact_keeps_nlu_detection(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # обычная кириллица без ўқғҳ — эвристика молчит, решает NLU
+    engine, _ = counting_engine(
+        app_session_factory, clinic_a,
+        script=[extr(service="cleaning", language="ru")])
+    engine.handle_text(CHAT, "запишите на чистку")
+
+    with admin_engine.begin() as conn:
+        lang = conn.execute(text(
+            "SELECT context ->> 'lang' FROM conversation WHERE tg_chat_id = :c"
+        ), {"c": CHAT}).scalar_one()
+    assert lang == "ru"
+
+
 # ── Кнопки меню: запись, перенос, отмена ─────────────────────────────────────
 
 def start_with_menu(engine, lang="ru"):
