@@ -29,6 +29,25 @@ def test_attend_button_confirms_without_state_change(app_session_factory,
     assert fsm_state(admin_engine) == "idle"
 
 
+def test_attend_button_works_in_escalated(app_session_factory, admin_engine,
+                                          clinic_a, doctor_a, service_cleaning):
+    # живой тест 12.06: пациент позвал администратора (escalated), потом
+    # пришло напоминание — тап «Приду» отвечал «передаю администратору».
+    # Подтверждение не меняет состояние и обязано работать в заморозке
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, next_monday(), "09:00", chat_id=CHAT)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO conversation (clinic_id, tg_chat_id, fsm_state) "
+            "VALUES (:cl, :c, 'escalated')"), {"cl": clinic_a, "c": CHAT})
+    engine = make_engine(app_session_factory, clinic_a)
+    reply = engine.handle_action(CHAT, f"attend:{appointment_id}")
+
+    assert reply.text == TEMPLATES["attend_ok"]["ru"]
+    assert fsm_state(admin_engine) == "escalated", \
+        "заморозка не снимается — диалог по-прежнему у администратора"
+
+
 def test_remind_cancel_runs_full_cancel_flow(app_session_factory, admin_engine,
                                              clinic_a, doctor_a, service_cleaning):
     appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
