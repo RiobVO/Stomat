@@ -19,6 +19,11 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
+# импорт на уровне модуля: alembic при первом импорте логирует регистрацию
+# плагинов в INFO — до logging.basicConfig это уходит в никуда, а ленивый
+# импорт внутри --check сорил бы в чистый вывод чеклиста
+from alembic.config import Config as AlembicConfig
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
@@ -49,10 +54,9 @@ def migrations_head() -> str | None:
     ini = root / "alembic.ini"
     if not ini.exists() or not (root / "migrations").exists():
         return None
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    cfg = Config(str(ini))
+    # пустой Config: чтение alembic.ini тянет его [loggers] и сорит
+    # INFO-строками в чистый вывод --check
+    cfg = AlembicConfig()
     cfg.set_main_option("script_location", str(root / "migrations"))
     return ScriptDirectory.from_config(cfg).get_current_head()
 
