@@ -147,10 +147,13 @@ class GoogleCalendarAPI:
                 refreshed = True
                 self._refresh_access_token()
                 continue
-            if response.status_code == 410:
-                raise ResyncRequired(path)
-            if response.status_code in (404,) and missing_ok:
+            if response.status_code in (404, 410) and missing_ok:
+                # «уже удалено»: 404 — не существовало, 410 Gone — снято/протухло.
+                # Идемпотентность важнее строгости (delete_event/stop_channel).
                 return None
+            if response.status_code == 410:
+                # syncToken протух — только для list_events (missing_ok=False)
+                raise ResyncRequired(path)
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = CalendarAPIError(
                     f"{response.status_code}: {response.text[:200]}")

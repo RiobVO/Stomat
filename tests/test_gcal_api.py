@@ -157,6 +157,20 @@ def test_delete_missing_event_is_ok():
     api.delete_event(CAL, "GONE")  # идемпотентность: уже удалено — не ошибка
 
 
+def test_delete_gone_event_is_ok():
+    # Google v3 отдаёт 410 Gone на DELETE уже-удалённого/вручную снятого события
+    # (не 404) — с missing_ok это успех, а не ResyncRequired (иначе синк врача
+    # залипает в вечном сбое: событие пере-выбирается _export каждый цикл)
+    api, _ = make_api(lambda req, reqs: httpx.Response(410, json={}))
+    api.delete_event(CAL, "GONE")  # не должно бросать ResyncRequired
+
+
+def test_stop_channel_gone_is_ok():
+    # просроченный watch-канал у Google часто отдаёт 410 — идемпотентно, не resync
+    api, _ = make_api(lambda req, reqs: httpx.Response(410, json={}))
+    api.stop_channel("CH-1", "RES1")  # не должно бросать ResyncRequired
+
+
 # ── free_busy и retry ────────────────────────────────────────────────────────
 
 def test_free_busy_detects_overlap():
