@@ -30,6 +30,7 @@ from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
+from navbat.scheduling.errors import SchedulingError
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.calendar")
@@ -320,18 +321,22 @@ class CalendarSync:
         new_start, alternatives = self._relocation_slot(
             scheduler, doctor_id, victim, span, manual_buffer, tz)
         if new_start is None:
-            self._notify_patient(victim.tg_chat_id,
-                                 Reply(t("conflict_cancelled", lang, old=old_label)))
-            self._notifier.notify(victim.tg_chat_id or 0,
-                                  f"запись {old_label} вытеснена ручным событием, "
-                                  f"перенести некуда — отменена",
-                                  {"appointment": str(victim.id)})
+            self._notify_unrelocatable(victim, old_label, lang)
             return
 
-        new_id = scheduler.hold(doctor_id, victim.service_id, new_start,
-                                patient_id=victim.patient_id,
-                                tg_chat_id=victim.tg_chat_id)
-        scheduler.confirm(new_id)
+        try:
+            new_id = scheduler.hold(doctor_id, victim.service_id, new_start,
+                                    patient_id=victim.patient_id,
+                                    tg_chat_id=victim.tg_chat_id)
+            scheduler.confirm(new_id)
+        except SchedulingError:
+            # слот перехвачен конкурентной бронью между выбором и hold (либо
+            # confirm не прошёл). Жертва уже отменена — не теряем её молча:
+            # деградируем в «перенести некуда» (пациент + админ уведомлены).
+            log.warning("перенос записи %s не удался (слот перехвачен?) — "
+                        "деградация в отмену", victim.id)
+            self._notify_unrelocatable(victim, old_label, lang)
+            return
         new_label = f"{new_start.astimezone(tz):%d.%m %H:%M}"
         if victim.tg_chat_id:
             # кнопки альтернатив работают через resched-поток FSM
@@ -356,6 +361,16 @@ class CalendarSync:
                               f"запись {old_label} вытеснена ручным событием — "
                               f"перенесена на {new_label}",
                               {"appointment": str(new_id)})
+
+    def _notify_unrelocatable(self, victim, old_label: str, lang: str) -> None:
+        """Жертву вытеснили, перенести некуда (нет слота ИЛИ перенос сорвался) —
+        уведомляем пациента и админа об отмене, не теряем запись молча."""
+        self._notify_patient(victim.tg_chat_id,
+                             Reply(t("conflict_cancelled", lang, old=old_label)))
+        self._notifier.notify(victim.tg_chat_id or 0,
+                              f"запись {old_label} вытеснена ручным событием, "
+                              f"перенести некуда — отменена",
+                              {"appointment": str(victim.id)})
 
     def _relocation_slot(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,
                          victim, span: tuple[datetime, datetime],
