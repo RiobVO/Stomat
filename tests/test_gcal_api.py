@@ -203,6 +203,13 @@ def test_free_busy_empty_means_free():
     assert api.free_busy(CAL, "a", "b") is False
 
 
+def test_free_busy_malformed_response_degrades_to_free():
+    # 200 без ожидаемого ключа календаря → не KeyError (он пробил бы мягкую
+    # деградацию guard и уронил confirm), а «свободно»: constraint прикрывает
+    api, _ = make_api(lambda req, reqs: httpx.Response(200, json={"calendars": {}}))
+    assert api.free_busy(CAL, "a", "b") is False
+
+
 def test_retries_on_5xx():
     state = {"n": 0}
 

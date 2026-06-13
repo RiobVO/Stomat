@@ -95,7 +95,10 @@ class GoogleCalendarAPI:
             "timeMin": time_min, "timeMax": time_max,
             "items": [{"id": calendar_id}],
         })
-        return bool(result["calendars"][calendar_id].get("busy"))
+        # мягкие доступы: нестандартный 200 (нет ключа календаря) → «свободно»,
+        # а не KeyError — иначе пробьёт мягкую деградацию guard и уронит confirm
+        calendar = (result or {}).get("calendars", {}).get(calendar_id, {})
+        return bool(calendar.get("busy"))
 
     def watch_events(self, calendar_id: str, channel_id: str, address: str) -> dict:
         """Push-канал на события календаря; Google вернёт resourceId+expiration."""
