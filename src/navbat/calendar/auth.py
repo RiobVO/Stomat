@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import secrets
 import sys
 import threading
 import urllib.parse
@@ -51,17 +52,20 @@ def exchange_code(client: httpx.Client, code: str, client_id: str,
     return refresh_token
 
 
-def _make_handler(received: dict, got_code: threading.Event) -> type:
+def _make_handler(received: dict, got_code: threading.Event,
+                  expected_state: str) -> type:
     """Фабрика обработчика loopback-callback'а (вынесена для тестируемости)."""
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 — API stdlib
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             code = (query.get("code") or [None])[0]
-            # код фиксируем один раз: браузер следом просит /favicon.ico,
-            # и GET без ?code= не должен затереть уже пойманный код (гонка
-            # давала Google «Missing required parameter: code»)
-            if code and "code" not in received:
+            state = (query.get("state") or [None])[0]
+            # код фиксируем один раз и ТОЛЬКО при совпадении state (анти-CSRF):
+            # браузер следом просит /favicon.ico (GET без ?code= не должен
+            # затереть пойманный код — гонка давала «Missing parameter: code»),
+            # а чужой/пустой state — подделка callback'а, игнорируем
+            if code and state == expected_state and "code" not in received:
                 received["code"] = code
                 got_code.set()
             self.send_response(200)
@@ -82,10 +86,12 @@ def run_loopback_flow(clinic_id: uuid.UUID, port: int) -> None:
         sys.exit("[FAIL] нужны NAVBAT_GCAL_CLIENT_ID и NAVBAT_GCAL_CLIENT_SECRET")
 
     redirect_uri = f"http://localhost:{port}/"
+    state = secrets.token_urlsafe(24)  # анти-CSRF: сверяем в callback
     received: dict = {}
     got_code = threading.Event()
 
-    server = ThreadingHTTPServer(("localhost", port), _make_handler(received, got_code))
+    server = ThreadingHTTPServer(("localhost", port),
+                                 _make_handler(received, got_code, state))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     consent_url = AUTH_URL + "?" + urllib.parse.urlencode({
@@ -95,6 +101,7 @@ def run_loopback_flow(clinic_id: uuid.UUID, port: int) -> None:
         "scope": SCOPE,
         "access_type": "offline",
         "prompt": "consent",  # иначе при повторной авторизации refresh_token не придёт
+        "state": state,
     })
     print(f"Открываю браузер для авторизации Google…\n{consent_url}")
     webbrowser.open(consent_url)
