@@ -222,3 +222,21 @@ def test_retries_on_5xx():
     api, requests = make_api(handler)
     api.insert_event(CAL, {})
     assert len(api_calls(requests)) == 2
+
+
+def test_401_refresh_does_not_consume_retry_budget():
+    # 401 (истёк токен) + 3×503 + 200: refresh повторяется в той же итерации и
+    # НЕ съедает retry-слот, иначе после трёх 503 до 200 бюджета не хватит
+    responses = iter([
+        httpx.Response(401, json={"error": "invalid_credentials"}),
+        httpx.Response(503, text="overload"),
+        httpx.Response(503, text="overload"),
+        httpx.Response(503, text="overload"),
+        httpx.Response(200, json={"id": "EV"}),
+    ])
+
+    def handler(request, reqs):
+        return next(responses)
+
+    api, _ = make_api(handler)  # retry_delays=(0, 0, 0) → 3 ретрая
+    assert api.insert_event(CAL, {})["id"] == "EV"
