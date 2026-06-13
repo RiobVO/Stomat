@@ -84,6 +84,19 @@ def test_failed_refresh_raises_auth_error():
         api.list_events(CAL)
 
 
+def test_refresh_200_without_access_token_raises_auth_error():
+    # 200, но тело без access_token (нестандартный ответ) → CalendarAuthError,
+    # а не сырой KeyError — иначе sync_loop не даст быстрый auth-алерт владельцу
+    def recording(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token_type": "Bearer"})
+
+    client = httpx.Client(transport=httpx.MockTransport(recording))
+    api = GoogleCalendarAPI("REFRESH", client_id="CID", client_secret="CSECRET",
+                            client=client, retry_delays=(0,))
+    with pytest.raises(CalendarAuthError):
+        api.list_events(CAL)
+
+
 # ── list_events ──────────────────────────────────────────────────────────────
 
 # ── watch-каналы (C-6) ───────────────────────────────────────────────────────
