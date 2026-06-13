@@ -152,18 +152,27 @@ class SchedulingEngine:
 
     def reschedule(self, appointment_id: uuid.UUID, new_start: datetime) -> None:
         with self._txn() as session:
+            # advisory-лок врача ПЕРВЫМ (как hold/confirm) — единый порядок
+            # захвата; row-lock (FOR UPDATE) берём уже под ним. Обратный порядок
+            # (FOR UPDATE → advisory) дедлочится с UPDATE-в-predicate под advisory.
+            doctor_id = session.execute(
+                text("SELECT doctor_id FROM appointment "
+                     "WHERE id = :id AND status IN ('hold', 'booked')"),
+                {"id": appointment_id},
+            ).scalar_one_or_none()
+            if doctor_id is None:
+                raise AppointmentNotFoundError(str(appointment_id))
+            self._lock_doctor(session, doctor_id)
             current = session.execute(
-                text("SELECT doctor_id, service_id, lower(time_range) AS lo, "
-                     "upper(time_range) AS up FROM appointment "
+                text("SELECT service_id, lower(time_range) AS lo FROM appointment "
                      "WHERE id = :id AND status IN ('hold', 'booked') FOR UPDATE"),
                 {"id": appointment_id},
             ).one_or_none()
             if current is None:
                 raise AppointmentNotFoundError(str(appointment_id))
-            self._lock_doctor(session, current.doctor_id)
 
             slot = self._validated_slot(
-                session, current.doctor_id, current.service_id, new_start
+                session, doctor_id, current.service_id, new_start
             )
             try:
                 session.execute(
