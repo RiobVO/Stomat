@@ -244,7 +244,7 @@ class AdminConsole:
         rows = ((BTN_SERVICES, BTN_DOCTORS), (BTN_ABOUT, BTN_DAYOFF),
                 (BTN_STATS,), (pause_btn,))
         head = "⏸ <i>Бот на паузе.</i>\n\n" if paused else ""
-        return Reply(f"{head}🛠 <b>Админ-консоль</b>\nВыберите раздел:", menu=rows)
+        return Reply(f"{head}🛠 <b>Админ-консоль</b>\nВыберите раздел 👇", menu=rows)
 
     # -- Роутинг ---------------------------------------------------------------
 
@@ -288,7 +288,7 @@ class AdminConsole:
         rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
-            f"{head}💊 <b>Услуги</b>\nВыберите услугу:",
+            f"{head}💊 <b>Услуги</b>\nВыберите услугу 👇",
             button_rows=tuple(rows))
 
     def _service_callback(self, chat_id: int, message_id: int | None, arg: str) -> None:
@@ -486,7 +486,7 @@ class AdminConsole:
             (Button("◀ Меню", "adm:home"),),
         )
         head = f"{notice}\n\n" if notice else ""
-        return Reply(f"{head}🏥 <b>О клинике</b>\nВыберите поле:", button_rows=rows)
+        return Reply(f"{head}🏥 <b>О клинике</b>\nВыберите поле 👇", button_rows=rows)
 
     @staticmethod
     def _faq_btn(label: str, value: str | None) -> str:
@@ -538,7 +538,7 @@ class AdminConsole:
         rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
-            f"{head}🧑‍⚕️ <b>Врачи</b>\nВыберите врача:",
+            f"{head}🧑‍⚕️ <b>Врачи</b>\nВыберите врача 👇",
             button_rows=tuple(rows))
 
     def _doctor_callback(self, chat_id: int, message_id: int | None, arg: str) -> None:
@@ -625,7 +625,7 @@ class AdminConsole:
     def _begin_dname(self, chat_id: int, doc_id_str: str, message_id: int | None) -> None:
         self._set_pending(chat_id, f"dname:{doc_id_str}")
         reply = Reply(
-            "Введите имя врача (80 символов максимум):",
+            "👤 <b>Имя врача</b>\n\nВведите имя (до 80 символов):",
             button_rows=((Button("✖ Отмена", "adm:cancel"),),))
         self._edit_or_send(chat_id, message_id, reply)
 
@@ -647,7 +647,7 @@ class AdminConsole:
     def _begin_dbuf(self, chat_id: int, doc_id_str: str, message_id: int | None) -> None:
         self._set_pending(chat_id, f"dbuf:{doc_id_str}")
         reply = Reply(
-            f"Введите буфер в минутах (0–120), например 10:",
+            "⏲ <b>Буфер</b>\n\nВведите буфер в минутах (0–120), например 10:",
             button_rows=((Button("✖ Отмена", "adm:cancel"),),))
         self._edit_or_send(chat_id, message_id, reply)
 
@@ -669,7 +669,7 @@ class AdminConsole:
     def _begin_docadd(self, chat_id: int, message_id: int | None) -> None:
         self._set_pending(chat_id, "dadd:")
         reply = Reply(
-            "Введите имя нового врача:",
+            "🧑‍⚕️ <b>Новый врач</b>\n\nВведите имя:",
             button_rows=((Button("✖ Отмена", "adm:cancel"),),))
         self._edit_or_send(chat_id, message_id, reply)
 
@@ -692,7 +692,7 @@ class AdminConsole:
         rows.append((Button("📝 Свой график", f"adm:sched:custom:{doc_id_str}"),))
         rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}"),))
         r = Reply(
-            "📅 <b>Расписание</b>\nВыберите шаблон или задайте свой:",
+            "📅 <b>Расписание</b>\nВыберите шаблон или задайте свой 👇",
             button_rows=tuple(rows))
         self._edit_or_send(chat_id, message_id, r)
 
@@ -755,7 +755,7 @@ class AdminConsole:
         rows.append((Button("Далее →", f"adm:sched:next:{doc_id_str}"),))
         rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}:sched"),))
         r = Reply(
-            "📅 Отметьте рабочие дни:",
+            "📅 <b>Свой график</b>\nОтметьте рабочие дни 👇",
             button_rows=tuple(rows))
         self._edit_or_send(chat_id, message_id, r)
 
@@ -798,7 +798,7 @@ class AdminConsole:
         rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         intro = ("Ближайшие закрытые дни (тап — снова открыть):"
-                 if rows_data else "Закрытых дней впереди нет.")
+                 if rows_data else "📅 Закрытых дней нет — клиника работает по графику.")
         return Reply(f"{head}📅 <b>Выходные</b>\n{intro}", button_rows=tuple(rows))
 
     def _handle_dayoff_callback(self, chat_id: int, message_id: int | None,
