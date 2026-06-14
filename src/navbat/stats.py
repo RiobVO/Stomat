@@ -268,7 +268,8 @@ def render_stats(stats: DailyStats, day: date, last: date | None = None,
         header = f"📊 <b>Сводка за {days} дн. ({day:%d.%m}–{last:%d.%m})</b>"
     after = (f" (из них {stats.after_hours_booked} — вне рабочих часов)"
              if stats.after_hours_booked else "")
-    p95_part = (f" · p95 ответа: {stats.p95_response_sec} с (SLA < 5 с)"
+    # «&lt;» — сводка уходит с parse_mode=HTML, голый «<» ломает парсер Telegram
+    p95_part = (f" · p95 ответа: {stats.p95_response_sec} с (SLA &lt; 5 с)"
                 if stats.p95_response_sec is not None else "")
     booked_trend = _trend(stats.booked, prev.booked) if prev else ""
     cancelled_trend = _trend(stats.cancelled, prev.cancelled) if prev else ""
