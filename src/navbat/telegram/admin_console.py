@@ -24,10 +24,11 @@ from navbat.scheduling.calendar_rules import WEEKDAY_KEYS
 BTN_SERVICES = "💊 Услуги"
 BTN_DOCTORS = "🧑‍⚕️ Врачи"
 BTN_ABOUT = "🏥 О клинике"
+BTN_DAYOFF = "📅 Выходные"
 BTN_STATS = "📊 Статистика"
 BTN_PAUSE = "⏸ Пауза"
 BTN_RESUME = "▶️ Возобновить"
-_MENU_LABELS = {BTN_SERVICES, BTN_DOCTORS, BTN_ABOUT, BTN_STATS,
+_MENU_LABELS = {BTN_SERVICES, BTN_DOCTORS, BTN_ABOUT, BTN_DAYOFF, BTN_STATS,
                 BTN_PAUSE, BTN_RESUME}
 
 CANCEL_WORDS = {"отмена", "cancel"}
@@ -180,6 +181,8 @@ class AdminConsole:
                 return self._apply_dadd(chat_id, stripped)
             if kind == "sched":
                 return self._apply_sched_shifts(chat_id, arg, stripped)
+            if kind == "dayoff":
+                return self._apply_dayoff(chat_id, stripped)
         return self.main_menu()
 
     def handle_callback(self, callback: dict, chat_id: int, data: str) -> None:
@@ -223,13 +226,17 @@ class AdminConsole:
         if kind == "price":
             self._begin_price_edit(chat_id, arg, message_id)
             return
+        if kind == "dayoff":
+            self._handle_dayoff_callback(chat_id, message_id, arg)
+            return
         if kind == "faq":
             self._begin_faq_edit(chat_id, arg, message_id)
 
     def main_menu(self) -> Reply:
         paused = self._worker._bot_paused()
         pause_btn = BTN_RESUME if paused else BTN_PAUSE
-        rows = ((BTN_SERVICES, BTN_DOCTORS), (BTN_ABOUT,), (BTN_STATS,), (pause_btn,))
+        rows = ((BTN_SERVICES, BTN_DOCTORS), (BTN_ABOUT, BTN_DAYOFF),
+                (BTN_STATS,), (pause_btn,))
         head = "⏸ <i>Бот на паузе.</i>\n\n" if paused else ""
         return Reply(f"{head}🛠 <b>Админ-консоль</b>\nВыберите раздел:", menu=rows)
 
@@ -242,6 +249,8 @@ class AdminConsole:
             return self._doctors_menu()
         if label == BTN_ABOUT:
             return self._faq_menu()
+        if label == BTN_DAYOFF:
+            return self._dayoff_menu()
         if label == BTN_STATS:
             return self._worker._stats_reply()
         if label in (BTN_PAUSE, BTN_RESUME):
@@ -763,6 +772,82 @@ class AdminConsole:
         self._clear_pending(chat_id)
         self._clear_sched_days(chat_id)
         return self._doctor_card(doc_id_str, notice="✅ Расписание задано")
+
+    # -- раздел «Выходные» ----------------------------------------------------
+
+    def _dayoff_menu(self, notice: str = "") -> Reply:
+        from sqlalchemy import text as _text
+
+        today = self._worker._clinic_today()
+        with tenant_transaction(self._sf, self._cid) as session:
+            rows_data = session.execute(
+                _text("SELECT date, reason FROM holiday WHERE date >= :t "
+                      "ORDER BY date LIMIT 20"), {"t": today},
+            ).all()
+        rows = []
+        for r in rows_data:
+            label = f"{r.date:%d.%m.%Y}" + (f" ({r.reason})" if r.reason else "")
+            rows.append((Button(f"{label} ✖",
+                                f"adm:dayoff:open:{r.date.isoformat()}"),))
+        rows.append((Button("➕ Закрыть день", "adm:dayoff:add"),))
+        rows.append((Button("◀ Меню", "adm:home"),))
+        head = f"{notice}\n\n" if notice else ""
+        intro = ("Ближайшие закрытые дни (тап — снова открыть):"
+                 if rows_data else "Закрытых дней впереди нет.")
+        return Reply(f"{head}📅 <b>Выходные</b>\n{intro}", button_rows=tuple(rows))
+
+    def _handle_dayoff_callback(self, chat_id: int, message_id: int | None,
+                               arg: str) -> None:
+        from datetime import date as _date
+
+        from sqlalchemy import text as _text
+
+        sub, _, rest = arg.partition(":")
+        if sub == "add":
+            self._set_pending(chat_id, "dayoff")
+            self._edit_or_send(chat_id, message_id, Reply(
+                "📅 Введите дату и (по желанию) причину:\n"
+                "<code>21.03 Навруз</code>",
+                button_rows=((Button("✖ Отмена", "adm:cancel"),),)))
+            return
+        if sub == "open":
+            try:
+                target = _date.fromisoformat(rest)
+            except ValueError:
+                self._edit_or_send(chat_id, message_id, self._dayoff_menu())
+                return
+            with tenant_transaction(self._sf, self._cid) as session:
+                session.execute(_text("DELETE FROM holiday WHERE date = :d"),
+                                {"d": target})
+            self._worker._send(chat_id,
+                               self._dayoff_menu(notice="✅ День снова рабочий"))
+            return
+        # body был просто «dayoff» — показать меню
+        self._edit_or_send(chat_id, message_id, self._dayoff_menu())
+
+    def _apply_dayoff(self, chat_id: int, raw: str) -> Reply:
+        from sqlalchemy import text as _text
+
+        parts = raw.split(maxsplit=1)
+        today = self._worker._clinic_today()
+        target = self._worker._parse_ddmm(parts[0], today) if parts else None
+        if target is None:
+            return Reply(
+                "⚠️ Формат: <code>21.03 причина</code> (день.месяц). "
+                "Повторите или нажмите «Отмена».",
+                button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        reason = parts[1].strip() if len(parts) > 1 else None
+        with tenant_transaction(self._sf, self._cid) as session:
+            exists = session.execute(
+                _text("SELECT 1 FROM holiday WHERE date = :d"), {"d": target},
+            ).scalar_one_or_none()
+            if not exists:
+                session.execute(
+                    _text("INSERT INTO holiday (clinic_id, date, reason) VALUES "
+                          "(current_setting('app.clinic_id')::uuid, :d, :r)"),
+                    {"d": target, "r": reason})
+        self._clear_pending(chat_id)
+        return self._dayoff_menu(notice=f"✅ {target:%d.%m.%Y} — выходной")
 
     # -- extras: sched days ---------------------------------------------------
 

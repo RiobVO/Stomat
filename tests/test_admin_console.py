@@ -565,3 +565,63 @@ def test_doctor_deactivate_and_activate(app_session_factory, admin_engine,
 
     click(worker, app_session_factory, clinic_a, f"adm:doc:{doctor_a}:act")
     assert doctor_field(admin_engine, clinic_a, doctor_a, "is_active") is True
+
+
+# ── 8. раздел «Выходные» (P-4) ──────────────────────────────────────────────
+
+def _add_holiday(admin_engine, clinic_id, iso, reason=None):
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO holiday (clinic_id, date, reason) "
+                 "VALUES (:c, :d, :r)"),
+            {"c": clinic_id, "d": iso, "r": reason})
+
+
+def _holiday_count(admin_engine, clinic_id):
+    with admin_engine.begin() as conn:
+        return conn.execute(
+            text("SELECT count(*) FROM holiday WHERE clinic_id = :c"),
+            {"c": clinic_id}).scalar_one()
+
+
+def test_dayoff_menu_lists_and_reopen(app_session_factory, admin_engine, clinic_a):
+    from datetime import date, timedelta
+    future = (date.today() + timedelta(days=10)).isoformat()
+    _add_holiday(admin_engine, clinic_a, future, "Праздник")
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, ac.BTN_DAYOFF)
+    acts = actions(api.row_keyboards[-1])
+    assert f"adm:dayoff:open:{future}" in acts
+    assert "adm:dayoff:add" in acts
+
+    click(worker, app_session_factory, clinic_a, f"adm:dayoff:open:{future}")
+    assert _holiday_count(admin_engine, clinic_a) == 0
+
+
+def test_dayoff_add_closes_day(app_session_factory, admin_engine, clinic_a):
+    from datetime import date, timedelta
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:dayoff:add")
+    target = date.today() + timedelta(days=5)
+    send_admin(worker, app_session_factory, clinic_a,
+               f"{target.day:02d}.{target.month:02d} Учёт")
+
+    with admin_engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT date, reason FROM holiday WHERE clinic_id = :c"),
+            {"c": clinic_a}).one()
+    assert row.reason == "Учёт"
+    assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
+
+
+def test_dayoff_add_bad_date_repeats(app_session_factory, admin_engine, clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:dayoff:add")
+    send_admin(worker, app_session_factory, clinic_a, "ерунда")
+
+    assert _holiday_count(admin_engine, clinic_a) == 0
+    assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "dayoff"
