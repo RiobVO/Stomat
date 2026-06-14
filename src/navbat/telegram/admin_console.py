@@ -22,25 +22,29 @@ from __future__ import annotations
 
 import html
 
+from sqlalchemy import text
+
 from navbat import onboard
 from navbat.db.base import tenant_transaction
 from navbat.dialog import clinic_repo, services_repo
 from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.replies import SERVICE_EMOJI, SERVICE_LABELS, Button, Reply
+from navbat.nlu.schema import SERVICE_KEYS
 
 # верхнее меню — reply-клавиатура; нажатие приходит ТЕКСТОМ, матчим точно
-BTN_PRICES = "💰 Цены"
+BTN_SERVICES = "💊 Услуги"
 BTN_ABOUT = "🏥 О клинике"
 BTN_STATS = "📊 Статистика"
 BTN_PAUSE = "⏸ Пауза"
 BTN_RESUME = "▶️ Возобновить"
-_MENU_LABELS = {BTN_PRICES, BTN_ABOUT, BTN_STATS, BTN_PAUSE, BTN_RESUME}
+_MENU_LABELS = {BTN_SERVICES, BTN_ABOUT, BTN_STATS, BTN_PAUSE, BTN_RESUME}
 
 # текстовый синоним кнопки «Отмена» (на случай если владелец напечатает руками)
 CANCEL_WORDS = {"отмена", "cancel"}
 
 PRICE_MAX = 1_000_000_000  # защита показа/ввода от случайного мусора
 FAQ_MAX = 500              # адрес/реквизиты — одна-две строки
+DURATION_MIN, DURATION_MAX = 5, 480
 
 _FAQ_TITLES = {"address": "Адрес", "payment": "Условия оплаты", "phone": "Телефон"}
 _FAQ_READERS = {
@@ -97,6 +101,10 @@ class AdminConsole:
                 return self._apply_price(chat_id, arg, stripped)
             if kind == "faq":
                 return self._apply_faq(chat_id, arg, stripped)
+            if kind == "dur":
+                return self._apply_duration(chat_id, arg, stripped)
+            if kind == "svcadd":
+                return self._apply_service_add(chat_id, arg, stripped)
         # /start, свободный текст, мусор → главное меню
         return self.main_menu()
 
@@ -110,25 +118,41 @@ class AdminConsole:
             self._clear_pending(chat_id)
             self._worker._send(chat_id, self.main_menu())
             return
+        if body == "services":
+            self._worker._send(chat_id, self._services_menu())
+            return
+        if body == "svcadd":
+            self._worker._send(chat_id, self._service_add_menu())
+            return
         kind, _, arg = body.partition(":")
         if kind == "price":
             self._begin_price_edit(chat_id, arg, message_id)
             return
+        if kind == "dur":
+            self._begin_duration_edit(chat_id, arg, message_id)
+            return
         if kind == "faq":
             self._begin_faq_edit(chat_id, arg, message_id)
+            return
+        if kind == "svc":
+            self._handle_svc_callback(chat_id, arg, message_id)
+            return
+        if kind == "svcadd":
+            self._begin_service_add(chat_id, arg, message_id)
+            return
 
     def main_menu(self) -> Reply:
         paused = self._worker._bot_paused()
         pause_btn = BTN_RESUME if paused else BTN_PAUSE
-        rows = ((BTN_PRICES, BTN_ABOUT), (BTN_STATS,), (pause_btn,))
+        rows = ((BTN_SERVICES, BTN_ABOUT), (BTN_STATS,), (pause_btn,))
         head = "⏸ <i>Бот на паузе.</i>\n\n" if paused else ""
         return Reply(f"{head}🛠 <b>Админ-консоль</b>\nВыберите раздел:", menu=rows)
 
     # ── Маршрутизация верхнего меню ──────────────────────────────────────
 
     def _menu_action(self, chat_id: int, label: str) -> Reply:
-        if label == BTN_PRICES:
-            return self._prices_menu()
+        if label == BTN_SERVICES:
+            return self._services_menu()
         if label == BTN_ABOUT:
             return self._faq_menu()
         if label == BTN_STATS:
@@ -145,24 +169,94 @@ class AdminConsole:
         # перерисовать меню новым состоянием (label паузы ↔ возобновления)
         return Reply(conf.text, menu=self.main_menu().menu)
 
-    # ── Раздел цен ───────────────────────────────────────────────────────
+    # ── Раздел услуг ─────────────────────────────────────────────────────
 
-    def _prices_menu(self, notice: str = "") -> Reply:
+    def _services_menu(self, notice: str = "") -> Reply:
         with tenant_transaction(self._sf, self._cid) as session:
-            prices = services_repo.price_list(session)
+            rows_data = services_repo.service_list_all(session)
         rows = []
-        for row in prices:
-            emoji = SERVICE_EMOJI.get(row.name, "")
+        for row in rows_data:
+            emoji = SERVICE_EMOJI.get(row.name, "🦷")
             label = SERVICE_LABELS.get(row.name, {}).get("ru", row.name)
-            price_txt = f"{_fmt_sum(row.price)} сум" if row.price is not None \
-                else "цена не задана"
-            rows.append((Button(f"{emoji} {label} — {price_txt}".strip(),
-                                 f"adm:price:{row.name}"),))
+            if row.is_active:
+                price = f"{_fmt_sum(row.price)}" if row.price is not None else "—"
+                text_btn = f"{emoji} {label} · {row.duration_min} мин · {price}"
+            else:
+                text_btn = f"⚪ {label} (скрыта)"
+            rows.append((Button(text_btn, f"adm:svc:{row.name}"),))
+        rows.append((Button("➕ Добавить услугу", "adm:svcadd"),))
         rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
-        return Reply(f"{head}💰 <b>Цены услуг</b>\n"
-                     f"Выберите услугу, чтобы изменить цену:",
+        return Reply(f"{head}💊 <b>Услуги</b>\nВыберите услугу:",
                      button_rows=tuple(rows))
+
+    def _service_card(self, key: str, notice: str = "",
+                      message_id: int | None = None,
+                      chat_id: int | None = None) -> Reply:
+        with tenant_transaction(self._sf, self._cid) as session:
+            row = next((r for r in services_repo.service_list_all(session)
+                        if r.name == key), None)
+        if row is None:
+            return self._services_menu(notice="услуга не найдена")
+        label = SERVICE_LABELS.get(key, {}).get("ru", key)
+        emoji = SERVICE_EMOJI.get(key, "🦷")
+        price = f"{_fmt_sum(row.price)} сум" if row.price is not None else "не задана"
+        toggle = (Button("✅ Активировать", f"adm:svc:{key}:act") if not row.is_active
+                  else Button("⛔ Деактивировать", f"adm:svc:{key}:deact"))
+        rows = [
+            (Button("💰 Цена", f"adm:price:{key}"),
+             Button("⏱ Длительность", f"adm:dur:{key}")),
+            (toggle,),
+        ]
+        with tenant_transaction(self._sf, self._cid) as session:
+            refs = self._service_refs(session, key)
+        if not row.is_active and refs == 0:
+            rows.append((Button("🗑 Удалить совсем", f"adm:svc:{key}:del"),))
+        rows.append((Button("◀ Назад", "adm:services"),))
+        head = f"{notice}\n\n" if notice else ""
+        state = "" if row.is_active else " ⚪ <i>(скрыта)</i>"
+        body = (f"{head}{emoji} <b>{_esc(label)}</b>{state}\n"
+                f"Длительность: {row.duration_min} мин · Цена: {price}")
+        reply = Reply(body, button_rows=tuple(rows))
+        if message_id is not None and chat_id is not None:
+            self._worker._edit(chat_id, message_id, reply)
+        return reply
+
+    @staticmethod
+    def _service_refs(session, key: str) -> int:
+        return session.execute(
+            text("SELECT (SELECT count(*) FROM appointment a JOIN service s "
+                 "ON s.id = a.service_id WHERE s.name = :n) "
+                 "+ (SELECT count(*) FROM waitlist w JOIN service s "
+                 "ON s.id = w.service_id WHERE s.name = :n)"),
+            {"n": key},
+        ).scalar_one()
+
+    def _handle_svc_callback(self, chat_id: int, arg: str,
+                             message_id: int | None) -> None:
+        key, _, action = arg.partition(":")
+        if action == "":
+            self._service_card(key, message_id=message_id, chat_id=chat_id)
+            return
+        if action == "deact":
+            onboard.deactivate_service(self._sf, self._cid, key)
+            self._service_card(key, notice="⛔ Услуга скрыта",
+                               message_id=message_id, chat_id=chat_id)
+            return
+        if action == "act":
+            onboard.activate_service(self._sf, self._cid, key)
+            self._service_card(key, notice="✅ Услуга снова доступна",
+                               message_id=message_id, chat_id=chat_id)
+            return
+        if action == "del":
+            try:
+                onboard.delete_service(self._sf, self._cid, key)
+            except ValueError as exc:
+                self._service_card(key, notice=f"⚠️ {_esc(str(exc))}",
+                                   message_id=message_id, chat_id=chat_id)
+                return
+            self._worker._send(chat_id, self._services_menu(
+                notice="🗑 Услуга удалена"))
 
     def _begin_price_edit(self, chat_id: int, key: str,
                           message_id: int | None) -> None:
@@ -188,8 +282,76 @@ class AdminConsole:
         onboard.set_service_price(self._sf, self._cid, key, price)
         self._clear_pending(chat_id)
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
-        return self._prices_menu(
-            notice=f"✅ Цена «{_esc(label)}»: {_fmt_sum(price)} сум")
+        return self._service_card(key, notice=f"✅ Цена «{_esc(label)}»: "
+                                              f"{_fmt_sum(price)} сум")
+
+    def _begin_duration_edit(self, chat_id: int, key: str,
+                             message_id: int | None) -> None:
+        self._set_pending(chat_id, f"dur:{key}")
+        label = SERVICE_LABELS.get(key, {}).get("ru", key)
+        reply = Reply(
+            f"⏱ <b>{_esc(label)}</b>\nВведите длительность в минутах "
+            f"({DURATION_MIN}–{DURATION_MAX}), например 30.",
+            button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        self._edit_or_send(chat_id, message_id, reply)
+
+    def _apply_duration(self, chat_id: int, key: str, raw: str) -> Reply:
+        value = raw.strip()
+        if not value.isdigit() or not DURATION_MIN <= int(value) <= DURATION_MAX:
+            return Reply(
+                f"⚠️ Длительность — целое {DURATION_MIN}–{DURATION_MAX} минут.\n"
+                f"Введите ещё раз или нажмите «Отмена».",
+                button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        onboard.set_service_duration(self._sf, self._cid, key, int(value))
+        self._clear_pending(chat_id)
+        return self._service_card(key, notice=f"✅ Длительность: {value} мин")
+
+    # ── Добавление услуги из каталога ────────────────────────────────────
+
+    def _service_add_menu(self, notice: str = "") -> Reply:
+        with tenant_transaction(self._sf, self._cid) as session:
+            existing = {r.name for r in services_repo.service_list_all(session)}
+        missing = [k for k in SERVICE_KEYS if k not in existing]
+        rows = [
+            (Button(f"{SERVICE_EMOJI.get(k, '🦷')} "
+                    f"{SERVICE_LABELS.get(k, {}).get('ru', k)}", f"adm:svcadd:{k}"),)
+            for k in missing
+        ]
+        rows.append((Button("◀ Назад", "adm:services"),))
+        head = f"{notice}\n\n" if notice else ""
+        body = (f"{head}➕ <b>Добавить услугу</b>\nВыберите услугу из каталога:"
+                if missing else f"{head}Все услуги каталога уже добавлены.")
+        return Reply(body, button_rows=tuple(rows))
+
+    def _begin_service_add(self, chat_id: int, key: str,
+                           message_id: int | None) -> None:
+        if key not in SERVICE_KEYS:
+            self._worker._send(chat_id, self._service_add_menu(
+                notice="услуга не из каталога"))
+            return
+        self._set_pending(chat_id, f"svcadd:{key}")
+        label = SERVICE_LABELS.get(key, {}).get("ru", key)
+        reply = Reply(
+            f"➕ <b>{_esc(label)}</b>\nВведите длительность приёма в минутах "
+            f"({DURATION_MIN}–{DURATION_MAX}), например 30.",
+            button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        self._edit_or_send(chat_id, message_id, reply)
+
+    def _apply_service_add(self, chat_id: int, key: str, raw: str) -> Reply:
+        value = raw.strip()
+        if not value.isdigit() or not DURATION_MIN <= int(value) <= DURATION_MAX:
+            return Reply(
+                f"⚠️ Длительность — целое {DURATION_MIN}–{DURATION_MAX} минут.\n"
+                f"Введите ещё раз или нажмите «Отмена».",
+                button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        try:
+            onboard.add_service(self._sf, self._cid, key, int(value))
+        except ValueError as exc:
+            self._clear_pending(chat_id)
+            return self._services_menu(notice=f"⚠️ {_esc(str(exc))}")
+        self._clear_pending(chat_id)
+        label = SERVICE_LABELS.get(key, {}).get("ru", key)
+        return self._service_card(key, notice=f"✅ Услуга «{_esc(label)}» добавлена")
 
     # ── Раздел FAQ «О клинике» ───────────────────────────────────────────
 
