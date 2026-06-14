@@ -632,3 +632,26 @@ def test_status_badge():
     assert ac._status_badge(True, female=False) == "🟢 Активен"
     assert ac._status_badge(False, female=True) == "⚪ Скрыта"
     assert ac._status_badge(False, female=False) == "⚪ Скрыт"
+
+
+def test_service_card_hero_style(app_session_factory, admin_engine, clinic_a,
+                                 service_cleaning):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
+    body = (api.edited[-1][2] if api.edited else last_to(api, ADMIN_CHAT))
+    assert "💰 Цена:" in body
+    assert "⏱ Длительность:" in body
+    assert "🟢 Активна" in body
+
+
+def test_doctor_card_hero_style(app_session_factory, admin_engine, clinic_a,
+                                doctor_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:doc:{doctor_a}")
+    body = (api.edited[-1][2] if api.edited else last_to(api, ADMIN_CHAT))
+    assert "⏲ Буфер:" in body
+    assert "📆 Календарь:" in body
+    assert "🟢 Активен" in body
+    assert "📅" in body
