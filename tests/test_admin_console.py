@@ -625,3 +625,10 @@ def test_dayoff_add_bad_date_repeats(app_session_factory, admin_engine, clinic_a
 
     assert _holiday_count(admin_engine, clinic_a) == 0
     assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "dayoff"
+
+
+def test_status_badge():
+    assert ac._status_badge(True, female=True) == "🟢 Активна"
+    assert ac._status_badge(True, female=False) == "🟢 Активен"
+    assert ac._status_badge(False, female=True) == "⚪ Скрыта"
+    assert ac._status_badge(False, female=False) == "⚪ Скрыт"

@@ -86,6 +86,13 @@ def _esc(value: str) -> str:
     return html.escape(str(value), quote=False)
 
 
+def _status_badge(is_active: bool, female: bool) -> str:
+    """Статус-бейдж сущности: 🟢 активна / ⚪ скрыта (род по female)."""
+    if is_active:
+        return "🟢 Активна" if female else "🟢 Активен"
+    return "⚪ Скрыта" if female else "⚪ Скрыт"
+
+
 def _format_schedule(wi: dict) -> str:
     """Группирует последовательные дни с одинаковыми сменами в диапазон."""
     order = list(WEEKDAY_KEYS)
