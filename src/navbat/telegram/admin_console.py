@@ -261,8 +261,12 @@ class AdminConsole:
     def _begin_price_edit(self, chat_id: int, key: str,
                           message_id: int | None) -> None:
         self._set_pending(chat_id, f"price:{key}")
+        # цену читаем из полного списка (не service_price — он фильтрует is_active,
+        # и для деактивированной услуги показал бы «не задана» при заданной цене)
         with tenant_transaction(self._sf, self._cid) as session:
-            current = services_repo.service_price(session, key)
+            row = next((r for r in services_repo.service_list_all(session)
+                        if r.name == key), None)
+        current = row.price if row else None
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
         cur_txt = f"{_fmt_sum(current)} сум" if current is not None else "не задана"
         reply = Reply(
