@@ -76,7 +76,7 @@ def test_admin_start_shows_admin_console(app_session_factory, clinic_a):
     body = last_to(api, ADMIN_CHAT)
     assert "Админ-консоль" in body
     labels = flat(last_menu(api))
-    assert ac.BTN_PRICES in labels and ac.BTN_STATS in labels
+    assert ac.BTN_SERVICES in labels and ac.BTN_STATS in labels
 
 
 def test_patient_start_unaffected(app_session_factory, clinic_a):
@@ -282,7 +282,7 @@ def test_format_schedule_groups_consecutive_days():
 
 
 def test_format_schedule_empty():
-    assert "не задано" in ac._format_schedule({})
+    assert ac._format_schedule({}) == "выходной всю неделю"
 
 
 def test_parse_shifts_ok():
@@ -292,9 +292,8 @@ def test_parse_shifts_ok():
 
 
 def test_parse_shifts_rejects_bad():
-    assert ac._parse_shifts("abc") is None
-    assert ac._parse_shifts("18:00-09:00") is None
-    assert ac._parse_shifts("") is None
+    for bad in ("9-18", "25:00-26:00", "13:00-09:00", "", "abc"):
+        assert ac._parse_shifts(bad) is None
 
 
 # -- 7. Услуги (P-2) --------------------------------------------------------
@@ -316,8 +315,11 @@ def test_service_card_shows_price_and_duration_buttons(app_session_factory, clin
     click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
 
     acts = row_actions(api)
-    assert any("price" in a for a in acts)
-    assert any("dur" in a for a in acts)
+    assert "adm:svc:cleaning:price" in acts
+    assert "adm:svc:cleaning:dur" in acts
+    assert "adm:svc:cleaning:deact" in acts
+    # активная услуга — кнопки удаления не должно быть
+    assert "adm:svc:cleaning:del" not in acts
 
 
 def test_duration_edit_via_button_and_number(app_session_factory, admin_engine,
@@ -329,6 +331,7 @@ def test_duration_edit_via_button_and_number(app_session_factory, admin_engine,
     send_admin(worker, app_session_factory, clinic_a, "45")
 
     assert service_field(admin_engine, clinic_a, "cleaning", "duration_min") == 45
+    assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
 
 
 def test_invalid_duration_rejected(app_session_factory, admin_engine,
@@ -339,6 +342,8 @@ def test_invalid_duration_rejected(app_session_factory, admin_engine,
     for bad in ("0", "abc", "500", "-1"):
         send_admin(worker, app_session_factory, clinic_a, bad)
         assert service_field(admin_engine, clinic_a, "cleaning", "duration_min") == 30
+        # pending должен сохраняться после каждого неверного ввода
+        assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "dur:cleaning"
 
 
 def test_service_deactivate_and_activate(app_session_factory, admin_engine,
@@ -352,16 +357,75 @@ def test_service_deactivate_and_activate(app_session_factory, admin_engine,
     assert service_field(admin_engine, clinic_a, "cleaning", "is_active") is True
 
 
+def test_services_menu_lists_active_and_inactive(app_session_factory, admin_engine,
+                                                  clinic_a):
+    from conftest import make_service
+    make_service(admin_engine, clinic_a, "cleaning", 30, price=350000)
+    braces = make_service(admin_engine, clinic_a, "braces", 60)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE service SET is_active = false WHERE id = :s"),
+                     {"s": braces})
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, ac.BTN_SERVICES)
+
+    acts = row_actions(api)
+    # обе услуги должны отображаться: активная и деактивированная
+    assert "adm:svc:cleaning" in acts
+    assert "adm:svc:braces" in acts
+    # кнопка «Добавить» без подчёркивания
+    assert "adm:svcadd" in acts
+    body = last_to(api, ADMIN_CHAT)
+    assert "Услуги" in body
+
+
+def test_service_add_creates_with_duration(app_session_factory, admin_engine, clinic_a):
+    """Поток добавления услуги из каталога пишет строку в БД."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svcadd")   # каталог
+    click(worker, app_session_factory, clinic_a, "adm:svcadd:braces")  # выбрали услугу
+    send_admin(worker, app_session_factory, clinic_a, "60")
+
+    with admin_engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT duration_min, is_active FROM service "
+                 "WHERE clinic_id = :c AND name = 'braces'"),
+            {"c": clinic_a}).one()
+    assert row.duration_min == 60 and row.is_active is True
+    assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
+
+
 def test_service_add_lists_catalog_missing(app_session_factory, clinic_a,
                                             service_cleaning):
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],
                                  admin_chat_id=ADMIN_CHAT)
-    click(worker, app_session_factory, clinic_a, "adm:svcadd:_")
+    click(worker, app_session_factory, clinic_a, "adm:svcadd")
 
     acts = row_actions(api)
     # cleaning already exists, so it must NOT appear, but others must
     assert not any(a.endswith(":cleaning") or a == "adm:svcadd:cleaning" for a in acts)
     assert any("extraction" in a or "filling" in a for a in acts)
+
+
+def test_service_card_delete_gating(app_session_factory, admin_engine, clinic_a):
+    """Кнопка «Удалить совсем» — только у деактивированной, не имеющей ссылок."""
+    from conftest import make_service
+    make_service(admin_engine, clinic_a, "cleaning", 30)
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    # Активная услуга — удалить нельзя
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
+    acts = row_actions(api)
+    assert "adm:svc:cleaning:del" not in acts
+
+    # Деактивируем, но записей нет → кнопка появляется
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning:deact")
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
+    acts = row_actions(api)
+    assert "adm:svc:cleaning:del" in acts
 
 
 # -- 8. Врачи (P-3) --------------------------------------------------------
