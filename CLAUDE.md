@@ -482,7 +482,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   его не видит (логика покрыта юнит-тестом test_custom_schedule_days_then_
   shifts). Тестов 1024, демо восстановлено, всё в origin/master.
 - 14.06.2026 ИНКРЕМЕНТ 3 self-service (ВИЗУАЛ/UX АДМИН-КОНСОЛИ) —
-  СПЕКА+ПЛАН ГОТОВЫ, НЕ НАЧАТ. Брейншторм пройден, выбран пользователем
+  ЗАКРЫТ ЦЕЛИКОМ (subagent-driven, ff-merge в master fadd69e, тестов 1027,
+  hero-стиль подтверждён живым тыком). 3 коммита: _status_badge (fe5ea40),
+  hero-карточки услуги/врача (e51b68e, полное opus-ревью APPROVE),
+  меню/промпты/empty-states (fadd69e). Карточки теперь emoji-якоря
+  (💰/⏱/⏲/📆) + статус-бейдж 🟢/⚪ + блок «📅 График» + emoji на кнопках,
+  заголовки с 👇. Ноль изменений поведения/callback/БД — подтверждено
+  ревью и тыком. Брейншторм пройден, выбран пользователем
   scope «визуал/UX» + глубина «паритет с пациентским». Спека
   docs/superpowers/specs/2026-06-14-admin-console-visual-design.md, план
   docs/superpowers/plans/2026-06-14-admin-console-visual.md (оба в origin).
@@ -495,10 +501,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   ПРОПОРЦИОНАЛЬНЫМ (косметика ≠ полное двухступенчатое на каждую строку).
   Грабли: бот ГАСИТЬ перед полным pytest (TRUNCATE рушит FK); никаких
   голых «<» в HTML (урок stats-бага → &lt;); демо после сьюта
-  пересоздавать onboard --demo. СТАРТ В СВЕЖЕМ ЧАТЕ: «реализуй инкремент 3
-  по docs/superpowers/plans/2026-06-14-admin-console-visual.md через
-  subagent-driven-development». live_poke/ драйверы (admin_setup/admin_probe/
-  restore_demo) для живого подтверждения рендера — НЕ коммитить.
+  пересоздавать onboard --demo. live_poke/ драйверы (admin_setup/admin_probe/
+  restore_demo) — НЕ коммитить. СЛЕДУЮЩИЙ ШАГ (по явной команде): инкременты
+  self-service 4+ (мультиязык консоли / несколько услуг на врача / CRUD
+  админ-чатов кнопками), витрина для покупателя или пилот Ф2.
 - Рабочие заметки: 11.06 ВСЯ история переписана filter-branch (автор →
   noreply-адрес GitHub пользователя для графа контрибуций; упоминания
   ассистента убраны из сообщений — В НОВЫХ КОММИТАХ Co-Authored-By
