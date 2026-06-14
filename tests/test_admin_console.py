@@ -505,6 +505,31 @@ def test_custom_schedule_days_then_shifts(app_session_factory, admin_engine,
     assert wi["mon"] == [["09:00", "18:00"]]
 
 
+def test_custom_schedule_days_dont_leak_between_doctors(app_session_factory,
+                                                       admin_engine, clinic_a,
+                                                       doctor_a):
+    # C1: незавершённый выбор дней для одного врача не должен протечь в график
+    # другого. Бросаем выбор пн+вт для doctor_a, затем задаём ср другому врачу.
+    from conftest import make_doctor
+    other = make_doctor(admin_engine, clinic_a, name="Второй")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:mon")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:tue")
+    # бросаем — переходим ко второму врачу без ввода смен
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{other}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{other}:wed")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{other}")
+    send_admin(worker, app_session_factory, clinic_a, "10:00-14:00")
+
+    import json
+    wi_raw = doctor_field(admin_engine, clinic_a, other, "working_intervals")
+    wi = json.loads(wi_raw) if isinstance(wi_raw, str) else wi_raw
+    assert set(wi.keys()) == {"wed"}, f"дни протекли: {set(wi.keys())}"
+    assert wi["wed"] == [["10:00", "14:00"]]
+
+
 def test_custom_schedule_bad_shifts_stays_pending(app_session_factory, admin_engine,
                                                    clinic_a, doctor_a):
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],

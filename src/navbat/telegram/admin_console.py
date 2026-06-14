@@ -94,7 +94,8 @@ def _format_schedule(wi: dict) -> str:
         if not shifts:
             continue
         key = json.dumps(shifts, separators=(",", ":"))
-        if groups and groups[-1][2] == key and                 order.index(day) == order.index(groups[-1][1]) + 1:
+        if (groups and groups[-1][2] == key
+                and order.index(day) == order.index(groups[-1][1]) + 1):
             groups[-1] = (groups[-1][0], day, key)
         else:
             groups.append((day, day, key))
@@ -555,10 +556,10 @@ class AdminConsole:
                 onboard.delete_doctor(self._sf, self._cid, doc_id)
                 r = self._doctors_menu(notice="✅ Врач удалён")
             except ValueError as e:
-                r = self._doctor_card(doc_id_str, notice=f"⚠️ {_esc(str(e))}", chat_id=chat_id)
+                r = self._doctor_card(doc_id_str, notice=f"⚠️ {_esc(str(e))}")
             self._edit_or_send(chat_id, message_id, r)
         else:
-            r = self._doctor_card(doc_id_str, chat_id=chat_id)
+            r = self._doctor_card(doc_id_str)
             self._edit_or_send(chat_id, message_id, r)
 
     @staticmethod
@@ -571,8 +572,7 @@ class AdminConsole:
             {"d": str(doctor_id)},
         ).scalar_one()
 
-    def _doctor_card(self, doc_id_str: str, notice: str = "",
-                     chat_id: int | None = None) -> Reply:
+    def _doctor_card(self, doc_id_str: str, notice: str = "") -> Reply:
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
@@ -583,9 +583,6 @@ class AdminConsole:
             refs = self._doctor_refs(session, doc_id) if doc is not None else 0
         if doc is None:
             return self._doctors_menu()
-        # Запоминаем текущего врача в extras для adm:doc:name / :buf / :deact …
-        if chat_id is not None:
-            self._set_extra(chat_id, "adm_doc", doc_id_str)
         name = doc.name or "(без имени)"
         status = "активен" if doc.is_active else "⚪ скрыт"
         sch = _format_schedule(doc.working_intervals or {})
@@ -702,6 +699,9 @@ class AdminConsole:
             self._edit_or_send(chat_id, message_id, r)
         elif action == "custom" and len(parts) >= 2:
             doc_id_str = parts[1]
+            # выбор дней начинаем с чистого листа: незавершённый выбор для
+            # другого врача иначе протёк бы в этот график (C1)
+            self._set_sched_days(chat_id, set())
             self._sched_custom_days(chat_id, doc_id_str, message_id, selected=set())
         elif action == "day" and len(parts) >= 3:
             doc_id_str = parts[1]
@@ -801,17 +801,6 @@ class AdminConsole:
             conv = load_conversation(session, chat_id)
             if conv.context.extras.pop("adm_pending", None) is not None:
                 save_conversation(session, conv)
-
-    def _set_extra(self, chat_id: int, key: str, value) -> None:
-        with tenant_transaction(self._sf, self._cid) as session:
-            conv = load_conversation(session, chat_id)
-            conv.context.extras[key] = value
-            save_conversation(session, conv)
-
-    def _get_extra(self, chat_id: int, key: str):
-        with tenant_transaction(self._sf, self._cid) as session:
-            conv = load_conversation(session, chat_id)
-        return conv.context.extras.get(key)
 
     # -- отправка/редактирование ----------------------------------------------
 
