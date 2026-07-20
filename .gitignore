@@ -1,0 +1,4 @@
+﻿__pycache__/
+.env
+spike_nlu/results/raw_*.jsonl
+spike_nlu/data/*backup*.jsonl
