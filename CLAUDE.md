@@ -41,8 +41,11 @@
 
 ## Прогресс по инкрементам Ф1
 
-- [ ] 1. Scheduling engine + модель данных (← текущий)
-- [ ] 2. FSM + slot-filling (тут заложить инлайн-кнопки слотов + book↔question бэкстоп)
+- [x] 1. Scheduling engine + модель данных — ГОТОВ (24 теста зелёные, включая
+      50-поточную гонку; postgres на :5434 — 5433 занят соседним проектом;
+      буфер в выражении exclusion constraint через timezone('UTC',...) —
+      timestamptz-арифметика в индексах требует IMMUTABLE)
+- [ ] 2. FSM + slot-filling (← текущий; заложить инлайн-кнопки слотов + book↔question бэкстоп)
 - [ ] 3. Channel adapter (Telegram + durable queue + per-chat lock)
 - [ ] 4. Календарь (Google push + conflict-resolution + OAuth)
 - [ ] 5. Напоминания, надёжность, наблюдаемость
