@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: navbat-postgres
+    environment:
+      POSTGRES_USER: postgres
+      # dev-only пароль; в проде задаётся через NAVBAT_PG_PASSWORD
+      POSTGRES_PASSWORD: ${NAVBAT_PG_PASSWORD:-navbat_dev}
+      POSTGRES_DB: navbat
+    ports:
+      - "5434:5432"   # 5433 занят credit-postgres (другой проект)
+    volumes:
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d navbat"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:
