@@ -8,10 +8,12 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "alembic>=1.13",
     "tzdata>=2024.1",  # zoneinfo на Windows не имеет системной базы таймзон
+    "pydantic>=2",     # строгая валидация JSON от LLM (schema + repair-цикл)
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+llm = ["openai>=1.40"]  # только реальный экстрактор; тесты живут на фейковом
 
 [build-system]
 requires = ["setuptools>=68"]
