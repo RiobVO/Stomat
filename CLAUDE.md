@@ -44,7 +44,10 @@
 - [x] 1. Scheduling engine + модель данных — ГОТОВ (24 теста зелёные, включая
       50-поточную гонку; postgres на :5434 — 5433 занят соседним проектом;
       буфер в выражении exclusion constraint через timezone('UTC',...) —
-      timestamptz-арифметика в индексах требует IMMUTABLE)
+      timestamptz-арифметика в индексах требует IMMUTABLE; записи по врачу
+      сериализованы advisory-локом — UPDATE строки в predicate exclusion
+      constraint дедлочится с конкурентными INSERT, одиночный прогон теста
+      этого НЕ ловит, гонять полный сьют многократно)
 - [ ] 2. FSM + slot-filling (← текущий; заложить инлайн-кнопки слотов + book↔question бэкстоп)
 - [ ] 3. Channel adapter (Telegram + durable queue + per-chat lock)
 - [ ] 4. Календарь (Google push + conflict-resolution + OAuth)
