@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
@@ -22,6 +23,9 @@ ADMIN_DSN = os.environ.get(
     "NAVBAT_ADMIN_DSN", "postgresql+psycopg://postgres:navbat_dev@localhost:5434/navbat"
 )
 TASHKENT = ZoneInfo("Asia/Tashkent")
+
+# фиксированный тестовый ключ AES-256 (не секрет — только для тестов)
+os.environ.setdefault("NAVBAT_ENC_KEY", base64.b64encode(b"test-key-32-bytes-padded-000000!").decode())
 
 # График: пн–сб, две смены с обедом 13:00–14:00
 WORKING_INTERVALS = {
@@ -110,7 +114,8 @@ def _make_clinic(admin_engine, name: str) -> uuid.UUID:
     cid = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO clinic (id, name, timezone) VALUES (:id, :name, 'Asia/Tashkent')"),
+            text("INSERT INTO clinic (id, name, salt, timezone) "
+                 "VALUES (:id, :name, 'test-salt', 'Asia/Tashkent')"),
             {"id": cid, "name": name},
         )
     return cid
