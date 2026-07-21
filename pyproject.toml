@@ -10,6 +10,7 @@ dependencies = [
     "tzdata>=2024.1",  # zoneinfo на Windows не имеет системной базы таймзон
     "pydantic>=2",     # строгая валидация JSON от LLM (schema + repair-цикл)
     "cryptography>=42",  # AES-256-GCM для PII (в stdlib AES нет)
+    "httpx>=0.27",       # Bot API клиент: таймауты/пул + MockTransport в тестах
 ]
 
 [project.optional-dependencies]
