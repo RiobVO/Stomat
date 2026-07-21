@@ -127,13 +127,16 @@ def doctor_a(admin_engine, clinic_a) -> uuid.UUID:
 
 
 def make_doctor(admin_engine, clinic_id, buffer_min: int = 10,
-                intervals: dict | None = None) -> uuid.UUID:
+                intervals: dict | None = None, name: str | None = None) -> uuid.UUID:
+    from navbat.crypto import encrypt_text
+
     did = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO doctor (id, clinic_id, working_intervals, buffer_min) "
-                 "VALUES (:id, :cid, :wi, :buf)"),
+            text("INSERT INTO doctor (id, clinic_id, name_encrypted, working_intervals, "
+                 "buffer_min) VALUES (:id, :cid, :name, :wi, :buf)"),
             {"id": did, "cid": clinic_id,
+             "name": encrypt_text(name) if name else None,
              "wi": json.dumps(intervals or WORKING_INTERVALS), "buf": buffer_min},
         )
     return did
