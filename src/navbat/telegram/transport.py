@@ -74,6 +74,9 @@ class WebhookServer:
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:  # noqa: N802 — API stdlib
+                # тело вычитывается ДО любого ответа: отказ (403/404) с
+                # непрочитанным телом рвёт сокет на полуслове (WinError 10053)
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 if self.path != outer.path:
                     self._respond(404)
                     return
@@ -81,8 +84,7 @@ class WebhookServer:
                     self._respond(403)
                     return
                 try:
-                    length = int(self.headers.get("Content-Length", 0))
-                    update = json.loads(self.rfile.read(length))
+                    update = json.loads(body)
                     with tenant_transaction(outer._session_factory,
                                             outer._clinic_id) as session:
                         enqueue(session, update["update_id"], _chat_of(update), update)
