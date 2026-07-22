@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -24,9 +24,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.calendar.api import ResyncRequired
 from navbat.db.base import tenant_transaction
+from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.replies import Button, Reply, t
+from navbat.scheduling.engine import SchedulingEngine
+from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.calendar")
+
+RELOCATION_SCAN_DAYS = 14  # горизонт поиска слота для вытесненной записи
 
 
 class CalendarSync:
@@ -36,11 +42,13 @@ class CalendarSync:
         clinic_id: uuid.UUID,
         api,  # GoogleCalendarAPI | FakeCalendarAPI
         notifier: EscalationNotifier | None = None,
+        tg_api=None,  # TelegramAPI — уведомления пациентам о переносах
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._api = api
         self._notifier = notifier or LoggingEscalation()
+        self._tg_api = tg_api
 
     def sync_doctor(self, doctor_id: uuid.UUID) -> None:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -52,8 +60,11 @@ class CalendarSync:
         if row is None or not row.gcal_calendar_id:
             return  # врач без календаря не синхронизируется
         self._export(doctor_id, row.gcal_calendar_id)
-        self._import(doctor_id, row.gcal_calendar_id, row.gcal_sync_token,
-                     row.buffer_min)
+        moved = self._import(doctor_id, row.gcal_calendar_id, row.gcal_sync_token,
+                             row.buffer_min)
+        if moved:
+            # конфликт-переносы породили новые/отменённые записи — доносим в GCal
+            self._export(doctor_id, row.gcal_calendar_id)
 
     # ── Экспорт: БД → GCal ───────────────────────────────────────────────
 
@@ -112,24 +123,27 @@ class CalendarSync:
     # ── Импорт: GCal → БД ────────────────────────────────────────────────
 
     def _import(self, doctor_id: uuid.UUID, calendar_id: str,
-                sync_token: str | None, buffer_min: int) -> None:
+                sync_token: str | None, buffer_min: int) -> bool:
+        """GCal → БД. True — были конфликт-переносы (нужен повторный экспорт)."""
         try:
             events, next_token = self._api.list_events(calendar_id,
                                                        sync_token=sync_token)
         except ResyncRequired:
             log.warning("календарь %s: syncToken протух, full resync", calendar_id)
             events, next_token = self._api.list_events(calendar_id, sync_token=None)
+        moved = False
         for event in events:
             if _own_marker(event):
                 self._reconcile_own(calendar_id, event)
             else:
-                self._apply_manual(doctor_id, event, buffer_min)
+                moved = self._apply_manual(doctor_id, event, buffer_min) or moved
         if next_token:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
                 session.execute(
                     text("UPDATE doctor SET gcal_sync_token = :token WHERE id = :id"),
                     {"token": next_token, "id": doctor_id},
                 )
+        return moved
 
     def _reconcile_own(self, calendar_id: str, event: dict) -> None:
         """Своё событие правили руками — истина в БД, откатываем с алертом."""
@@ -162,7 +176,9 @@ class CalendarSync:
                                   "событие записи сдвинули в календаре — вернул; "
                                   "переносы — через бота", {"appointment": str(row.id)})
 
-    def _apply_manual(self, doctor_id: uuid.UUID, event: dict, buffer_min: int) -> None:
+    def _apply_manual(self, doctor_id: uuid.UUID, event: dict,
+                      buffer_min: int) -> bool:
+        """Одно ручное событие → БД. True — случился конфликт-перенос."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             existing = session.execute(
                 text("SELECT id, status, lower(time_range) AS start, "
@@ -179,19 +195,42 @@ class CalendarSync:
                              "gcal_event_id = NULL WHERE id = :id"),
                         {"id": existing.id},
                     )
-            return
+            return False
 
         span = _event_span(event, self._clinic_tz())
         if span is None:
             log.warning("событие %s без времени — пропущено", event.get("id"))
-            return
-        start, finish = span
+            return False
         all_day = "date" in event.get("start", {})
+        manual_buffer = 0 if all_day else buffer_min
+        if self._try_write_manual(existing, doctor_id, event["id"], span, manual_buffer):
+            return False
+        # ручное легло поверх записи бота — приоритет у ручного (BRIEF):
+        # двигаем записи бота, потом вставляем блок повторно
+        moved = self._resolve_conflict(doctor_id, span, manual_buffer)
+        if not self._try_write_manual(existing, doctor_id, event["id"], span,
+                                      manual_buffer):
+            # живой hold: не трогаем (пациент выбирает прямо сейчас),
+            # hold истечёт за 3 минуты — заберём блок следующим циклом
+            log.warning("событие %s: конфликт не разрешён (живой hold?) — "
+                        "повтор следующим циклом", event["id"])
+        return moved
+
+    def _try_write_manual(self, existing, doctor_id: uuid.UUID, event_id: str,
+                          span: tuple[datetime, datetime], buffer_min: int) -> bool:
+        start, finish = span
         try:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                # протухшие hold физически блокируют exclusion — экспирим
+                session.execute(
+                    text("UPDATE appointment SET status = 'expired' "
+                         "WHERE doctor_id = :doctor AND status = 'hold' "
+                         "AND hold_expires_at <= now()"),
+                    {"doctor": doctor_id},
+                )
                 if existing:
                     if (existing.start, existing.finish) == span:
-                        return
+                        return True
                     session.execute(
                         text("UPDATE appointment "
                              "SET time_range = tstzrange(:start, :finish, '[)') "
@@ -209,20 +248,135 @@ class CalendarSync:
                                     'booked', 'gcal_import', :event)
                         """),
                         {"doctor": doctor_id, "start": start, "finish": finish,
-                         # all-day блок и так закрывает день — буфер не нужен
-                         "buffer": 0 if all_day else buffer_min,
-                         "event": event["id"]},
+                         "buffer": buffer_min, "event": event_id},
                     )
                 session.flush()
+            return True
         except IntegrityError:
-            # ручное событие легло поверх записи бота — конфликт (приоритет
-            # ручного); разрешение — следующий шаг инкремента
-            self._resolve_conflict(doctor_id, event, span, buffer_min)
+            return False
 
-    def _resolve_conflict(self, doctor_id: uuid.UUID, event: dict,
-                          span: tuple[datetime, datetime], buffer_min: int) -> None:
-        log.error("конфликт ручного события %s с записью бота — разрешение "
-                  "ещё не реализовано", event.get("id"))
+    # ── Conflict-resolution: приоритет ручного ───────────────────────────
+
+    def _resolve_conflict(self, doctor_id: uuid.UUID,
+                          span: tuple[datetime, datetime],
+                          manual_buffer: int) -> bool:
+        victims = self._find_victims(doctor_id, span, manual_buffer)
+        booked = [v for v in victims if v.status == "booked"]
+        if not booked:
+            return False
+        scheduler = SchedulingEngine(self._session_factory, self._clinic_id,
+                                     actor="calendar_sync")
+        for victim in booked:
+            self._relocate(scheduler, doctor_id, victim, span, manual_buffer)
+        return True
+
+    def _find_victims(self, doctor_id: uuid.UUID,
+                      span: tuple[datetime, datetime], manual_buffer: int):
+        """Записи бота, пересекающиеся с ручным блоком (буферы обеих сторон)."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            return session.execute(
+                text("""
+                    SELECT a.id, a.status, a.patient_id, a.tg_chat_id, a.service_id,
+                           a.buffer_min, lower(a.time_range) AS start,
+                           s.name AS service
+                    FROM appointment a LEFT JOIN service s ON s.id = a.service_id
+                    WHERE a.doctor_id = :doctor AND a.source != 'gcal_import'
+                      AND a.status IN ('hold', 'booked')
+                      AND tstzrange(lower(a.time_range),
+                                    upper(a.time_range)
+                                    + (a.buffer_min * interval '1 minute'), '[)')
+                          && tstzrange(:start,
+                                       :finish + (:buffer * interval '1 minute'), '[)')
+                """),
+                {"doctor": doctor_id, "start": span[0], "finish": span[1],
+                 "buffer": manual_buffer},
+            ).all()
+
+    def _relocate(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,
+                  victim, span: tuple[datetime, datetime], manual_buffer: int) -> None:
+        scheduler.cancel(victim.id)
+        tz = self._clinic_tz()
+        old_label = f"{victim.start.astimezone(tz):%d.%m %H:%M}"
+        lang = self._chat_lang(victim.tg_chat_id)
+
+        new_start, alternatives = self._relocation_slot(
+            scheduler, doctor_id, victim, span, manual_buffer, tz)
+        if new_start is None:
+            self._notify_patient(victim.tg_chat_id,
+                                 Reply(t("conflict_cancelled", lang, old=old_label)))
+            self._notifier.notify(victim.tg_chat_id or 0,
+                                  f"запись {old_label} вытеснена ручным событием, "
+                                  f"перенести некуда — отменена",
+                                  {"appointment": str(victim.id)})
+            return
+
+        new_id = scheduler.hold(doctor_id, victim.service_id, new_start,
+                                patient_id=victim.patient_id,
+                                tg_chat_id=victim.tg_chat_id)
+        scheduler.confirm(new_id)
+        new_label = f"{new_start.astimezone(tz):%d.%m %H:%M}"
+        if victim.tg_chat_id:
+            # кнопки альтернатив работают через resched-поток FSM
+            with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                conversation = load_conversation(session, victim.tg_chat_id)
+                conversation.state = "resched_offer_slots"
+                conversation.context.update({
+                    "resched_id": str(new_id), "resched_doctor": str(doctor_id),
+                    "service": victim.service, "date": str(new_start.astimezone(tz).date()),
+                    "lang": lang,
+                })
+                save_conversation(session, conversation)
+            buttons = tuple(
+                Button(f"{alt.astimezone(tz):%d.%m %H:%M}", f"reslot:{alt.isoformat()}")
+                for alt in alternatives
+            )
+            self._notify_patient(victim.tg_chat_id,
+                                 Reply(t("conflict_moved", lang,
+                                         old=old_label, new=new_label), buttons))
+        self._notifier.notify(victim.tg_chat_id or 0,
+                              f"запись {old_label} вытеснена ручным событием — "
+                              f"перенесена на {new_label}",
+                              {"appointment": str(new_id)})
+
+    def _relocation_slot(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,
+                         victim, span: tuple[datetime, datetime],
+                         manual_buffer: int, tz: ZoneInfo):
+        """Ближайший слот, не задевающий ручной блок (он ещё не в БД)."""
+        if victim.service_id is None:
+            return None, []
+        manual_lo = span[0]
+        manual_hi = span[1] + timedelta(minutes=manual_buffer)
+        victim_buffer = timedelta(minutes=victim.buffer_min)
+        first_day = victim.start.astimezone(tz).date()
+        for offset in range(RELOCATION_SCAN_DAYS + 1):
+            day = first_day + timedelta(days=offset)
+            slots = [
+                slot for slot in scheduler.find_free_slots(doctor_id,
+                                                           victim.service_id, day)
+                if not (slot.start < manual_hi and manual_lo < slot.end + victim_buffer)
+            ]
+            if slots:
+                return slots[0].start, [s.start for s in slots[1:5]]
+        return None, []
+
+    def _chat_lang(self, chat_id: int | None) -> str:
+        if not chat_id:
+            return "ru"
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            lang = session.execute(
+                text("SELECT context ->> 'lang' FROM conversation "
+                     "WHERE tg_chat_id = :chat"),
+                {"chat": chat_id},
+            ).scalar_one_or_none()
+        return lang or "ru"
+
+    def _notify_patient(self, chat_id: int | None, reply: Reply) -> None:
+        if self._tg_api is None or not chat_id:
+            log.warning("уведомление пациенту %s не доставлено (нет TG): %s",
+                        chat_id, reply.text)
+            return
+        send_reply(self._tg_api, self._session_factory, self._clinic_id,
+                   chat_id, reply)
 
     def _clinic_tz(self) -> ZoneInfo:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
