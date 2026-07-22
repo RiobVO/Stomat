@@ -1,0 +1,140 @@
+"""Экспорт записей бота в Google Calendar: insert/patch/delete, идемпотентность.
+
+GCal мокается FakeCalendarAPI (используется и в импорт/конфликт-тестах).
+"""
+from __future__ import annotations
+
+import itertools
+
+from sqlalchemy import text
+
+from conftest import at_tashkent, next_monday
+from navbat.calendar.sync import CalendarSync
+from navbat.scheduling.engine import SchedulingEngine
+
+CAL = "doc-cal"
+
+
+class FakeCalendarAPI:
+    """Память вместо Google: события с семантикой showDeleted (cancelled)."""
+
+    def __init__(self) -> None:
+        self.calendars: dict[str, dict[str, dict]] = {}
+        self._ids = itertools.count(1)
+        self.insert_calls = 0
+        self.patch_calls = 0
+
+    def events(self, calendar_id: str = CAL) -> dict[str, dict]:
+        return self.calendars.setdefault(calendar_id, {})
+
+    def insert_event(self, calendar_id: str, body: dict) -> dict:
+        self.insert_calls += 1
+        event = {**body, "id": f"ev{next(self._ids)}", "status": "confirmed"}
+        self.events(calendar_id)[event["id"]] = event
+        return event
+
+    def patch_event(self, calendar_id: str, event_id: str, body: dict) -> dict:
+        self.patch_calls += 1
+        self.events(calendar_id)[event_id].update(body)
+        return self.events(calendar_id)[event_id]
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        event = self.events(calendar_id).get(event_id)
+        if event:
+            event["status"] = "cancelled"
+
+    def list_events(self, calendar_id: str, sync_token=None, time_min=None):
+        return list(self.events(calendar_id).values()), "SYNC"
+
+    def free_busy(self, calendar_id: str, time_min: str, time_max: str) -> bool:
+        return False
+
+
+def bind_calendar(admin_engine, doctor_id, calendar_id=CAL) -> None:
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET gcal_calendar_id = :cal WHERE id = :id"),
+                     {"cal": calendar_id, "id": doctor_id})
+
+
+def make_sync(app_session_factory, clinic_id, api=None):
+    api = api or FakeCalendarAPI()
+    return CalendarSync(app_session_factory, clinic_id, api=api), api
+
+
+def book(app_session_factory, clinic_id, doctor_id, service_id, day, hhmm,
+         chat_id=100):
+    sched = SchedulingEngine(app_session_factory, clinic_id)
+    appointment_id = sched.hold(doctor_id, service_id, at_tashkent(day, hhmm),
+                                tg_chat_id=chat_id)
+    sched.confirm(appointment_id)
+    return appointment_id, sched
+
+
+def event_row(admin_engine):
+    with admin_engine.begin() as conn:
+        return conn.execute(text(
+            "SELECT gcal_event_id, gcal_synced_range, time_range FROM appointment"
+        )).one()
+
+
+def test_booked_appointment_exported_once(app_session_factory, admin_engine,
+                                          clinic_a, doctor_a, service_cleaning):
+    bind_calendar(admin_engine, doctor_a)
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+
+    sync.sync_doctor(doctor_a)
+    events = list(api.events().values())
+    assert len(events) == 1
+    event = events[0]
+    assert "cleaning" in event["summary"].lower() or "Чистка" in event["summary"]
+    appointment = event_row(admin_engine)
+    assert event["extendedProperties"]["private"]["navbat_id"]
+    assert appointment.gcal_event_id == event["id"]
+
+    sync.sync_doctor(doctor_a)  # повторный прогон — без дублей и patch'ей
+    assert api.insert_calls == 1
+    assert api.patch_calls == 0
+
+
+def test_cancelled_appointment_removes_event(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a, service_cleaning):
+    bind_calendar(admin_engine, doctor_a)
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, next_monday(), "09:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+
+    sched.cancel(appointment_id)
+    sync.sync_doctor(doctor_a)
+
+    assert all(e["status"] == "cancelled" for e in api.events().values())
+    assert event_row(admin_engine).gcal_event_id is None
+
+
+def test_bot_reschedule_patches_event(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a, service_cleaning):
+    bind_calendar(admin_engine, doctor_a)
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, next_monday(), "09:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+
+    new_start = at_tashkent(next_monday(), "11:00")
+    sched.reschedule(appointment_id, new_start)
+    sync.sync_doctor(doctor_a)
+
+    assert api.insert_calls == 1, "перенос — это patch, не новое событие"
+    assert api.patch_calls == 1
+    event = next(iter(api.events().values()))
+    assert event["start"]["dateTime"] == new_start.isoformat()
+
+
+def test_doctor_without_calendar_is_skipped(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a, service_cleaning):
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "09:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)  # календарь не привязан
+    assert api.insert_calls == 0
