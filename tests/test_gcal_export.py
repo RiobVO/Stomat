@@ -16,16 +16,36 @@ CAL = "doc-cal"
 
 
 class FakeCalendarAPI:
-    """Память вместо Google: события с семантикой showDeleted (cancelled)."""
+    """Память вместо Google: события с семантикой showDeleted (cancelled).
+
+    list_events отдаёт всё содержимое (full sync) — импорт обязан быть
+    идемпотентным, поэтому инкрементальность фейку не нужна.
+    """
 
     def __init__(self) -> None:
         self.calendars: dict[str, dict[str, dict]] = {}
         self._ids = itertools.count(1)
         self.insert_calls = 0
         self.patch_calls = 0
+        self.list_tokens: list[str | None] = []  # какие syncToken передавали
 
     def events(self, calendar_id: str = CAL) -> dict[str, dict]:
         return self.calendars.setdefault(calendar_id, {})
+
+    def seed_manual_event(self, start=None, end=None, day=None,
+                          calendar_id: str = CAL, summary: str = "Ручная запись") -> str:
+        """Событие, созданное админом руками (без navbat_id)."""
+        event_id = f"manual{next(self._ids)}"
+        if day is not None:  # all-day: date без dateTime, end эксклюзивен
+            from datetime import timedelta
+            times = {"start": {"date": day.isoformat()},
+                     "end": {"date": (day + timedelta(days=1)).isoformat()}}
+        else:
+            times = {"start": {"dateTime": start.isoformat()},
+                     "end": {"dateTime": end.isoformat()}}
+        self.events(calendar_id)[event_id] = {
+            "id": event_id, "status": "confirmed", "summary": summary, **times}
+        return event_id
 
     def insert_event(self, calendar_id: str, body: dict) -> dict:
         self.insert_calls += 1
@@ -44,7 +64,8 @@ class FakeCalendarAPI:
             event["status"] = "cancelled"
 
     def list_events(self, calendar_id: str, sync_token=None, time_min=None):
-        return list(self.events(calendar_id).values()), "SYNC"
+        self.list_tokens.append(sync_token)
+        return list(self.events(calendar_id).values()), f"SYNC{len(self.list_tokens)}"
 
     def free_busy(self, calendar_id: str, time_min: str, time_max: str) -> bool:
         return False
