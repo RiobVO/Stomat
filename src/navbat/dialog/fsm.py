@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -54,6 +55,12 @@ _BOOKING_KEYS = ("service", "date", "time_ref", "doctor_id", "doctor_miss",
                  "resched_id", "resched_doctor", "cancel_id", "cancel_when")
 
 
+class SlotGuard(Protocol):
+    """Финальная перепроверка слота во внешнем источнике (GCal) перед confirm."""
+
+    def is_free(self, doctor_id: uuid.UUID, start: datetime, end: datetime) -> bool: ...
+
+
 class DialogEngine:
     def __init__(
         self,
@@ -62,12 +69,14 @@ class DialogEngine:
         extractor: Extractor,
         notifier: EscalationNotifier | None = None,
         scheduler: SchedulingEngine | None = None,
+        slot_guard: SlotGuard | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._extractor = extractor
         self._notifier = notifier or LoggingEscalation()
         self._sched = scheduler or SchedulingEngine(session_factory, clinic_id)
+        self._slot_guard = slot_guard
         self._tz: ZoneInfo | None = None
 
     # ── Входные точки ────────────────────────────────────────────────────
@@ -361,6 +370,12 @@ class DialogEngine:
                             appointment_id: uuid.UUID) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
+        if self._slot_guard is not None and not self._guard_allows(session,
+                                                                   appointment_id):
+            # календарь уже занят (sync ещё не довёз) — слот не наш
+            self._sched.cancel(appointment_id)
+            ctx.pop("appointment_id", None)
+            return self._offer_slots(session, conv, note="slot_taken")
         try:
             self._sched.confirm(appointment_id)
         except HoldExpiredError:
@@ -539,6 +554,14 @@ class DialogEngine:
 
     def _today(self, session: Session) -> date:
         return datetime.now(self._clinic_tz(session)).date()
+
+    def _guard_allows(self, session: Session, appointment_id: uuid.UUID) -> bool:
+        row = session.execute(
+            text("SELECT doctor_id, lower(time_range) AS start, "
+                 "upper(time_range) AS finish FROM appointment WHERE id = :id"),
+            {"id": appointment_id},
+        ).one()
+        return self._slot_guard.is_free(row.doctor_id, row.start, row.finish)
 
     def _find_active_appointment(self, session: Session, chat_id: int):
         """Ближайшая будущая активная запись чата (для переноса/отмены)."""
