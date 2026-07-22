@@ -6,8 +6,8 @@
 ## Статус проекта
 
 - Ф0 (спайк) — ЗАКРЫТ. Гипотеза «дешёвый GPT понимает узбекский» подтверждена.
-- Ф1: инкременты 1 (scheduling engine) и 2 (FSM + slot-filling) — ЗАКРЫТЫ.
-  Текущий: инкремент 3 (channel adapter).
+- Ф1: инкременты 1 (scheduling engine), 2 (FSM + slot-filling),
+  3 (channel adapter) — ЗАКРЫТЫ. Текущий: инкремент 4 (календарь).
 
 ## Что проверено (факты, не трогать)
 
@@ -57,8 +57,17 @@
       спайка — 410 фраз как бесплатные NLU-тесты; имя/телефон до confirm:
       телефон нормализуется к 998…, hash с clinic.salt, имя AES-256-GCM через
       NAVBAT_ENC_KEY; грабли: Windows-пайпы суют BOM в stdin демо)
-- [ ] 3. Channel adapter (← текущий; Telegram + durable queue + per-chat lock)
-- [ ] 4. Календарь (Google push + conflict-resolution + OAuth)
+- [x] 3. Channel adapter — ГОТОВ (140 тестов, серия 8/8; очередь message_queue
+      в миграции 0003: ack после обработки (двухфазный клейм), дедуп по
+      UNIQUE(clinic_id, update_id), per-chat порядок решает сам клейм-запрос
+      (NOT EXISTS + SKIP LOCKED, advisory lock не нужен); транспорты polling и
+      webhook (stdlib HTTP-сервер, secret-заголовок) за одной очередью;
+      тонкий httpx-клиент Bot API без asyncio-фреймворков; callback_data
+      длиннее 64 байт — кнопки нумеруются, map в conversation.context,
+      устаревшая кнопка → повтор шага; greeting-дисклеймер первого контакта;
+      эскалации в tg_admin_chat_id; запуск: `python -m navbat.telegram
+      --clinic <uuid>`, NLU по умолчанию фикстурный — live-smoke бесплатен)
+- [ ] 4. Календарь (← текущий; Google push + conflict-resolution + OAuth)
 - [ ] 5. Напоминания, надёжность, наблюдаемость
 
 Обновляй чек-лист по мере готовности инкрементов.
@@ -67,10 +76,13 @@
 
 - Репозиторий: https://github.com/RiobVO/Stomat (origin). Коммиты пушить, не копить локально.
 - БД: `docker compose up -d` → postgres :5434 (5433 занят соседним проектом).
-- Тесты: `python -m pytest` (102 зелёных после инкр. 2). Конкурентные тесты —
+- Тесты: `python -m pytest` (140 зелёных после инкр. 3). Конкурентные тесты —
   гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит.
 - Демо диалога: `python -m navbat.demo` (фейковый NLU, без API);
   `--real` = платный gpt-4o-mini, только по явной команде.
+- TG-канал: `python -m navbat.telegram --clinic <uuid>` (long polling; токен —
+  в clinic.tg_bot_token_encrypted, нужен NAVBAT_ENC_KEY). NLU фикстурный,
+  `--real` — платный.
 - NLU-харнесс: `cd spike_nlu; python eval.py` (OPENAI_API_KEY в user-env).
 
 ## Хвосты (мелкое, не забыть)
