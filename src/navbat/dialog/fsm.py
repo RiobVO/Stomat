@@ -45,6 +45,10 @@ from navbat.scheduling.errors import (
     SlotTakenError,
 )
 
+def _looks_like_question(message: str) -> bool:
+    return "?" in message or len(message.strip()) > 30
+
+
 MAX_NLU_FAILURES = 2     # подряд; дальше — эскалация
 SLOTS_PER_REPLY = 4      # кнопок со временем в одном ответе
 NEAREST_DAY_SCAN = 14    # дней вперёд при поиске свободного дня
@@ -337,11 +341,13 @@ class DialogEngine:
     # ── Имя и телефон нового пациента ────────────────────────────────────
 
     def _on_name(self, session: Session, conv: Conversation, message: str) -> Reply:
-        extraction = self._try_extract(message)
-        if extraction is not None and extraction.intent == "question":
-            answer = self._answer_question(session, conv, extraction)
-            return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
-        # имя — свободный текст, NLU его не знает (и не должен)
+        # PII: имя не должно уходить в LLM — NLU дёргаем только для
+        # вопросоподобного текста (прерывание вбок)
+        if _looks_like_question(message):
+            extraction = self._try_extract(message)
+            if extraction is not None and extraction.intent == "question":
+                answer = self._answer_question(session, conv, extraction)
+                return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
         conv.context["pending_name"] = message.strip()
         conv.state = "awaiting_phone"
         return Reply(t("ask_phone", self._lang(conv)))
