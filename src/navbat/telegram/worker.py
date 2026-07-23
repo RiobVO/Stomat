@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, t
@@ -35,6 +36,8 @@ log = logging.getLogger("navbat.telegram")
 
 IDLE_WAIT = 0.3        # сек между опросами пустой очереди
 RECLAIM_EVERY = 60.0   # сек между реклеймами зависших processing
+RATE_MAX = 5           # сообщений на чат за окно — дальше NLU не дёргаем
+RATE_WINDOW_SECONDS = 10
 
 
 class UpdateWorker:
@@ -95,6 +98,15 @@ class UpdateWorker:
             message = payload["message"]
             chat_id = message["chat"]["id"]
             if "text" in message:
+                verdict = self._rate_verdict(chat_id, claimed.id)
+                if verdict == "silent":
+                    return
+                if verdict == "warn":
+                    with tenant_transaction(self._session_factory,
+                                            self._clinic_id) as session:
+                        lang = get_chat_lang(session, chat_id)
+                    self._send(chat_id, Reply(t("rate_limited", lang)))
+                    return
                 reply = self._dialog.handle_text(chat_id, message["text"])
             else:
                 # фото/стикер/голос: язык чата ещё может быть неизвестен — обе строки
@@ -110,6 +122,25 @@ class UpdateWorker:
             self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
+
+    def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
+        """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).
+
+        Считаются сообщения, принятые ДО текущего: нормальный пациент
+        с 2–3 сообщениями подряд лимита не чувствует.
+        """
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            previous = session.execute(
+                text("SELECT count(*) FROM message_queue "
+                     "WHERE tg_chat_id = :chat AND id < :current "
+                     "AND created_at > now() - make_interval(secs => :window)"),
+                {"chat": chat_id, "current": current_queue_id,
+                 "window": RATE_WINDOW_SECONDS},
+            ).scalar_one()
+        if previous < RATE_MAX:
+            return "ok"
+        # предупреждаем один раз (ровно на превышении), дальше молчим
+        return "warn" if previous == RATE_MAX else "silent"
 
     # ── Кнопки: короткий callback_data + map в контексте ─────────────────
 
