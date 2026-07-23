@@ -303,6 +303,11 @@ class DialogEngine:
         if kind == "stale":
             # нажата кнопка из устаревшего сообщения — повторяем текущий шаг
             return self._with_reprompt(session, conv, Reply(t("stale_button", lang)))
+        if kind == "attend":
+            # кнопка «Приду» из напоминания — просто подтверждение
+            return Reply(t("attend_ok", lang))
+        if kind == "remind_cancel":
+            return self._start_cancel_by_id(session, conv, rest)
         return Reply(t("other_fallback", lang))
 
     def _on_slot_chosen(self, session: Session, conv: Conversation,
@@ -458,9 +463,23 @@ class DialogEngine:
     # ── Отмена ───────────────────────────────────────────────────────────
 
     def _start_cancel(self, session: Session, conv: Conversation) -> Reply:
+        return self._begin_cancel(
+            session, conv, self._find_active_appointment(session, conv.chat_id))
+
+    def _start_cancel_by_id(self, session: Session, conv: Conversation,
+                            appointment_id: str) -> Reply:
+        """Кнопка «Отменить» из напоминания: запись известна по id."""
+        appointment = session.execute(
+            text("SELECT id, lower(time_range) AS start FROM appointment "
+                 "WHERE id = CAST(:id AS uuid) AND status IN ('hold', 'booked')"),
+            {"id": appointment_id},
+        ).one_or_none()
+        return self._begin_cancel(session, conv, appointment)
+
+    def _begin_cancel(self, session: Session, conv: Conversation,
+                      appointment) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
-        appointment = self._find_active_appointment(session, conv.chat_id)
         if appointment is None:
             self._clear_booking(conv)
             conv.state = "idle"
