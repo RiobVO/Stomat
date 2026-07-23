@@ -145,6 +145,13 @@ TEMPLATES = {
     "btn_after_tomorrow": {"ru": "Послезавтра", "uz": "Indinga"},
     "btn_yes": {"ru": "Да, отменить", "uz": "Ha, bekor qilish"},
     "btn_no": {"ru": "Нет, оставить", "uz": "Yo'q, qoldirish"},
+    "reminder": {
+        "ru": "Напоминаем: вы записаны на {service} {when}. Ждём вас!",
+        "uz": "Eslatamiz: siz {service} uchun {when} ga yozilgansiz. "
+              "Sizni kutamiz!",
+    },
+    "btn_attend": {"ru": "✓ Приду", "uz": "✓ Kelaman"},
+    "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Yozuvni bekor qilish"},
     "greeting": {
         "ru": "Здравствуйте! Я виртуальный администратор клиники «{clinic}»: "
               "помогу записаться, перенести или отменить приём. "
