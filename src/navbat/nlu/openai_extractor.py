@@ -21,13 +21,17 @@ _PROMPT_PATH = Path(__file__).parent / "prompts" / "system.md"
 REPAIR_TRIES = 1
 
 
+LLM_TIMEOUT = 8.0  # BRIEF: таймаут LLM 8 сек → graceful degradation
+
+
 class OpenAIExtractor:
-    def __init__(self, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, on_usage=None) -> None:
         # ленивый импорт: openai — optional-зависимость [llm]
         from openai import OpenAI
 
-        self._client = OpenAI()
+        self._client = OpenAI(timeout=LLM_TIMEOUT, max_retries=2)
         self._model = model
+        self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
         self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
@@ -53,6 +57,9 @@ class OpenAIExtractor:
                     temperature=0,
                     max_completion_tokens=2000,
                 )
+                if self._on_usage and response.usage:
+                    self._on_usage(response.usage.prompt_tokens,
+                                   response.usage.completion_tokens)
                 message = response.choices[0].message
                 if message.refusal or message.parsed is None:
                     raise ExtractionError(message.refusal or "пустой parsed")

@@ -34,7 +34,6 @@ def test_question_during_name_collection_reasks_name(app_session_factory, admin_
     engine = DialogEngine(app_session_factory, clinic_a, extractor=FakeExtractor(script=[
         extr(service="cleaning", date_ref=explicit(next_monday())),
         extr(intent="question", service="cleaning"),
-        ExtractionError("имя"),
     ]))
     offer = engine.handle_text(CHAT, "чистку в понедельник")
     engine.handle_action(CHAT, slot_buttons(offer)[0].action)
