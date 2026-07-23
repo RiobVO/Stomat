@@ -43,13 +43,14 @@ class FakeTelegramAPI:
 
 def make_worker(app_session_factory, clinic_id, script,
                 api: FakeTelegramAPI | None = None,
-                notifier: RecordingNotifier | None = None):
+                notifier: RecordingNotifier | None = None,
+                admin_chat_id: int | None = None):
     api = api or FakeTelegramAPI()
     notifier = notifier or RecordingNotifier()
     dialog = DialogEngine(app_session_factory, clinic_id,
                           extractor=FakeExtractor(script=script), notifier=notifier)
     worker = UpdateWorker(app_session_factory, clinic_id, dialog=dialog,
-                          api=api, notifier=notifier)
+                          api=api, notifier=notifier, admin_chat_id=admin_chat_id)
     return worker, api, notifier
 
 

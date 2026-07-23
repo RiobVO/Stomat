@@ -23,6 +23,7 @@ from navbat.dialog.conversation import (
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
+from navbat.stats import collect_daily_stats, render_stats, should_send_digest
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.reminders")
@@ -43,12 +44,14 @@ class ReminderService:
         tg_api=None,
         notifier: EscalationNotifier | None = None,
         offsets: tuple[timedelta, ...] = DEFAULT_OFFSETS,
+        digest_chat_id: int | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._tg_api = tg_api
         self._notifier = notifier or LoggingEscalation()
         self._offsets = offsets
+        self._digest_chat_id = digest_chat_id
 
     # ── Reconciliation: БД — единственный источник ───────────────────────
 
@@ -149,12 +152,47 @@ class ReminderService:
             )
         return True
 
+    # ── Вечерняя сводка админу ───────────────────────────────────────────
+
+    def maybe_send_digest(self, now_local=None) -> bool:
+        """Раз в день после DIGEST_HOUR; отметка — clinic.last_digest_date."""
+        if self._digest_chat_id is None or self._tg_api is None:
+            return False
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            row = session.execute(text(
+                "SELECT timezone, last_digest_date FROM clinic "
+                "WHERE id = current_setting('app.clinic_id')::uuid"
+            )).one()
+        tz = ZoneInfo(row.timezone)
+        moment = now_local or datetime.now(tz)
+        if not should_send_digest(moment, row.last_digest_date):
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            stats = collect_daily_stats(session, moment.date(), tz)
+        try:
+            self._tg_api.send_message(self._digest_chat_id,
+                                      render_stats(stats, moment.date()))
+        except Exception as e:
+            log.warning("вечерняя сводка не доставлена: %s", e)
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(
+                text("UPDATE clinic SET last_digest_date = :day "
+                     "WHERE id = current_setting('app.clinic_id')::uuid"),
+                {"day": moment.date()},
+            )
+        return True
+
     def run(self, stop: threading.Event, interval: float = 30.0) -> None:
         while not stop.is_set():
             started = time.monotonic()
             try:
                 self.reconcile()
                 self.send_due()
+                self.maybe_send_digest()
             except Exception:
                 log.exception("цикл напоминаний упал — продолжаю")
             elapsed = time.monotonic() - started

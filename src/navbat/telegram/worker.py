@@ -48,12 +48,14 @@ class UpdateWorker:
         dialog: DialogEngine,
         api,  # TelegramAPI | FakeTelegramAPI (duck typing для тестов)
         notifier: EscalationNotifier | None = None,
+        admin_chat_id: int | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._dialog = dialog
         self._api = api
         self._notifier = notifier or LoggingEscalation()
+        self._admin_chat_id = admin_chat_id
 
     def process_one(self) -> bool:
         """Обрабатывает один апдейт; False — очередь пуста."""
@@ -98,6 +100,10 @@ class UpdateWorker:
             message = payload["message"]
             chat_id = message["chat"]["id"]
             if "text" in message:
+                if (message["text"].strip() == "/stats"
+                        and chat_id == self._admin_chat_id):
+                    self._send(chat_id, self._stats_reply())
+                    return
                 verdict = self._rate_verdict(chat_id, claimed.id)
                 if verdict == "silent":
                     return
@@ -122,6 +128,21 @@ class UpdateWorker:
             self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
+
+    def _stats_reply(self) -> Reply:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from navbat.stats import collect_daily_stats, render_stats
+
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            tz = ZoneInfo(session.execute(
+                text("SELECT timezone FROM clinic "
+                     "WHERE id = current_setting('app.clinic_id')::uuid")
+            ).scalar_one())
+            today = datetime.now(tz).date()
+            stats = collect_daily_stats(session, today, tz)
+        return Reply(render_stats(stats, today))
 
     def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
         """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).
