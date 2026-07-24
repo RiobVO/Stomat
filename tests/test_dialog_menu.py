@@ -163,6 +163,23 @@ def test_menu_cancel_confirms_active_booking(app_session_factory, admin_engine,
     assert appt_status(admin_engine) == "cancelled"
 
 
+
+def test_menu_cancel_mid_booking_cancels_hold_directly(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # «Отменить» посреди оформления = отказ от него: без вопроса-подтверждения
+    engine, extractor = counting_engine(
+        app_session_factory, clinic_a,
+        script=[extr(service="cleaning", date_ref=explicit(next_monday()))])
+    offer = engine.handle_text(CHAT, "хочу чистку в понедельник")
+    engine.handle_action(CHAT, slot_buttons(offer)[0].action)
+    assert fsm_state(admin_engine) == "awaiting_name"
+
+    reply = engine.handle_text(CHAT, TEMPLATES["btn_menu_cancel"]["ru"])
+    assert reply.text == TEMPLATES["cancel_done"]["ru"]
+    assert appt_status(admin_engine) == "cancelled"
+    assert fsm_state(admin_engine) == "idle"
+    assert len(extractor.calls) == 1, "кнопка в NLU не уходит"
+
 def test_menu_in_escalated_state_stays_blocked(app_session_factory, admin_engine,
                                                clinic_a):
     engine, _ = counting_engine(

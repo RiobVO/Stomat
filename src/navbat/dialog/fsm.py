@@ -162,18 +162,22 @@ class DialogEngine:
         greeting = t("greeting", lang, clinic=self._clinic_name(session))
         return Reply(f"{greeting}\n\n{t('menu_hint', lang)}", menu=menu_rows(lang))
 
-    def _abort_pending(self, conv: Conversation) -> None:
+    def _abort_pending(self, conv: Conversation) -> bool:
         """Меню/старт посреди сценария = явная смена намерения.
 
         Висящий hold отпускаем: бронь слота не должна переживать отказ
-        от записи. Протухший/уже отменённый hold — цель и так достигнута.
+        от записи. Возвращает True, если живой hold действительно отменён
+        (протухший/уже отменённый — нет: цель и так была достигнута).
         """
+        cancelled = False
         appt = conv.context.get("appointment_id")
         if appt:
             with suppress(AppointmentNotFoundError):
                 self._sched.cancel(uuid.UUID(appt))
+                cancelled = True  # достигается только если cancel не бросил
         self._clear_booking(conv)
         conv.state = "idle"
+        return cancelled
 
     def _on_menu(self, session: Session, conv: Conversation, key: str) -> Reply:
         """Диспетчер нажатий reply-кнопок главного меню."""
@@ -185,8 +189,10 @@ class DialogEngine:
             return self._start_reschedule(session, conv,
                                           self._empty_extraction(conv, "reschedule"))
         if key == "btn_menu_cancel":
-            # hold незавершённой записи отпускаем: «Отменить» из меню = отказ от неё
-            self._abort_pending(conv)
+            # «Отменить» посреди оформления = отказ от него: hold отпущен,
+            # отвечаем «запись отменена» сразу — подтверждать нечего
+            if self._abort_pending(conv):
+                return Reply(t("cancel_done", self._lang(conv)))
             return self._start_cancel(session, conv)
         if key == "btn_menu_prices":
             return self._with_reprompt(session, conv,
