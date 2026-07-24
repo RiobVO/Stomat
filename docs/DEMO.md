@@ -10,7 +10,7 @@
 
    ```powershell
    docker compose up -d
-   python -m navbat.onboard --demo          # демо-клиника (идемпотентно)
+   python -m navbat.onboard --demo          # демо-клиника + токен из .env (идемпотентно)
    python -m navbat --check                 # все строки должны быть [OK]
    ```
 

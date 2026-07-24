@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from navbat.crypto import encrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
+from navbat.envfile import load_env_file
 
 log = logging.getLogger("navbat.onboard")
 
@@ -141,14 +142,22 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="показать клинику")
     args = parser.parse_args()
 
+    load_env_file()
     os.environ.setdefault("NAVBAT_ENC_KEY", DEV_ENC_KEY)
     session_factory = make_session_factory(make_app_engine())
 
     if args.demo:
         seed_demo_clinic(session_factory)
         print(f"[OK] демо-клиника: {DEMO_CLINIC_ID}")
-        print(f"Дальше: python -m navbat.onboard --clinic {DEMO_CLINIC_ID} "
-              f"--tg-token <токен от @BotFather> --admin-chat <ваш chat id>")
+        # токен из .env: восстановление после pytest — одна команда
+        token = args.tg_token or os.environ.get("NAVBAT_TG_TOKEN")
+        admin = args.admin_chat or os.environ.get("NAVBAT_TG_ADMIN_CHAT")
+        if token:
+            set_telegram(session_factory, DEMO_CLINIC_ID, token,
+                         int(admin) if admin else None)
+        else:
+            print(f"Дальше: python -m navbat.onboard --clinic {DEMO_CLINIC_ID} "
+                  f"--tg-token <токен от @BotFather> --admin-chat <ваш chat id>")
         return 0
     if not args.clinic:
         parser.error("нужен --clinic (или --demo)")
