@@ -46,6 +46,12 @@
   Оплата/рассрочка → question + service:null.
 - date_ref словарь: today|tomorrow|after_tomorrow|next_week|weekday_*|explicit_DD.MM|null.
   Срочность («срочно», «hozir», «tez yordam») → today.
+- Телефон пациента — ТОЛЬКО кнопкой Telegram «Поделиться контактом»
+  (request_contact, без fallback на ручной ввод — решение пользователя).
+  Принимается только собственный контакт (contact.user_id == from.id);
+  чужой контакт/текст → повтор кнопки; свой контакт с не-998 номером →
+  эскалация админу (тупик). Текст на шагах имени/телефона в NLU не уходит
+  (PII), кроме вопросоподобного.
 - Tenancy: multi-tenant код + RLS, гоняем один инстанс. Хостинг наш.
 - Стек: Python, PostgreSQL (Docker), SQLAlchemy + Alembic, pytest. Без Redis.
 - Коммерция: разовая настройка + месячное обслуживание.
@@ -108,7 +114,7 @@
 
 - Репозиторий: https://github.com/RiobVO/Stomat (origin). Коммиты пушить, не копить локально.
 - БД: `docker compose up -d` → postgres :5434 (5433 занят соседним проектом).
-- Тесты: `python -m pytest` (203 зелёных после инкр. 5). Конкурентные тесты —
+- Тесты: `python -m pytest` (215 зелёных). Конкурентные тесты —
   гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит.
   CI: GitHub Actions гоняет сьют ×3 на каждый push.
 - ВСЯ СИСТЕМА: `python -m navbat` (супервизор: канал+календарь+напоминания;
@@ -118,15 +124,6 @@
   +--calendar | --list). Сценарий показа стоматологу: docs/DEMO.md.
 - Демо диалога в консоли: `python -m navbat.demo` (фейковый NLU, без API).
 - NLU-харнесс: `cd spike_nlu; python eval.py` (OPENAI_API_KEY в user-env).
-
-## Следующая задача (решение пользователя)
-
-- Телефон пациента — НЕ ручным вводом, а кнопкой Telegram «Поделиться
-  контактом» (KeyboardButton request_contact=True, это ReplyKeyboardMarkup,
-  не inline — модель Reply придётся расширить). Принимать ТОЛЬКО собственный
-  контакт отправителя: contact.user_id == message.from.id; чужой контакт или
-  ручной текст — отклонять с просьбой нажать кнопку. Затронет: шаг
-  awaiting_phone в FSM, модель Reply/рендер в worker, тесты телефона.
 
 ## Хвосты (мелкое, не забыть)
 

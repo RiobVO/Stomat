@@ -99,6 +99,16 @@ class UpdateWorker:
         if "message" in payload:
             message = payload["message"]
             chat_id = message["chat"]["id"]
+            if "contact" in message:
+                # телефон кнопкой request_contact; принимаем только собственный
+                # контакт отправителя. Rate-limit не нужен: NLU не дёргается.
+                contact = message["contact"]
+                own = (contact.get("user_id") is not None
+                       and contact["user_id"] == message.get("from", {}).get("id"))
+                reply = self._dialog.handle_contact(
+                    chat_id, contact.get("phone_number", ""), own)
+                self._send(chat_id, reply)
+                return
             if "text" in message:
                 if (message["text"].strip() == "/stats"
                         and chat_id == self._admin_chat_id):
@@ -197,4 +207,6 @@ def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID
                 {"mapping": json.dumps(mapping, ensure_ascii=False), "chat": chat_id},
             )
         buttons = tuple(Button(b.label, f"a:{i}") for i, b in enumerate(buttons, 1))
-    api.send_message(chat_id, reply.text, buttons)
+    api.send_message(chat_id, reply.text, buttons,
+                     contact_request=reply.contact_request,
+                     remove_keyboard=reply.remove_keyboard)

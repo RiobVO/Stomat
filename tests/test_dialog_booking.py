@@ -91,7 +91,7 @@ def test_happy_path_new_patient(app_session_factory, admin_engine, clinic_a,
     assert not ask_phone.buttons
     assert fsm_state(admin_engine) == "awaiting_phone"
 
-    done = engine.handle_text(CHAT, "+998 90 123-45-67")
+    done = engine.handle_contact(CHAT, "998901234567", own=True)
     assert appt_status(admin_engine) == "booked"
     assert fsm_state(admin_engine) == "idle"
     assert "09:00" in done.text
@@ -223,7 +223,7 @@ def test_hold_expired_during_collection_reoffers(app_session_factory, admin_engi
             "UPDATE appointment SET hold_expires_at = now() - interval '1 minute'"
         ))
 
-    reply = engine.handle_text(CHAT, "+998901234567")
+    reply = engine.handle_contact(CHAT, "+998901234567", own=True)
     assert slot_buttons(reply), "после протухшей брони — свежие слоты"
     assert fsm_state(admin_engine) == "booking_offer_slots"
 

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from conftest import next_monday
 from navbat.db.base import tenant_transaction
 from navbat.dialog.fsm import DialogEngine
-from navbat.dialog.replies import TEMPLATES
+from navbat.dialog.replies import Reply, TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import TelegramAPIError
 from navbat.telegram.queue import enqueue
@@ -26,14 +26,17 @@ UPDATE_SEQ = iter(range(1, 10_000))
 class FakeTelegramAPI:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, tuple]] = []
+        self.keyboards: list[tuple] = []  # (contact_request, remove_keyboard)
         self.answered: list[str] = []
         self.send_failures = 0  # сколько ближайших send уронить
 
-    def send_message(self, chat_id, text, buttons=()):
+    def send_message(self, chat_id, text, buttons=(),
+                     contact_request=None, remove_keyboard=False):
         if self.send_failures > 0:
             self.send_failures -= 1
             raise TelegramAPIError("эмуляция падения сети")
         self.sent.append((chat_id, text, tuple(buttons)))
+        self.keyboards.append((contact_request, remove_keyboard))
         return {"message_id": len(self.sent)}
 
     def answer_callback_query(self, callback_query_id):
@@ -162,6 +165,70 @@ def test_greeting_disclaimer_on_first_contact_only(app_session_factory, clinic_a
     greeting_marker = "виртуальный администратор"
     assert greeting_marker in api.sent[0][1].lower()
     assert greeting_marker not in api.sent[1][1].lower()
+
+
+# ── Контакт: телефон кнопкой request_contact ─────────────────────────────────
+
+class RecordingDialog:
+    """Стаб FSM: фиксирует вызовы handle_contact, отвечает заданным Reply."""
+
+    def __init__(self, reply: Reply) -> None:
+        self.reply = reply
+        self.contacts: list[tuple[int, str, bool]] = []
+
+    def handle_contact(self, chat_id, phone, own):
+        self.contacts.append((chat_id, phone, own))
+        return self.reply
+
+
+def put_contact(app_session_factory, clinic_id, phone, contact_user_id,
+                from_id, chat_id=CHAT):
+    update_id = next(UPDATE_SEQ)
+    contact = {"phone_number": phone}
+    if contact_user_id is not None:
+        contact["user_id"] = contact_user_id
+    payload = {"update_id": update_id,
+               "message": {"chat": {"id": chat_id}, "from": {"id": from_id},
+                           "contact": contact}}
+    with tenant_transaction(app_session_factory, clinic_id) as session:
+        enqueue(session, update_id, chat_id, payload)
+
+
+def contact_worker(app_session_factory, clinic_id, reply: Reply):
+    api = FakeTelegramAPI()
+    dialog = RecordingDialog(reply)
+    worker = UpdateWorker(app_session_factory, clinic_id, dialog=dialog, api=api)
+    return worker, api, dialog
+
+
+def test_contact_update_routed_with_own_flag(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a, service_cleaning):
+    worker, api, dialog = contact_worker(
+        app_session_factory, clinic_a,
+        Reply("Записал!", remove_keyboard=True))
+    put_contact(app_session_factory, clinic_a, "998901234567",
+                contact_user_id=CHAT, from_id=CHAT)
+    worker.process_one()
+
+    assert dialog.contacts == [(CHAT, "998901234567", True)]
+    assert api.keyboards[-1] == (None, True), "remove_keyboard дошёл до API"
+    assert queue_statuses(admin_engine) == ["done"]
+
+
+def test_foreign_or_missing_user_id_not_own(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a, service_cleaning):
+    reply = Reply("Нажмите кнопку:", contact_request="📱")
+    worker, api, dialog = contact_worker(app_session_factory, clinic_a, reply)
+
+    put_contact(app_session_factory, clinic_a, "998905555555",
+                contact_user_id=999, from_id=CHAT)   # чужой контакт
+    put_contact(app_session_factory, clinic_a, "998905555555",
+                contact_user_id=None, from_id=CHAT)  # контакт не из Telegram
+    worker.process_one()
+    worker.process_one()
+
+    assert [own for _, _, own in dialog.contacts] == [False, False]
+    assert api.keyboards[-1] == ("📱", False), "кнопка предложена снова"
 
 
 # ── Не-текст и служебные апдейты ─────────────────────────────────────────────

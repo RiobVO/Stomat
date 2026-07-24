@@ -17,8 +17,15 @@ class Button:
 
 @dataclass(frozen=True)
 class Reply:
+    """contact_request и buttons взаимоисключающие: в Telegram reply_markup один.
+
+    contact_request — label кнопки «Поделиться контактом» (ReplyKeyboardMarkup,
+    request_contact=True); remove_keyboard убирает reply-клавиатуру.
+    """
     text: str
     buttons: tuple[Button, ...] = ()
+    contact_request: str | None = None
+    remove_keyboard: bool = False
 
 
 MEDICAL_DISCLAIMER = {
@@ -70,12 +77,22 @@ TEMPLATES = {
         "uz": "Ismingiz nima?",
     },
     "ask_phone": {
-        "ru": "Оставьте номер телефона (например, 90 123-45-67):",
-        "uz": "Telefon raqamingizni qoldiring (masalan, 90 123-45-67):",
+        "ru": "Нажмите кнопку ниже — она отправит ваш номер телефона:",
+        "uz": "Pastdagi tugmani bosing — u telefon raqamingizni yuboradi:",
     },
-    "bad_phone": {
-        "ru": "Не разобрал номер. Напишите в формате 90 123-45-67.",
-        "uz": "Raqamni tushunmadim. 90 123-45-67 ko'rinishida yozing.",
+    "press_contact_button": {
+        "ru": "Чтобы оставить номер, нажмите кнопку ниже:",
+        "uz": "Raqam qoldirish uchun pastdagi tugmani bosing:",
+    },
+    "foreign_contact": {
+        "ru": "Это контакт другого человека. Нажмите кнопку — она отправит "
+              "ваш собственный номер:",
+        "uz": "Bu boshqa odamning kontakti. Tugmani bosing — u o'zingizning "
+              "raqamingizni yuboradi:",
+    },
+    "btn_share_contact": {
+        "ru": "📱 Отправить мой номер",
+        "uz": "📱 Raqamimni yuborish",
     },
     "booked": {
         "ru": "Записал: {service}, {when}{doctor}. Ждём вас!",
