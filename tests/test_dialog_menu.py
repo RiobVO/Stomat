@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from conftest import at_tashkent, next_monday
+from conftest import at_tashkent, make_service, next_monday
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import TEMPLATES, menu_rows
 from navbat.nlu.extractor import ExtractionError
@@ -192,3 +192,47 @@ def test_menu_in_escalated_state_stays_blocked(app_session_factory, admin_engine
     reply = engine.handle_text(CHAT, TEMPLATES["btn_menu_book"]["ru"])
     assert reply.text == TEMPLATES["escalated"]["ru"], \
         "кнопки не обходят стоп-состояние"
+
+
+# ── Прайс и язык ─────────────────────────────────────────────────────────────
+
+def test_menu_prices_lists_catalog(app_session_factory, admin_engine, clinic_a,
+                                   service_cleaning):
+    # услуга с ценой и услуга без цены — обе в списке
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE service SET price = 200000 WHERE name = 'cleaning'"))
+    make_service(admin_engine, clinic_a, "checkup", 30)  # без цены
+
+    engine, extractor = counting_engine(app_session_factory, clinic_a)
+    start_with_menu(engine)
+    reply = engine.handle_text(CHAT, TEMPLATES["btn_menu_prices"]["ru"])
+    assert "Чистка — 200 000 сум" in reply.text
+    assert "Осмотр — цену уточнит администратор" in reply.text
+    assert extractor.calls == []
+
+
+def test_menu_prices_mid_booking_reprompts_step(app_session_factory, admin_engine,
+                                                clinic_a, doctor_a, service_cleaning):
+    # вопрос цены посреди записи — ответ + повтор шага, сценарий не сброшен
+    engine, _ = counting_engine(app_session_factory, clinic_a,
+                                script=[extr(service="cleaning")])
+    engine.handle_text(CHAT, "хочу чистку")          # booking_collect, спросил дату
+    reply = engine.handle_text(CHAT, TEMPLATES["btn_menu_prices"]["ru"])
+    assert TEMPLATES["price_header"]["ru"] in reply.text
+    assert TEMPLATES["ask_date"]["ru"] in reply.text, "шаг повторён"
+    assert any(b.action.startswith("date:") for b in reply.buttons)
+    assert fsm_state(admin_engine) == "booking_collect"
+
+
+def test_menu_lang_switch_mid_booking_reprompts_in_new_lang(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    engine, _ = counting_engine(app_session_factory, clinic_a,
+                                script=[extr(service="cleaning")])
+    engine.handle_text(CHAT, "хочу чистку")          # booking_collect (ru)
+    screen = engine.handle_text(CHAT, TEMPLATES["btn_menu_lang"]["ru"])
+    assert [b.action for b in screen.buttons] == ["lang:uz", "lang:ru"]
+
+    reply = engine.handle_action(CHAT, "lang:uz")
+    assert TEMPLATES["lang_changed"]["uz"] in reply.text
+    assert TEMPLATES["ask_date"]["uz"] in reply.text, "повтор шага на новом языке"
+    assert fsm_state(admin_engine) == "booking_collect"
