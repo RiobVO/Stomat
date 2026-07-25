@@ -57,3 +57,40 @@ def test_valid_extraction_resets_failure_counter(app_session_factory, admin_engi
 
     assert not notifier.calls
     assert fsm_state(admin_engine) != "escalated"
+
+
+# ── Выход из escalated: /start пациентом (Ф1.5, BRIEF разд. 14.A) ────────────
+
+def test_start_releases_escalated_and_resets_counter(app_session_factory,
+                                                     admin_engine, clinic_a,
+                                                     doctor_a, service_cleaning):
+    engine, notifier = _engine(app_session_factory, clinic_a, [
+        ExtractionError("raz"), ExtractionError("dva"), ExtractionError("tri"),
+    ])
+    engine.handle_action(CHAT, "lang:ru")  # язык выбран кнопкой
+    engine.handle_text(CHAT, "абракадабра")
+    engine.handle_text(CHAT, "опять абракадабра")
+    assert fsm_state(admin_engine) == "escalated"
+
+    released = engine.handle_text(CHAT, "/start")
+    assert fsm_state(admin_engine) == "idle"
+    assert released.menu, "после разморозки — приветствие с главным меню"
+
+    # счётчик сброшен: одиночный сбой NLU — переспрос, не мгновенная эскалация
+    engine.handle_text(CHAT, "снова абракадабра")
+    assert fsm_state(admin_engine) != "escalated"
+    assert len(notifier.calls) == 1, "повторной эскалации нет"
+
+
+def test_start_in_escalated_without_lang_shows_lang_screen(app_session_factory,
+                                                           admin_engine, clinic_a,
+                                                           doctor_a, service_cleaning):
+    engine, _ = _engine(app_session_factory, clinic_a,
+                        [ExtractionError("raz"), ExtractionError("dva")])
+    engine.handle_text(CHAT, "абракадабра")
+    engine.handle_text(CHAT, "опять абракадабра")
+    assert fsm_state(admin_engine) == "escalated"
+
+    reply = engine.handle_text(CHAT, "/start")
+    assert fsm_state(admin_engine) == "idle"
+    assert [b.action for b in reply.buttons] == ["lang:uz", "lang:ru"]

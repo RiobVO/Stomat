@@ -23,7 +23,7 @@ from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.fsm import DialogEngine
-from navbat.dialog.replies import Button, Reply, t
+from navbat.dialog.replies import Button, Reply, menu_rows, t
 from navbat.telegram.queue import (
     QueuedUpdate,
     claim_next,
@@ -114,6 +114,10 @@ class UpdateWorker:
                         and chat_id == self._admin_chat_id):
                     self._send(chat_id, self._stats_reply())
                     return
+                if (message["text"].split()[:1] == ["/release"]
+                        and chat_id == self._admin_chat_id):
+                    self._send(chat_id, self._release_reply(message["text"]))
+                    return
                 verdict = self._rate_verdict(chat_id, claimed.id)
                 if verdict == "silent":
                     return
@@ -138,6 +142,37 @@ class UpdateWorker:
             self._send(chat_id, reply)
             return
         log.info("служебный апдейт %d: пропущен", claimed.update_id)
+
+    def _release_reply(self, command: str) -> Reply:
+        """Снятие эскалации админом: /release <chat_id> (Ф1.5, BRIEF разд. 14.A).
+
+        Conversation → idle, счётчик сбоев NLU в ноль; пациенту уходит главное
+        меню — он должен видеть, что бот снова отвечает.
+        """
+        parts = command.split()
+        if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+            return Reply("Формат: /release <chat_id> (число из алерта эскалации)")
+        target = int(parts[1])
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            row = session.execute(
+                text("SELECT fsm_state, context ->> 'lang' AS lang "
+                     "FROM conversation WHERE tg_chat_id = :chat"),
+                {"chat": target},
+            ).one_or_none()
+            if row is None:
+                return Reply(f"Чат {target} не найден.")
+            if row.fsm_state != "escalated":
+                return Reply(f"Чат {target} не в эскалации "
+                             f"(состояние: {row.fsm_state}).")
+            session.execute(
+                text("UPDATE conversation SET fsm_state = 'idle', "
+                     "context = jsonb_set(context, '{nlu_failures}', '0', true) "
+                     "WHERE tg_chat_id = :chat"),
+                {"chat": target},
+            )
+        lang = row.lang or "ru"
+        self._send(target, Reply(t("menu_hint", lang), menu=menu_rows(lang)))
+        return Reply(f"[OK] эскалация снята: чат {target}")
 
     def _stats_reply(self) -> Reply:
         from datetime import datetime
