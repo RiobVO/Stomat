@@ -26,6 +26,27 @@ def day_intervals(
     return [(_at(day, start, tz), _at(day, end, tz)) for start, end in spans]
 
 
+def open_bounds(
+    intervals_per_doctor: list[dict],
+    day: date,
+    tz: ZoneInfo,
+    holidays: set[date],
+) -> Interval | None:
+    """Рабочее окно дня клиники: [min(начал); max(концов)] по всем графикам.
+
+    Для «сейчас закрыто»: окно накрывает обед (клиника физически открыта
+    между сменами); праздник/выходной/нет врачей → None — закрыто весь день.
+    """
+    intervals = [
+        span
+        for working in intervals_per_doctor
+        for span in day_intervals(working, day, tz, holidays)
+    ]
+    if not intervals:
+        return None
+    return min(lo for lo, _ in intervals), max(hi for _, hi in intervals)
+
+
 def slot_candidates(
     intervals: list[Interval], duration_min: int, step_min: int = 30
 ) -> list[Interval]:

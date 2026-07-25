@@ -66,6 +66,11 @@ TEMPLATES = {
         "ru": "На {asked} свободного времени нет. Ближайшее — {date}:",
         "uz": "{asked} kuni bo'sh vaqt yo'q. Eng yaqini — {date}:",
     },
+    # запрос «на сегодня» вне рабочего окна: не врать «всё занято» (P0)
+    "closed_now_slots": {
+        "ru": "Сейчас клиника закрыта.\nБлижайшее свободное время — {date}:",
+        "uz": "Hozir klinika yopiq.\nEng yaqin bo'sh vaqt — {date}:",
+    },
     "no_slots_at_all": {
         "ru": "В ближайшие две недели свободного времени нет — передаю администратору.",
         "uz": "Yaqin ikki haftada bo'sh vaqt yo'q — administratorga uzataman.",

@@ -18,7 +18,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Protocol
+from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -41,6 +41,7 @@ from navbat.dialog.replies import (
 )
 from navbat.nlu.extractor import ExtractionError, Extractor
 from navbat.nlu.schema import Extraction
+from navbat.scheduling.calendar_rules import open_bounds
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import (
     AppointmentNotFoundError,
@@ -85,6 +86,7 @@ class DialogEngine:
         notifier: EscalationNotifier | None = None,
         scheduler: SchedulingEngine | None = None,
         slot_guard: SlotGuard | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
@@ -92,6 +94,8 @@ class DialogEngine:
         self._notifier = notifier or LoggingEscalation()
         self._sched = scheduler or SchedulingEngine(session_factory, clinic_id)
         self._slot_guard = slot_guard
+        # источник «сейчас» (aware UTC); тесты инжектируют фиксированный момент
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._tz: ZoneInfo | None = None
 
     # ── Входные точки ────────────────────────────────────────────────────
@@ -351,14 +355,15 @@ class DialogEngine:
             prefix = t(note, lang) + "\n" + prefix
         ctx["date"] = day.isoformat()
         conv.state = "booking_offer_slots"
-        return Reply(prefix + self._offer_body(lang, asked, day), tuple(buttons))
+        return Reply(prefix + self._offer_body(session, lang, asked, day),
+                     tuple(buttons))
 
     def _collect_slots(self, session: Session, doctors, service_id,
                        asked: date, time_ref: str | None):
         """Первый день (от asked, до 2 недель вперёд) с подходящими слотами."""
         tz = self._clinic_tz(session)
         start_day = max(asked, self._today(session))
-        now_utc = datetime.now(timezone.utc)
+        now_utc = self._clock()
         for offset in range(NEAREST_DAY_SCAN + 1):
             day = start_day + timedelta(days=offset)
             slots = [
@@ -373,11 +378,30 @@ class DialogEngine:
                 return day, slots
         return start_day, []
 
-    def _offer_body(self, lang: str, asked: date, day: date) -> str:
+    def _offer_body(self, session: Session, lang: str, asked: date, day: date) -> str:
+        today = self._today(session)
+        if max(asked, today) == today and self._closed_now(session):
+            # пациент метит в «сегодня», а клиника вне рабочего окна: говорим
+            # прямо «закрыто» — иначе ответ читается как «всё занято» (P0 BRIEF)
+            return t("closed_now_slots", lang, date=f"{day:%d.%m}")
         if day == asked:
             return t("offer_slots", lang, date=f"{day:%d.%m}")
         return t("offer_slots_other_day", lang, asked=f"{asked:%d.%m}",
                  date=f"{day:%d.%m}")
+
+    def _closed_now(self, session: Session) -> bool:
+        """Клиника вне рабочего окна прямо сейчас (выходной/праздник — тоже)."""
+        today = self._today(session)
+        schedules = session.execute(
+            text("SELECT working_intervals FROM doctor")).scalars().all()
+        holidays = set(session.execute(
+            text("SELECT date FROM holiday WHERE date = :day"), {"day": today}
+        ).scalars())
+        bounds = open_bounds(schedules, today, self._clinic_tz(session), holidays)
+        if bounds is None:
+            return True
+        lo, hi = bounds
+        return not (lo <= self._clock() < hi)
 
     # ── Кнопки (callback-actions) ────────────────────────────────────────
 
@@ -590,7 +614,8 @@ class DialogEngine:
         prefix = t(note, lang) + "\n" if note else ""
         ctx["date"] = day.isoformat()
         conv.state = "resched_offer_slots"
-        return Reply(prefix + self._offer_body(lang, asked, day), tuple(buttons))
+        return Reply(prefix + self._offer_body(session, lang, asked, day),
+                     tuple(buttons))
 
     def _on_reslot(self, session: Session, conv: Conversation, start_iso: str) -> Reply:
         ctx = conv.context
@@ -738,7 +763,7 @@ class DialogEngine:
         return self._tz
 
     def _today(self, session: Session) -> date:
-        return datetime.now(self._clinic_tz(session)).date()
+        return self._clock().astimezone(self._clinic_tz(session)).date()
 
     def _guard_allows(self, session: Session, appointment_id: uuid.UUID) -> bool:
         row = session.execute(
