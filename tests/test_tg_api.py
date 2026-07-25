@@ -56,11 +56,15 @@ def test_send_message_builds_contact_keyboard():
     assert markup["one_time_keyboard"] is True
 
 
-def test_send_message_remove_keyboard():
+def test_send_message_builds_persistent_menu_keyboard():
     api, requests = make_api(lambda req, n: ok_response({"message_id": 1}))
-    api.send_message(100, "Записал!", remove_keyboard=True)
+    api.send_message(100, "Меню:", menu=(("📅 Записаться",),
+                                         ("💰 Цены", "🌐 Til / Язык")))
     markup = json.loads(requests[0].content)["reply_markup"]
-    assert markup == {"remove_keyboard": True}
+    assert markup["keyboard"] == [[{"text": "📅 Записаться"}],
+                                  [{"text": "💰 Цены"}, {"text": "🌐 Til / Язык"}]]
+    assert markup["resize_keyboard"] is True
+    assert markup["is_persistent"] is True
 
 
 def test_send_message_without_buttons_has_no_markup():

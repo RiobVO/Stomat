@@ -209,4 +209,4 @@ def send_reply(api, session_factory: sessionmaker[Session], clinic_id: uuid.UUID
         buttons = tuple(Button(b.label, f"a:{i}") for i, b in enumerate(buttons, 1))
     api.send_message(chat_id, reply.text, buttons,
                      contact_request=reply.contact_request,
-                     remove_keyboard=reply.remove_keyboard)
+                     menu=reply.menu)

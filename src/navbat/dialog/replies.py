@@ -17,17 +17,16 @@ class Button:
 
 @dataclass(frozen=True)
 class Reply:
-    """contact_request, buttons, menu и remove_keyboard взаимоисключающие:
+    """contact_request, buttons и menu взаимоисключающие:
     в Telegram reply_markup один.
 
     contact_request — label кнопки «Поделиться контактом» (ReplyKeyboardMarkup,
-    request_contact=True); remove_keyboard убирает reply-клавиатуру;
-    menu — ряды label'ов постоянной reply-клавиатуры главного меню.
+    request_contact=True); menu — ряды label'ов постоянной reply-клавиатуры
+    главного меню.
     """
     text: str
     buttons: tuple[Button, ...] = ()
     contact_request: str | None = None
-    remove_keyboard: bool = False
     menu: tuple[tuple[str, ...], ...] | None = None
 
 
