@@ -65,6 +65,9 @@ def render(reply: Reply) -> list[str]:
     actions = [b.action for b in reply.buttons]
     for idx, button in enumerate(reply.buttons, 1):
         print(f"  {idx}. {button.label}")
+    if reply.menu:
+        labels = " | ".join(label for row in reply.menu for label in row)
+        print(f"  [меню — введите текст кнопки]: {labels}")
     if reply.contact_request:
         actions.append(CONTACT_ACTION)
         print(f"  {len(actions)}. [{reply.contact_request}] "
