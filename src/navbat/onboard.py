@@ -3,13 +3,12 @@
     python -m navbat.onboard --demo                                  # демо-клиника
     python -m navbat.onboard --clinic <uuid> --tg-token <token> --admin-chat <id>
     python -m navbat.onboard --clinic <uuid> --doctor <uuid> --calendar <gcal-id>
-    python -m navbat.onboard --clinic <uuid> --holidays 2026 --hayit 20.03 --hayit 27.05
     python -m navbat.onboard --clinic <uuid> --list                  # врачи/услуги
 
-Праздники — ежегодная процедура: госпраздники РУз фиксированные, Хайиты
-плавающие (даты объявляются — задаются через --hayit). Секреты пишутся
-шифртекстом (NAVBAT_ENC_KEY); webhook-secret генерируется автоматически
-при записи токена.
+Выходные дни клиника закрывает сама командой /dayoff в админ-чате —
+предзаполненного календаря праздников нет (решение 06.06.2026). Секреты
+пишутся шифртекстом (NAVBAT_ENC_KEY); webhook-secret генерируется
+автоматически при записи токена.
 """
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ import os
 import secrets
 import sys
 import uuid
-from datetime import date, datetime
 
 from sqlalchemy import text
 
@@ -46,17 +44,6 @@ SERVICES = {  # (длительность мин, цена сум|None)
     "implant": (90, None), "crown": (60, None), "whitening": (60, 500_000),
     "braces": (60, None), "checkup": (30, 150_000), "xray": (15, 80_000),
 }
-# Нерабочие праздничные дни РУз (ТК): фиксированные даты (месяц, день).
-# Хайиты плавающие — даты объявляются ежегодно, задаются через --hayit.
-UZ_HOLIDAYS = (
-    ((1, 1), "Новый год"),
-    ((3, 8), "Международный женский день"),
-    ((3, 21), "Навруз"),
-    ((5, 9), "День памяти и почестей"),
-    ((9, 1), "День независимости"),
-    ((10, 1), "День учителя и наставника"),
-    ((12, 8), "День Конституции"),
-)
 
 
 def seed_demo_clinic(session_factory) -> None:
@@ -86,43 +73,6 @@ def seed_demo_clinic(session_factory) -> None:
                 {"c": DEMO_CLINIC_ID, "name": name, "dur": duration, "price": price},
             )
     log.info("демо-клиника создана: 2 врача, %d услуг", len(SERVICES))
-
-
-def seed_holidays(session_factory, clinic_id: uuid.UUID, year: int,
-                  hayit_ddmm: list[str]) -> tuple[int, int]:
-    """Праздники года: фиксированные госпраздники РУз + хайиты из параметра.
-
-    Идемпотентно: уже существующие даты клиники пропускаются (свои записи
-    клиники не трогаем). Возвращает (добавлено, пропущено).
-    """
-    wanted = [(date(year, month, day), reason)
-              for (month, day), reason in UZ_HOLIDAYS]
-    wanted += [(datetime.strptime(f"{raw}.{year}", "%d.%m.%Y").date(), "Хайит")
-               for raw in hayit_ddmm]
-    added = skipped = 0
-    with tenant_transaction(session_factory, clinic_id) as session:
-        existing = set(session.execute(
-            text("SELECT date FROM holiday WHERE date BETWEEN :lo AND :hi"),
-            {"lo": date(year, 1, 1), "hi": date(year, 12, 31)},
-        ).scalars())
-        for day, reason in wanted:
-            if day in existing:
-                skipped += 1
-                continue
-            session.execute(
-                text("INSERT INTO holiday (clinic_id, date, reason) "
-                     "VALUES (:c, :d, :r)"),
-                {"c": clinic_id, "d": day, "r": reason},
-            )
-            added += 1
-    return added, skipped
-
-
-def report_holidays(year: int, added: int, skipped: int,
-                    hayit_ddmm: list[str]) -> None:
-    print(f"[OK] праздники {year}: добавлено {added}, уже было {skipped}")
-    if not hayit_ddmm:
-        print("Хайиты не заданы — добавьте --hayit DD.MM, когда даты объявят.")
 
 
 def set_telegram(session_factory, clinic_id: uuid.UUID, token: str,
@@ -191,10 +141,6 @@ def main() -> int:
     parser.add_argument("--admin-chat", type=int)
     parser.add_argument("--doctor", type=uuid.UUID)
     parser.add_argument("--calendar")
-    parser.add_argument("--holidays", type=int, metavar="YEAR",
-                        help="заполнить праздники года (госпраздники РУз)")
-    parser.add_argument("--hayit", action="append", default=[], metavar="DD.MM",
-                        help="дата хайита (плавающий; флаг повторяемый)")
     parser.add_argument("--list", action="store_true", help="показать клинику")
     args = parser.parse_args()
 
@@ -205,11 +151,6 @@ def main() -> int:
     if args.demo:
         seed_demo_clinic(session_factory)
         print(f"[OK] демо-клиника: {DEMO_CLINIC_ID}")
-        # праздники текущего года — демо реалистичнее; --holidays переопределяет
-        year = args.holidays or date.today().year
-        added, skipped = seed_holidays(session_factory, DEMO_CLINIC_ID, year,
-                                       args.hayit)
-        report_holidays(year, added, skipped, args.hayit)
         # токен из .env: восстановление после pytest — одна команда
         token = args.tg_token or os.environ.get("NAVBAT_TG_TOKEN")
         admin = args.admin_chat or os.environ.get("NAVBAT_TG_ADMIN_CHAT")
@@ -228,19 +169,10 @@ def main() -> int:
     if args.doctor and args.calendar:
         bind_calendar(session_factory, args.clinic, args.doctor, args.calendar)
         return 0
-    if args.holidays:
-        try:
-            added, skipped = seed_holidays(session_factory, args.clinic,
-                                           args.holidays, args.hayit)
-        except ValueError as e:
-            sys.exit(f"[FAIL] дата хайита: ожидается DD.MM ({e})")
-        report_holidays(args.holidays, added, skipped, args.hayit)
-        return 0
     if args.list:
         show_clinic(session_factory, args.clinic)
         return 0
-    parser.error("укажите действие: --tg-token | --doctor+--calendar "
-                 "| --holidays | --list")
+    parser.error("укажите действие: --tg-token | --doctor+--calendar | --list")
     return 1
 
 

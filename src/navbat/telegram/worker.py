@@ -15,6 +15,8 @@ import logging
 import threading
 import time
 import uuid
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
@@ -118,6 +120,14 @@ class UpdateWorker:
                         and chat_id == self._admin_chat_id):
                     self._send(chat_id, self._release_reply(message["text"]))
                     return
+                if (message["text"].split()[:1] == ["/dayoff"]
+                        and chat_id == self._admin_chat_id):
+                    self._send(chat_id, self._dayoff_reply(message["text"]))
+                    return
+                if (message["text"].split()[:1] == ["/dayopen"]
+                        and chat_id == self._admin_chat_id):
+                    self._send(chat_id, self._dayopen_reply(message["text"]))
+                    return
                 verdict = self._rate_verdict(chat_id, claimed.id)
                 if verdict == "silent":
                     return
@@ -174,10 +184,94 @@ class UpdateWorker:
         self._send(target, Reply(t("menu_hint", lang), menu=menu_rows(lang)))
         return Reply(f"[OK] эскалация снята: чат {target}")
 
-    def _stats_reply(self) -> Reply:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+    # ── Выходные дни: клиника сама закрывает/открывает (Ф1.5) ────────────
 
+    def _clinic_today(self) -> date:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            tz = ZoneInfo(session.execute(
+                text("SELECT timezone FROM clinic "
+                     "WHERE id = current_setting('app.clinic_id')::uuid")
+            ).scalar_one())
+        return datetime.now(tz).date()
+
+    def _dayoff_reply(self, command: str) -> Reply:
+        """Закрыть день: /dayoff DD.MM [причина].
+
+        Предзаполненного календаря праздников нет (решение 06.06.2026):
+        кому нужен выходной — сам закрывает день из админ-чата. Закрытый
+        день уважают и слоты, и «сейчас закрыто» (таблица holiday).
+        """
+        parts = command.split(maxsplit=2)
+        today = self._clinic_today()
+        target = self._parse_ddmm(parts[1], today) if len(parts) > 1 else None
+        if target is None:
+            return Reply(self._dayoff_usage(today))
+        reason = parts[2].strip() if len(parts) > 2 else None
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            exists = session.execute(
+                text("SELECT 1 FROM holiday WHERE date = :d"), {"d": target}
+            ).scalar_one_or_none()
+            if exists:
+                return Reply(f"{target:%d.%m.%Y} уже выходной.")
+            session.execute(
+                text("INSERT INTO holiday (clinic_id, date, reason) VALUES "
+                     "(current_setting('app.clinic_id')::uuid, :d, :r)"),
+                {"d": target, "r": reason},
+            )
+        label = f" ({reason})" if reason else ""
+        return Reply(f"[OK] {target:%d.%m.%Y} — выходной{label}")
+
+    def _dayopen_reply(self, command: str) -> Reply:
+        """Снова открыть закрытый день: /dayopen DD.MM."""
+        parts = command.split()
+        today = self._clinic_today()
+        target = self._parse_ddmm(parts[1], today) if len(parts) == 2 else None
+        if target is None:
+            return Reply(self._dayoff_usage(today))
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            deleted = session.execute(
+                text("DELETE FROM holiday WHERE date = :d RETURNING id"),
+                {"d": target},
+            ).first()
+        if deleted is None:
+            return Reply(f"{target:%d.%m.%Y} и так рабочий.")
+        return Reply(f"[OK] {target:%d.%m.%Y} снова рабочий")
+
+    @staticmethod
+    def _parse_ddmm(raw: str, today: date) -> date | None:
+        """«21.03» → ближайшая (включая сегодня) будущая дата с таким днём/месяцем."""
+        day_raw, _, month_raw = raw.partition(".")
+        try:
+            day, month = int(day_raw), int(month_raw)
+        except ValueError:
+            return None
+        for year in range(today.year, today.year + 5):  # 29.02 ждёт високосного
+            try:
+                candidate = date(year, month, day)
+            except ValueError:
+                continue
+            if candidate >= today:
+                return candidate
+        return None  # 31.02 и прочие несуществующие даты
+
+    def _dayoff_usage(self, today: date) -> str:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            rows = session.execute(
+                text("SELECT date, reason FROM holiday WHERE date >= :t "
+                     "ORDER BY date LIMIT 5"),
+                {"t": today},
+            ).all()
+        if rows:
+            days = "; ".join(
+                f"{row.date:%d.%m.%Y}" + (f" ({row.reason})" if row.reason else "")
+                for row in rows)
+            upcoming = f"Ближайшие выходные: {days}"
+        else:
+            upcoming = "Закрытых дней впереди нет."
+        return ("Формат: /dayoff DD.MM [причина] — закрыть день, "
+                "/dayopen DD.MM — снова открыть.\n" + upcoming)
+
+    def _stats_reply(self) -> Reply:
         from navbat.stats import collect_daily_stats, render_stats
 
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
