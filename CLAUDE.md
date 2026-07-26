@@ -38,6 +38,12 @@
   каталог без RLS) + clinic.nlu_prompt_version (NULL = встроенный файл);
   onboard --prompt-upload / --prompt-pin <N|file> (--demo = staging);
   смена промпта = пин + рестарт. ГРУППА B ЗАКРЫТА ЦЕЛИКОМ.
+- D.2+D.3 — ЗАКРЫТЫ 07.06.2026: /forget <chat_id> в админ-чате (анонимизация:
+  имя/контакт NULL, диалог+сообщения удалены, записи обезличены, напоминания
+  погашены; будущие записи НЕ отменяются) + retention.py (ежедневная чистка
+  done/failed-очереди и диалогов старше NAVBAT_RETENTION_DAYS=90 из цикла
+  напоминаний). В группе D остались: D.1 юрист (шаг пользователя, BLOCKING
+  для пилота) и D.4 узбекские строки носителем.
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat

@@ -128,6 +128,10 @@ class UpdateWorker:
                         and chat_id == self._admin_chat_id):
                     self._send(chat_id, self._dayopen_reply(message["text"]))
                     return
+                if (message["text"].split()[:1] == ["/forget"]
+                        and chat_id == self._admin_chat_id):
+                    self._send(chat_id, self._forget_reply(message["text"]))
+                    return
                 verdict = self._rate_verdict(chat_id, claimed.id)
                 if verdict == "silent":
                     return
@@ -183,6 +187,44 @@ class UpdateWorker:
         lang = row.lang or "ru"
         self._send(target, Reply(t("menu_hint", lang), menu=menu_rows(lang)))
         return Reply(f"[OK] эскалация снята: чат {target}")
+
+    def _forget_reply(self, command: str) -> Reply:
+        """Анонимизация пациента по запросу: /forget <chat_id> (Ф1.5, D.2).
+
+        Имя/контакт стираются, диалог и сырые сообщения удаляются; история
+        приёмов остаётся обезличенной (appointment.tg_chat_id → NULL).
+        Будущие записи НЕ отменяются: запрос на удаление данных — не отмена
+        приёма; pending-напоминания гасятся, чтобы не слать в стёртый чат.
+        """
+        parts = command.split()
+        if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+            return Reply("Формат: /forget <chat_id> — анонимизировать пациента")
+        target = int(parts[1])
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            reminders = session.execute(
+                text("UPDATE reminder SET status = 'cancelled' "
+                     "WHERE status = 'pending' AND appointment_id IN "
+                     "(SELECT id FROM appointment WHERE tg_chat_id = :chat)"),
+                {"chat": target}).rowcount
+            patients = session.execute(
+                text("UPDATE patient SET name_encrypted = NULL, "
+                     "contact_hash = NULL, tg_chat_id = NULL "
+                     "WHERE tg_chat_id = :chat"), {"chat": target}).rowcount
+            appointments = session.execute(
+                text("UPDATE appointment SET tg_chat_id = NULL "
+                     "WHERE tg_chat_id = :chat"), {"chat": target}).rowcount
+            dialogs = session.execute(
+                text("DELETE FROM conversation WHERE tg_chat_id = :chat"),
+                {"chat": target}).rowcount
+            messages = session.execute(
+                text("DELETE FROM message_queue WHERE tg_chat_id = :chat"),
+                {"chat": target}).rowcount
+        if not any((reminders, patients, appointments, dialogs, messages)):
+            return Reply(f"Чат {target} не найден — данных нет.")
+        return Reply(
+            f"[OK] чат {target}: пациент анонимизирован, диалог и сообщения "
+            f"удалены. Будущие записи не отменены — отмените отдельно, "
+            f"если пациент просил.")
 
     # ── Выходные дни: клиника сама закрывает/открывает (Ф1.5) ────────────
 
