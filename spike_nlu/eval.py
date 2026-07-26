@@ -8,6 +8,9 @@
     python eval.py --dry-run                       # валидация датасета без API
     python eval.py --limit 5 --models gpt-5-nano   # smoke
     python eval.py                                 # полный прогон 3 моделей
+    python eval.py --models gemini-2.5-flash --concurrency 2
+        # Gemini через OpenAI-совместимый endpoint (GEMINI_API_KEY);
+        # free tier душит RPM — держи concurrency низким
 """
 from __future__ import annotations
 
@@ -33,17 +36,24 @@ log = logging.getLogger("nlu_eval")
 
 # ── Константы ────────────────────────────────────────────────────────────────
 
-# USD за 1M токенов (input, output). Сверено 2026-06-05:
+# USD за 1M токенов (input, output). OpenAI сверено 2026-06-05:
 # https://developers.openai.com/api/docs/pricing
+# Gemini — ориентир (free tier фактически $0; цены платного tier'а
+# проверить перед боевыми выводами).
 PRICES_USD_PER_1M = {
     "gpt-5-nano": (0.05, 0.40),
     "gpt-4.1-nano": (0.10, 0.40),
     "gpt-4o-mini": (0.15, 0.60),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
 }
+
+# OpenAI-совместимый слой Gemini: тот же SDK, другой base_url и ключ
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 UZS_PER_USD = 12_500   # ориентир на июнь 2026; проверить курс перед выводами по cost model
 MSGS_PER_DAY = 30      # для экстраполяции; реальный трафик — открытый вопрос брифа (п. 15)
 STRICT_THRESHOLD = 0.85  # kill-критерий гипотезы №1
-API_MAX_TRIES = 4      # 429/5xx: повторы с backoff
+API_MAX_TRIES = 6      # 429/5xx: повторы с backoff (free tier Gemini: окно минуты)
 REPAIR_TRIES = 1       # невалидный JSON: один повтор (счётчик repair идёт в отчёт)
 
 DEFAULT_MODELS = "gpt-5-nano,gpt-4.1-nano,gpt-4o-mini"
@@ -167,9 +177,29 @@ async def call_model(
     return Extraction.model_validate_json(content), resp.usage
 
 
+class Throttle:
+    """Глобальный RPM-лимитер: free tier Gemini душит 5–15 запросами в минуту."""
+
+    def __init__(self, rpm: Optional[int]) -> None:
+        self._interval = 60.0 / rpm if rpm else 0.0
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        if not self._interval:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._next - now)
+            self._next = max(now, self._next) + self._interval
+        if delay:
+            await asyncio.sleep(delay)
+
+
 async def extract_one(
     client: AsyncOpenAI, model: str, system_prompt: str, rec: dict,
     sem: asyncio.Semaphore, reasoning_effort: str, fallback_flag: dict,
+    throttle: Throttle,
 ) -> dict:
     """Один вызов с retry: backoff на 429/5xx, один repair на кривой JSON."""
     result = {
@@ -182,6 +212,7 @@ async def extract_one(
         backoffs = 0
         repair_hint = None
         while True:
+            await throttle.wait()  # и для ретраев: не жечь окно минуты
             t0 = time.perf_counter()
             try:
                 parsed, usage = await call_model(
@@ -223,16 +254,26 @@ async def extract_one(
                 repair_hint = str(e)[:300]
 
 
+def make_client(model: str) -> AsyncOpenAI:
+    if model.startswith("gemini"):
+        return AsyncOpenAI(base_url=GEMINI_BASE_URL,
+                           api_key=os.environ["GEMINI_API_KEY"])
+    return AsyncOpenAI()
+
+
 async def run_model(
     model: str, records: list[dict], system_prompt: str,
-    concurrency: int, reasoning_effort: str,
+    concurrency: int, reasoning_effort: str, rpm: Optional[int] = None,
 ) -> list[dict]:
-    client = AsyncOpenAI()
+    client = make_client(model)
     sem = asyncio.Semaphore(concurrency)
     fallback_flag = {"on": False}  # общий для всех сообщений модели
-    log.info("прогон %s: %d сообщений, concurrency=%d", model, len(records), concurrency)
+    throttle = Throttle(rpm)
+    log.info("прогон %s: %d сообщений, concurrency=%d, rpm=%s",
+             model, len(records), concurrency, rpm or "без лимита")
     tasks = [
-        extract_one(client, model, system_prompt, rec, sem, reasoning_effort, fallback_flag)
+        extract_one(client, model, system_prompt, rec, sem, reasoning_effort,
+                    fallback_flag, throttle)
         for rec in records
     ]
     results = await asyncio.gather(*tasks)
@@ -441,6 +482,10 @@ async def main() -> int:
     parser.add_argument("--data", default="data/messages.jsonl")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--rpm", type=int, default=None,
+                        help="глобальный лимит запросов/мин (free tier Gemini: 5-15)")
+    parser.add_argument("--source", default=None,
+                        help="фильтр по source датасета (например, real)")
     parser.add_argument("--reasoning-effort", default="minimal",
                         choices=["minimal", "low", "medium", "high"])
     parser.add_argument("--dry-run", action="store_true",
@@ -449,6 +494,11 @@ async def main() -> int:
 
     base = Path(__file__).parent
     records = load_dataset(base / args.data, args.limit)
+    if args.source:
+        records = [r for r in records if r["source"] == args.source]
+        if not records:
+            print(f"[FAIL] нет записей с source={args.source!r}")
+            return 1
     system_prompt = (base / "prompts" / "system.md").read_text(encoding="utf-8")
 
     if args.dry_run:
@@ -457,15 +507,21 @@ async def main() -> int:
         print(f"[OK] датасет валиден: {len(records)} gold-записей прошли схему")
         return 0
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if any(not m.startswith("gemini") for m in models) \
+            and not os.environ.get("OPENAI_API_KEY"):
         print("[FAIL] нет OPENAI_API_KEY в окружении")
         return 1
-
-    models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if any(m.startswith("gemini") for m in models) \
+            and not os.environ.get("GEMINI_API_KEY"):
+        print("[FAIL] нет GEMINI_API_KEY в окружении (локальный .env не грузится "
+              "спайком — выставь переменную в сессии)")
+        return 1
     all_results: dict[str, list[dict]] = {}
     for model in models:  # модели последовательно, сообщения внутри — параллельно
         all_results[model] = await run_model(
-            model, records, system_prompt, args.concurrency, args.reasoning_effort
+            model, records, system_prompt, args.concurrency,
+            args.reasoning_effort, rpm=args.rpm,
         )
 
     report, summaries = build_report(all_results, records)
