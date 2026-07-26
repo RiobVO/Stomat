@@ -49,6 +49,22 @@ def test_collect_daily_stats_counts(app_session_factory, admin_engine, clinic_a,
     assert stats.llm_tokens == 150
 
 
+def test_stats_include_nlu_drift(app_session_factory, clinic_a):
+    from navbat.stats import render_stats
+
+    recorder = UsageRecorder(app_session_factory, clinic_a, daily_cap=10**9)
+    recorder.record(120, 30)
+    recorder.record_failure()
+    recorder.record_repair()
+
+    today = datetime.now(TASHKENT).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_daily_stats(session, today, TASHKENT)
+    assert (stats.nlu_failures, stats.nlu_repairs) == (1, 1)
+    out = render_stats(stats, today)
+    assert "сбоев: 1" in out and "repair: 1" in out
+
+
 # ── should_send_digest: чистые границы ───────────────────────────────────────
 
 def test_digest_only_after_evening_hour():

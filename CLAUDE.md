@@ -30,6 +30,10 @@
   billing НЕ включаем — не предлагать); smoke 5/5 strict прошёл, полная
   валидация Gemini на узбекском — на живом пилоте. eval.py умеет Gemini
   (--models gemini-* --rpm), если когда-нибудь понадобится.
+- B.3 метрика NLU-дрифта — ЗАКРЫТА 07.06.2026: failures/repairs в llm_usage
+  (миграция 0007, DriftTrackingExtractor + on_repair-канал у экстракторов),
+  строка в /stats и дайджесте, алерт при >20% сбоев за день (≥20 запросов,
+  NAVBAT_NLU_DRIFT_THRESHOLD). Осталось в B: только B.2 (промпт в БД).
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat

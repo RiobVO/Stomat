@@ -25,13 +25,15 @@ LLM_TIMEOUT = 8.0  # BRIEF: таймаут LLM 8 сек → graceful degradation
 
 
 class OpenAIExtractor:
-    def __init__(self, model: str = DEFAULT_MODEL, on_usage=None) -> None:
+    def __init__(self, model: str = DEFAULT_MODEL, on_usage=None,
+                 on_repair=None) -> None:
         # ленивый импорт: openai — optional-зависимость [llm]
         from openai import OpenAI
 
         self._client = OpenAI(timeout=LLM_TIMEOUT, max_retries=2)
         self._model = model
         self._on_usage = on_usage  # callable(in_tokens, out_tokens) — учёт бюджета
+        self._on_repair = on_repair  # callable() — метрика NLU-дрифта
         self._system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
@@ -73,4 +75,6 @@ class OpenAIExtractor:
             except (ValidationError, ExtractionError) as e:
                 last_error = e
                 log.warning("NLU: невалидный ответ (попытка %d): %s", attempt + 1, e)
+                if self._on_repair and attempt < REPAIR_TRIES:
+                    self._on_repair()  # считаем только реальные повторы
         raise ExtractionError(f"NLU не дал валидный JSON после repair: {last_error}")
