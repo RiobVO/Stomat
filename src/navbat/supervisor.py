@@ -57,20 +57,38 @@ def build_real_extractor(session_factory, clinic_id: uuid.UUID, notifier):
     from navbat.nlu.openai_extractor import OpenAIExtractor
 
     recorder = UsageRecorder(session_factory, clinic_id, notifier=notifier)
+    prompt = _load_pinned_prompt(session_factory, clinic_id)
     extractor = OpenAIExtractor(on_usage=recorder.record,
-                                on_repair=recorder.record_repair)
+                                on_repair=recorder.record_repair,
+                                prompt=prompt)
     if os.environ.get("GEMINI_API_KEY"):
         from navbat.nlu.fallback import FallbackExtractor
         from navbat.nlu.gemini_extractor import GeminiExtractor
 
         extractor = FallbackExtractor(
             extractor, GeminiExtractor(on_usage=recorder.record,
-                                       on_repair=recorder.record_repair))
+                                       on_repair=recorder.record_repair,
+                                       prompt=prompt))
         log.info("LLM-fallback включён: Gemini")
     else:
         log.warning("GEMINI_API_KEY не задан — fallback-LLM выключен")
     inner = DriftTrackingExtractor(DeidentifyingExtractor(extractor), recorder)
     return BudgetedExtractor(inner, recorder)
+
+
+def _load_pinned_prompt(session_factory, clinic_id: uuid.UUID) -> str | None:
+    """Версия NLU-промпта из БД по пину клиники; None — встроенный файл (B.2)."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        row = session.execute(text(
+            "SELECT p.version, p.body FROM clinic c "
+            "JOIN nlu_prompt p ON p.version = c.nlu_prompt_version "
+            "WHERE c.id = current_setting('app.clinic_id')::uuid"
+        )).one_or_none()
+    if row is None:
+        log.info("NLU-промпт: встроенный файл")
+        return None
+    log.info("NLU-промпт: версия %d из БД", row.version)
+    return row.body
 
 
 def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
@@ -89,7 +107,8 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             session.execute(text("SELECT 1 FROM reminder LIMIT 0"))  # миграции 0006+
             clinic = session.execute(
                 text("SELECT name, tg_bot_token_encrypted, tg_admin_chat_id, "
-                     "gcal_refresh_token_encrypted FROM clinic WHERE id = :id"),
+                     "gcal_refresh_token_encrypted, nlu_prompt_version "
+                     "FROM clinic WHERE id = :id"),
                 {"id": clinic_id},
             ).one_or_none()
             doctors = session.execute(text("SELECT count(*) FROM doctor")).scalar_one()
@@ -133,6 +152,9 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
     else:
         report(True, "fallback-LLM",
                "не настроен — при аутэйдже OpenAI бот без NLU (GEMINI_API_KEY)")
+    report(True, "NLU-промпт",
+           f"версия {clinic.nlu_prompt_version} (БД)"
+           if clinic.nlu_prompt_version else "встроенный файл")
 
     if use_real:
         report(bool(os.environ.get("OPENAI_API_KEY")), "OPENAI_API_KEY для --real")

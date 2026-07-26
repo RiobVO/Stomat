@@ -33,7 +33,11 @@
 - B.3 метрика NLU-дрифта — ЗАКРЫТА 07.06.2026: failures/repairs в llm_usage
   (миграция 0007, DriftTrackingExtractor + on_repair-канал у экстракторов),
   строка в /stats и дайджесте, алерт при >20% сбоев за день (≥20 запросов,
-  NAVBAT_NLU_DRIFT_THRESHOLD). Осталось в B: только B.2 (промпт в БД).
+  NAVBAT_NLU_DRIFT_THRESHOLD).
+- B.2 промпт в БД — ЗАКРЫТ 07.06.2026: nlu_prompt (миграция 0008, глобальный
+  каталог без RLS) + clinic.nlu_prompt_version (NULL = встроенный файл);
+  onboard --prompt-upload / --prompt-pin <N|file> (--demo = staging);
+  смена промпта = пин + рестарт. ГРУППА B ЗАКРЫТА ЦЕЛИКОМ.
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
