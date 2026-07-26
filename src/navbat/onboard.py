@@ -80,6 +80,22 @@ def seed_demo_clinic(session_factory) -> None:
     log.info("демо-клиника создана: 2 врача, %d услуг", len(SERVICES))
 
 
+def import_calendar(session_factory, clinic_id: uuid.UUID, sync) -> int:
+    """Импорт существующих событий GCal для всех врачей с календарём (E.2).
+
+    sync — CalendarSync (или фейк в тестах); ручные события станут
+    gcal_import-записями, слоты под ними закроются.
+    """
+    with tenant_transaction(session_factory, clinic_id) as session:
+        doctor_ids = session.execute(
+            text("SELECT id FROM doctor WHERE gcal_calendar_id IS NOT NULL "
+                 "ORDER BY id")
+        ).scalars().all()
+    for doctor_id in doctor_ids:
+        sync.sync_doctor(doctor_id)
+    return len(doctor_ids)
+
+
 def upload_prompt(session_factory, body: str, note: str | None = None) -> int:
     """Новая версия NLU-промпта (глобальный каталог флота, не per-clinic)."""
     with session_factory() as session:
@@ -194,6 +210,8 @@ def main() -> int:
     parser.add_argument("--note", help="комментарий к версии промпта")
     parser.add_argument("--prompt-pin", metavar="N|file",
                         help="пин версии промпта клинике (file — встроенный)")
+    parser.add_argument("--import-calendar", action="store_true",
+                        help="импортировать существующие события GCal")
     parser.add_argument("--list", action="store_true", help="показать клинику")
     args = parser.parse_args()
 
@@ -232,6 +250,26 @@ def main() -> int:
         return 0
     if args.prompt_pin:
         pin_prompt(session_factory, args.clinic, args.prompt_pin)
+        return 0
+    if args.import_calendar:
+        from navbat.calendar.api import GoogleCalendarAPI
+        from navbat.calendar.sync import CalendarSync
+        from navbat.crypto import decrypt_text
+
+        with tenant_transaction(session_factory, args.clinic) as session:
+            token = session.execute(
+                text("SELECT gcal_refresh_token_encrypted FROM clinic "
+                     "WHERE id = :id"), {"id": args.clinic},
+            ).scalar_one_or_none()
+        if not token:
+            sys.exit("[FAIL] Google Calendar не авторизован — сначала "
+                     "python -m navbat.calendar.auth")
+        # tg_api/notifier не нужны: ботовских записей на онбординге ещё нет,
+        # конфликт-уведомления слать некому
+        sync = CalendarSync(session_factory, args.clinic,
+                            api=GoogleCalendarAPI(decrypt_text(token)))
+        synced = import_calendar(session_factory, args.clinic, sync)
+        print(f"[OK] импорт календаря: синк прогнан для {synced} врач(ей)")
         return 0
     if args.list:
         show_clinic(session_factory, args.clinic)

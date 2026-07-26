@@ -26,6 +26,8 @@ class DailyStats:
     llm_tokens: int
     nlu_failures: int
     nlu_repairs: int
+    prevented_noshows: int
+    saved_revenue: int
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -53,6 +55,32 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
              "failures, repairs FROM llm_usage WHERE day = :day"),
         {"day": day},
     ).one_or_none()
+    # «язык денег» (E.1): отмена ИЗ НАПОМИНАНИЯ (actor='reminder'), чей слот
+    # потом перезаписан другой booked-записью того же врача; сохранённая
+    # выручка — цены новых записей (NULL-цены в сумму не входят)
+    money = session.execute(
+        text("""
+            WITH freed AS (
+                SELECT a1.id AS old_id, a1.doctor_id, a1.time_range, aa.at
+                FROM appointment_audit aa
+                JOIN appointment a1 ON a1.id = aa.appointment_id
+                WHERE aa.action = 'cancel' AND aa.actor = 'reminder'
+                  AND (aa.at AT TIME ZONE :tz)::date = :day
+            ), resold AS (
+                SELECT DISTINCT ON (a2.id) a2.id, f.old_id, s.price
+                FROM freed f
+                JOIN appointment a2 ON a2.doctor_id = f.doctor_id
+                    AND a2.status = 'booked' AND a2.id != f.old_id
+                    AND a2.time_range && f.time_range
+                    AND a2.created_at > f.at
+                LEFT JOIN service s ON s.id = a2.service_id
+            )
+            SELECT count(DISTINCT old_id) AS prevented,
+                   COALESCE(sum(price), 0) AS saved
+            FROM resold
+        """),
+        {"tz": str(tz), "day": day},
+    ).one()
 
     return DailyStats(
         booked=audit_count("confirm"),
@@ -63,13 +91,18 @@ def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats
         llm_tokens=llm.tokens if llm else 0,
         nlu_failures=llm.failures if llm else 0,
         nlu_repairs=llm.repairs if llm else 0,
+        prevented_noshows=money.prevented,
+        saved_revenue=int(money.saved),
     )
 
 
 def render_stats(stats: DailyStats, day: date) -> str:
+    saved = f"{stats.saved_revenue:,}".replace(",", " ")
     return (f"Сводка за {day:%d.%m}:\n"
             f"• записей подтверждено: {stats.booked}\n"
             f"• отмен: {stats.cancelled}\n"
+            f"• предотвращено неявок: {stats.prevented_noshows} "
+            f"(сохранено ≈ {saved} сум)\n"
             f"• эскалаций к администратору: {stats.escalated}\n"
             f"• напоминаний доставлено: {stats.reminders_sent}\n"
             f"• LLM: {stats.llm_requests} запросов, {stats.llm_tokens} токенов, "
