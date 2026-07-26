@@ -22,6 +22,13 @@
   «сейчас закрыто» вне рабочего окна, закрытые дни /dayoff+/dayopen
   в админ-чате (предзаполненный календарь праздников ОТМЕНЁН — решение
   пользователя), stateless-NLU зафиксирован.
+- B.1 fallback-LLM: адаптер ГОТОВ 06.06.2026 (FallbackExtractor:
+  OpenAI → Gemini, тонкий httpx-клиент, включается наличием GEMINI_API_KEY
+  в .env — задан; --check показывает строку fallback-LLM). Аутэйдж =
+  ProviderDownError (сеть/5xx/429), кривой JSON failover НЕ триггерит.
+  Чекбокс B.1 в BRIEF закрывать только после eval на узбекском сете
+  (шаг 2: spike_nlu/eval.py через OpenAI-совместимый endpoint Gemini,
+  ДЕНЬГИ/лимиты — строго по явной команде).
 - Демо-бот НАСТРОЕН и проверен: @MyCompanyDev_bot привязан к демо-клинике
   (токен в clinic.tg_bot_token_encrypted, admin_chat 7082498953, тестовый),
   `python -m navbat --check` — все [OK]. Запуск: `python -m navbat
