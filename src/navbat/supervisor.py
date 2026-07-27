@@ -171,7 +171,7 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             clinic = session.execute(
                 text("SELECT name, tg_bot_token_encrypted, tg_admin_chat_ids, "
                      "gcal_refresh_token_encrypted, nlu_prompt_version, "
-                     "address, payment_info, phone "
+                     "address, payment_info, phone, bot_paused, llm_enabled "
                      "FROM clinic WHERE id = :id"),
                 {"id": clinic_id},
             ).one_or_none()
@@ -179,6 +179,11 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
                 text("SELECT count(*) FROM doctor WHERE is_active")).scalar_one()
             services = session.execute(
                 text("SELECT count(*) FROM service WHERE is_active")).scalar_one()
+            # привязка календаря живёт на враче: живой токен клиники сам по себе
+            # не значит, что записи уедут в Google (карта продажи, №1)
+            calendars = session.execute(text(
+                "SELECT count(*) FROM doctor "
+                "WHERE is_active AND gcal_calendar_id IS NOT NULL")).scalar_one()
         report(True, "БД и миграции")
     except Exception as e:
         report(False, "БД и миграции", str(e)[:120])
@@ -216,16 +221,34 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
            "админ-чат (эскалации, /stats, сводка)",
            f"{len(admin_chats)} чат(ов)" if admin_chats else None)
 
-    if clinic.gcal_refresh_token_encrypted:
+    # рубильники (C-4): бот на паузе отвечает «запись приостановлена» на любое
+    # сообщение, /llm off уводит свободный текст в меню — оба состояния
+    # переживают рестарт и до этой строки чеклист их не видел
+    report(not clinic.bot_paused, "рубильник: пауза бота",
+           "бот на паузе — вернуть: /resume" if clinic.bot_paused
+           else "бот принимает запись")
+    report(clinic.llm_enabled, "рубильник: LLM-рубильник",
+           "LLM выключен — свободный текст уходит в меню, вернуть: /llm on"
+           if not clinic.llm_enabled else "свободный текст понимает NLU")
+
+    if not clinic.gcal_refresh_token_encrypted:
+        # клиника без календаря — законный режим, но цену надо назвать вслух
+        report(True, "Google Calendar",
+               "не настроен — бот работает без календаря, событий в Google "
+               "не будет (python -m navbat.calendar.auth)")
+    elif not calendars:
+        report(False, "Google Calendar",
+               "токен есть, но календарь не привязан ни одному врачу — "
+               "записи никуда не уедут: onboard --doctor <uuid> --calendar <id>")
+    else:
         from navbat.calendar.api import CalendarAuthError, GoogleCalendarAPI
         from navbat.crypto import decrypt_text
         try:
             GoogleCalendarAPI(decrypt_text(clinic.gcal_refresh_token_encrypted)).check_auth()
-            report(True, "Google Calendar (refresh-токен жив)")
+            report(True, "Google Calendar (refresh-токен жив)",
+                   f"врачей с календарём: {calendars}")
         except CalendarAuthError as e:
             report(False, "Google Calendar", str(e)[:120])
-    else:
-        report(True, "Google Calendar", "не настроен — бот работает без календаря")
 
     if os.environ.get("GEMINI_API_KEY"):
         report(True, "fallback-LLM", "Gemini (ключ задан)")
