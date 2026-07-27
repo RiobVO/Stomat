@@ -151,3 +151,26 @@ def test_no_overlapping_appointments(app_session_factory, priced_clinic):
     clinic_a = priced_clinic
     created = seed_demo_history(app_session_factory, clinic_a, days=14)
     assert created > 0
+
+
+def test_today_is_filled_once_the_day_started(app_session_factory,
+                                              priced_clinic):
+    """Живой тык 28.07: владелец жмёт «📊 Статистика», консоль открывает
+    сводку ЗА СЕГОДНЯ — а сидер наполнял только прошлые дни, и первый экран
+    покупателя снова показывал нули.
+
+    Наполняем сегодня прошедшими часами. Если показ идёт до открытия
+    клиники, записей за день нет и быть не может — выдумывать приёмы из
+    будущего нельзя, они займут слоты живого сценария; для такого случая
+    в DEMO.md сказано переключиться кнопкой на «7 дней».
+    """
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    today = datetime.now(TZ).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today, today, TZ)
+
+    if datetime.now(TZ).hour < 11:
+        assert stats.booked == 0, "до открытия клиники приёмов быть не может"
+    else:
+        assert stats.booked > 0, "днём сводка за сегодня не должна быть пустой"

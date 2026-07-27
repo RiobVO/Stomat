@@ -77,9 +77,13 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
         if not doctors or not services:
             log.warning("демо-история: нет активных врачей или услуг")
             return 0
-        today = datetime.now(tz).date()
+        now = datetime.now(tz)
+        today = now.date()
         created = 0
-        for offset in range(days, 0, -1):
+        # включая сегодня (offset=0): владелец жмёт «📊 Статистика», а консоль
+        # открывает сводку ЗА ДЕНЬ — пустой сегодняшний день снова показывал
+        # покупателю нули (живой тык 28.07)
+        for offset in range(days, -1, -1):
             day = today - timedelta(days=offset)
             per_day, nightly = DAILY_PLAN[offset % len(DAILY_PLAN)]
             if offset <= days // 2:
@@ -91,7 +95,10 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
             for index in range(per_day):
                 created += _make_appointment(
                     session, tz, day, index, created, doctors, services,
-                    cursors, after_hours=index < nightly)
+                    cursors, after_hours=index < nightly,
+                    # сегодняшние приёмы — только те, что уже прошли: будущие
+                    # заняли бы слоты, которые показываются вживую
+                    not_after=now if offset == 0 else None)
         _seed_waitlist(session, services)
     log.info("демо-история: создано записей — %d", created)
     return created
@@ -135,7 +142,7 @@ def _skip_lunch(start: datetime) -> datetime:
 
 def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
                       created: int, doctors, services, cursors,
-                      after_hours: bool) -> int:
+                      after_hours: bool, not_after: datetime | None = None) -> int:
     """Одна запись: приём в рабочее окно, оформление — раньше приёма."""
     doctor = _pick_doctor(doctors, created)
     doctor_id = doctor.id
@@ -144,10 +151,14 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
     finish = start + timedelta(minutes=service.duration_min)
     if finish.hour >= DAY_CLOSE:
         return 0  # день врача заполнен — не выдумываем приём после закрытия
+    if not_after is not None and finish > not_after:
+        return 0  # сегодняшний день наполняем только прошедшими часами
     cursors[doctor_id] = finish + timedelta(minutes=doctor.buffer_min)
     # оформление — накануне: ночные заявки и есть «пока клиника спала»
     booked_at = datetime.combine(day - timedelta(days=1), datetime.min.time(),
                                  tz).replace(hour=_hour_for(index, after_hours))
+    if not_after is not None and booked_at > not_after:
+        booked_at = not_after - timedelta(hours=1)
     # вернувшийся пациент повторяет чат прошлого визита
     chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
                         else created)
