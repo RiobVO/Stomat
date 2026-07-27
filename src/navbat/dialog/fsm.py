@@ -261,7 +261,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
     def _process_text(self, session: Session, conv: Conversation, message: str) -> Reply:
         lang = self._lang(conv)
         if conv.state == "escalated":
-            return Reply(t("escalated", lang))
+            return self._escalated_reply(conv)
         if conv.state == "awaiting_name":
             # детектор просьбы человека здесь выключен: любой текст может
             # быть именем («Оператор Умаров» — редкое, но имя)
@@ -418,7 +418,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         # вне рабочего окна честно говорим «утром» — иначе пациент ждёт
         # ответа ночью
         key = "escalated_closed" if self._closed_now(session) else "escalated"
-        return Reply(t(key, self._lang(conv)))
+        return self._escalated_reply(conv, key)
 
     def _on_nlu_failure(self, session: Session, conv: Conversation) -> Reply:
         lang = self._lang(conv)
@@ -465,8 +465,13 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # человека, потом пришло напоминание — тап не должен отвечать
             # «передаю администратору»)
             return Reply(t("attend_ok", lang))
+        if kind == "unfreeze":
+            # выход из заморозки тапом = ровно то, что делает /start
+            # (BRIEF 14.A): hold отпущен, счётчик сбоев в ноль, меню на экран.
+            # Ловится ДО гейта escalated — иначе кнопка вернула бы саму себя
+            return self._on_start(session, conv)
         if conv.state == "escalated":
-            return Reply(t("escalated", lang))
+            return self._escalated_reply(conv)
         if kind == "call_admin":
             # кнопка из фоллбэка = ровно путь «позовите администратора»;
             # повторный клик не дублирует алерт: escalated перехвачен выше

@@ -44,6 +44,19 @@ class _SharedHelpersMixin:
         в админ-чат и логи (m1)."""
         return conv.context.escalation_dict()
 
+    def _escalated_reply(self, conv: Conversation,
+                         key: str = "escalated") -> Reply:
+        """Ответ замороженного диалога — всегда с выходом обратно к боту.
+
+        Стоп-состояние остаётся стоп-состоянием (NLU не дёргается, повторных
+        алертов админу нет), но пациент не заперт: тап делает то же, что
+        /start, право на который у него уже есть (BRIEF разд. 14.A). Без
+        этой кнопки reply-меню остаётся на экране мёртвым — живая проверка
+        27.07.2026, карта продажи №5."""
+        lang = self._lang(conv)
+        return Reply(t(key, lang),
+                     (Button(t("btn_back_to_bot", lang), "unfreeze"),))
+
     def _clinic_name(self, session: Session) -> str:
         return clinic_repo.clinic_name(session)
 
