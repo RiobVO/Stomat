@@ -14,6 +14,7 @@ from navbat.onboard import (
     create_clinic,
     remove_admin,
     set_doctor_schedule,
+    set_doctor_schedule_days,
     set_service_price,
 )
 
@@ -110,6 +111,49 @@ def test_set_doctor_schedule(app_session_factory, admin_engine, clinic_a):
             text("SELECT working_intervals FROM doctor WHERE id = :d"),
             {"d": did}).scalar_one()
     assert wi == new_sched
+
+
+def test_set_doctor_schedule_days_keeps_untouched_days(
+        app_session_factory, admin_engine, clinic_a):
+    """Карта готовности №6: правка части дней не стирает остальные."""
+    did = add_doctor(app_session_factory, clinic_a, "Доктор",
+                     {d: [["09:00", "18:00"]] for d in ("mon", "tue", "wed")})
+    set_doctor_schedule_days(app_session_factory, clinic_a, did,
+                             ["sat"], [["09:00", "13:00"]])
+    with admin_engine.begin() as conn:
+        wi = conn.execute(
+            text("SELECT working_intervals FROM doctor WHERE id = :d"),
+            {"d": did}).scalar_one()
+    assert wi["mon"] == [["09:00", "18:00"]], "будни стёрты правкой субботы"
+    assert wi["sat"] == [["09:00", "13:00"]]
+    assert set(wi) == {"mon", "tue", "wed", "sat"}
+
+
+def test_set_doctor_schedule_days_clears_day(app_session_factory, admin_engine,
+                                             clinic_a):
+    did = add_doctor(app_session_factory, clinic_a, "Доктор",
+                     {d: [["09:00", "18:00"]] for d in ("mon", "sat")})
+    set_doctor_schedule_days(app_session_factory, clinic_a, did, ["sat"], None)
+    with admin_engine.begin() as conn:
+        wi = conn.execute(
+            text("SELECT working_intervals FROM doctor WHERE id = :d"),
+            {"d": did}).scalar_one()
+    assert set(wi) == {"mon"}
+
+
+def test_set_doctor_schedule_days_refuses_empty_week(app_session_factory,
+                                                     admin_engine, clinic_a):
+    """Врач без единого рабочего дня — не график, а скрытие: не молча."""
+    did = add_doctor(app_session_factory, clinic_a, "Доктор",
+                     {"mon": [["09:00", "18:00"]]})
+    with pytest.raises(ValueError):
+        set_doctor_schedule_days(app_session_factory, clinic_a, did,
+                                 ["mon"], None)
+    with admin_engine.begin() as conn:
+        wi = conn.execute(
+            text("SELECT working_intervals FROM doctor WHERE id = :d"),
+            {"d": did}).scalar_one()
+    assert wi == {"mon": [["09:00", "18:00"]]}, "график изменён вопреки отказу"
 
 
 def test_validate_intervals_rejects_malformed():
