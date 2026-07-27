@@ -385,7 +385,9 @@ CREATE TABLE appointment (
       env-хук, включается при появлении хранилища. Ротация NAVBAT_ENC_KEY —
       python -m navbat.rotate_key (одной транзакцией, идемпотентна).
 - [x] Наблюдаемость: JSON-логи (NAVBAT_LOG_FORMAT), p95 в /stats+дайджесте+
-      health, канал владельца NAVBAT_OWNER_CHAT_ID (веер системных алертов).
+      health, канал владельца NAVBAT_OWNER_CHAT_ID — системные алерты идут
+      ЕМУ, а не веером в чаты клиник (пересмотр 27.07.2026: техника при
+      покупателе на экране); без канала владельца — фолбэк в админ-чаты.
       Sentry-класс закрыт минимально: ERROR в JSON-логах + rate-limited
       алерт — полноценный error-tracking осознанно в Ф3.
 - [x] Kill-switch: /pause /resume (клиника), /llm on|off (NLU), глобальный

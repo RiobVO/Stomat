@@ -48,13 +48,16 @@ def test_api_failure_does_not_break_processing():
 
 # ── C-3: системные алерты — админ-чаты + канал владельца ────────────────────
 
-def test_notify_system_fans_to_admins_and_owner(monkeypatch):
+def test_notify_system_goes_to_owner_not_to_clinic(monkeypatch):
+    # пересмотр 27.07.2026 (карта продажи, №10): раньше техника шла веером
+    # во все админ-чаты — на показе покупатель читал текст исключения в том
+    # же чате, что у него на экране. Адресат трассировок — владелец системы
     monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", "555")
     api = FakeTelegramAPI()
     esc = TelegramEscalation(api, [111, 222])
     esc.notify_system("синк умер", {})
     chats = [entry[0] for entry in api.sent]
-    assert chats == [111, 222, 555]
+    assert chats == [555]
     assert "Системный алерт" in api.sent[0][1]
 
 
