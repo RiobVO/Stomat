@@ -1,18 +1,28 @@
 """Демо-история для витрины владельца: наполняет прошлое работой бота.
 
     python -m navbat.onboard --demo-history [--days 14]
+    python -m navbat.onboard --demo-history-clear      # убрать следы
 
 Зачем: на чистой базе `/stats 7` показывает нули по всем строкам, а секции
 «Клиенты», «Топ врачей» и «Хит-услуга» не рендерятся вовсе — главный
 денежный аргумент показа выглядит пустым экраном (docs/SALES_READINESS.md,
 №4). Сидер создаёт правдоподобную неделю-другую: записи (часть оформлена
 вне рабочих часов), отмены из напоминания с суммой освобождённых слотов,
-новые и вернувшиеся пациенты, очередь ожидания.
+новые и вернувшиеся пациенты.
 
-Только прошлое: будущие записи заняли бы слоты, которые показываются
-вживую. Идемпотентно — повторный прогон перед встречей ничего не удваивает.
+Границы (ревью сидера):
+- только демо-клиника — гейт в CLI: синтетика в базе живой клиники портит
+  её отчётность, а отката «на глаз» там не будет;
+- только прошлое и только внутри смен врача: будущие записи заняли бы слоты
+  живого сценария, а приёмы в выходной или обед вызвали бы вопрос владельца;
+- очередь ожидания НЕ сеется: активные строки заставляют матчер каждые
+  30 секунд слать пуши в несуществующие чаты, а при ошибке доставки гасят
+  их — метрика «в очереди» пропадала бы посреди показа. Очередь показывается
+  вживую, когда пациент жмёт 🔔 на шаге «слотов нет»;
+- идемпотентно, есть обратная команда.
+
 Данные синтетические, PII в них нет: пациенты обезличены (tg_chat_id из
-демо-диапазона, без имён и телефонов).
+служебного диапазона, без имён и телефонов).
 """
 from __future__ import annotations
 
@@ -38,7 +48,7 @@ CHAT_BASE = -900_000_000
 DAILY_PLAN = ((4, 1), (5, 2), (3, 1), (6, 2), (5, 1), (7, 3), (2, 1))
 # свежая половина периода плотнее старой: на показе тренд к прошлой неделе
 # обязан смотреть вверх, «↓19%» под словами о росте выручки хуже пустого экрана
-RECENT_BONUS = 2
+RECENT_BONUS = 4
 # спрос клиники держат массовые услуги; премиум редок — иначе «Хит-услуга:
 # Брекеты» читается как выдумка. Порядок = приоритет, повторы = вес
 SERVICE_WEIGHTS = ("cleaning", "checkup", "cleaning", "filling", "checkup",
@@ -69,8 +79,8 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
             "SELECT timezone FROM clinic "
             "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one())
         doctors = session.execute(text(
-            "SELECT id, buffer_min FROM doctor WHERE is_active "
-            "ORDER BY id")).all()
+            "SELECT id, buffer_min, working_intervals FROM doctor "
+            "WHERE is_active ORDER BY id")).all()
         services = session.execute(text(
             "SELECT id, name, duration_min FROM service WHERE is_active "
             "ORDER BY name")).all()
@@ -88,18 +98,24 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
             per_day, nightly = DAILY_PLAN[offset % len(DAILY_PLAN)]
             if offset <= days // 2:
                 per_day += RECENT_BONUS
+            # смены врачей в этот день: в выходной и в обед приёмов не бывает,
+            # иначе владелец увидит их в статистике и справедливо спросит,
+            # откуда они взялись (ревью сидера)
+            shifts = {doc.id: _day_shifts(doc, day, tz) for doc in doctors}
+            if not any(shifts.values()):
+                continue
             # курсор приёма по каждому врачу: записи не должны перекрываться
             # (в БД стоит exclusion constraint с буфером — сидер обязан жить
             # по тем же правилам, что и живая запись)
-            cursors = {doc.id: _day_start(day, tz) for doc in doctors}
+            cursors = {doc.id: (shifts[doc.id][0][0] if shifts[doc.id] else None)
+                       for doc in doctors}
             for index in range(per_day):
                 created += _make_appointment(
                     session, tz, day, index, created, doctors, services,
-                    cursors, after_hours=index < nightly,
+                    cursors, shifts, after_hours=index < nightly,
                     # сегодняшние приёмы — только те, что уже прошли: будущие
                     # заняли бы слоты, которые показываются вживую
                     not_after=now if offset == 0 else None)
-        _seed_waitlist(session, services)
     log.info("демо-история: создано записей — %d", created)
     return created
 
@@ -126,31 +142,49 @@ def _pick_doctor(doctors, created: int):
     return doctors[pattern[created % len(pattern)] % len(doctors)]
 
 
-DAY_OPEN, LUNCH_FROM, LUNCH_TO, DAY_CLOSE = 9, 13, 14, 18
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
-def _day_start(day: date, tz: ZoneInfo) -> datetime:
-    return datetime.combine(day, datetime.min.time(), tz).replace(hour=DAY_OPEN)
+def _day_shifts(doctor, day: date, tz: ZoneInfo) -> list[tuple]:
+    """Смены врача в этот день из его working_intervals — [(начало, конец)].
+
+    Пустой список = выходной. Обед живёт разрывом между сменами, отдельной
+    константы не нужно: график ведёт клиника, а не сидер."""
+    intervals = (doctor.working_intervals or {}).get(WEEKDAYS[day.weekday()], [])
+    spans = []
+    midnight = datetime.combine(day, datetime.min.time(), tz)
+    for span in intervals:
+        lo_h, lo_m = (int(part) for part in str(span[0]).split(":"))
+        hi_h, hi_m = (int(part) for part in str(span[1]).split(":"))
+        spans.append((midnight.replace(hour=lo_h, minute=lo_m),
+                      midnight.replace(hour=hi_h, minute=hi_m)))
+    return spans
 
 
-def _skip_lunch(start: datetime) -> datetime:
-    """Обед клиники 13:00–14:00 — приёмов там не бывает."""
-    if LUNCH_FROM <= start.hour < LUNCH_TO:
-        return start.replace(hour=LUNCH_TO, minute=0)
-    return start
+def _fit_into_shift(start: datetime, minutes: int, shifts) -> datetime | None:
+    """Ближайшее начало приёма, целиком помещающегося в смену;
+    None — рабочее время дня исчерпано."""
+    for lo, hi in shifts:
+        candidate = max(start, lo)
+        if candidate + timedelta(minutes=minutes) <= hi:
+            return candidate
+    return None
 
 
 def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
-                      created: int, doctors, services, cursors,
+                      created: int, doctors, services, cursors, shifts,
                       after_hours: bool, not_after: datetime | None = None) -> int:
-    """Одна запись: приём в рабочее окно, оформление — раньше приёма."""
+    """Одна запись: приём внутри смены врача, оформление — раньше приёма."""
     doctor = _pick_doctor(doctors, created)
     doctor_id = doctor.id
+    if not shifts.get(doctor_id) or cursors.get(doctor_id) is None:
+        return 0  # у этого врача сегодня выходной
     service = _pick_service(services, created)
-    start = _skip_lunch(cursors[doctor_id])
+    start = _fit_into_shift(cursors[doctor_id], service.duration_min,
+                            shifts[doctor_id])
+    if start is None:
+        return 0  # смены врача на сегодня исчерпаны
     finish = start + timedelta(minutes=service.duration_min)
-    if finish.hour >= DAY_CLOSE:
-        return 0  # день врача заполнен — не выдумываем приём после закрытия
     if not_after is not None and finish > not_after:
         return 0  # сегодняшний день наполняем только прошедшими часами
     cursors[doctor_id] = finish + timedelta(minutes=doctor.buffer_min)
@@ -166,11 +200,12 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
     appointment_id = uuid.uuid4()
     session.execute(
         text("INSERT INTO appointment (id, clinic_id, doctor_id, service_id, "
-             "time_range, status, source, tg_chat_id, created_at) VALUES "
-             "(:id, current_setting('app.clinic_id')::uuid, :doc, :svc, "
-             "tstzrange(:lo, :hi, '[)'), :status, :src, :chat, :made)"),
+             "time_range, buffer_min, status, source, tg_chat_id, created_at) "
+             "VALUES (:id, current_setting('app.clinic_id')::uuid, :doc, :svc, "
+             "tstzrange(:lo, :hi, '[)'), :buf, :status, :src, :chat, :made)"),
         {"id": appointment_id, "doc": doctor_id, "svc": service.id,
-         "lo": start, "hi": finish, "src": DEMO_SOURCE, "chat": chat,
+         "lo": start, "hi": finish, "buf": doctor.buffer_min,
+         "src": DEMO_SOURCE, "chat": chat,
          "status": "cancelled" if cancelled else "booked", "made": booked_at})
     _audit(session, appointment_id, "confirm", "bot", booked_at)
     if cancelled:
@@ -190,11 +225,18 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
 
 
-def _seed_waitlist(session: Session, services) -> None:
-    """Пара человек в очереди ожидания: «непокрытый спрос как на ладони»."""
-    for shift, service in enumerate(services[:2]):
+def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:
+    """Убрать демо-историю целиком: записи и их аудит.
+
+    Откат обязателен — без него следы синтетики остаются в базе навсегда
+    (ревью сидера). Порядок важен: аудит ссылается на записи."""
+    with tenant_transaction(session_factory, clinic_id) as session:
         session.execute(
-            text("INSERT INTO waitlist (clinic_id, service_id, tg_chat_id, lang) "
-                 "VALUES (current_setting('app.clinic_id')::uuid, :svc, :chat, 'ru') "
-                 "ON CONFLICT DO NOTHING"),
-            {"svc": service.id, "chat": CHAT_BASE - 5_000 - shift})
+            text("DELETE FROM appointment_audit WHERE appointment_id IN "
+                 "(SELECT id FROM appointment WHERE source = :src)"),
+            {"src": DEMO_SOURCE})
+        removed = session.execute(
+            text("DELETE FROM appointment WHERE source = :src"),
+            {"src": DEMO_SOURCE}).rowcount
+    log.info("демо-история удалена: записей — %d", removed)
+    return removed

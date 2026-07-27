@@ -174,3 +174,86 @@ def test_today_is_filled_once_the_day_started(app_session_factory,
         assert stats.booked == 0, "до открытия клиники приёмов быть не может"
     else:
         assert stats.booked > 0, "днём сводка за сегодня не должна быть пустой"
+
+
+# ── Ревью сидера: радиус поражения, чистота данных, доменные правила ────────
+
+def test_cli_refuses_non_demo_clinic(monkeypatch, capsys):
+    """Сидер синтетический: запуск на боевом арендаторе — порча данных
+    живой клиники. CLI обязан отказать (ревью, блокирующая находка)."""
+    import sys as _sys
+
+    from navbat import onboard
+
+    monkeypatch.setattr(_sys, "argv",
+                        ["onboard", "--demo-history",
+                         "--clinic", "11111111-1111-4111-8111-111111111111"])
+    with pytest.raises(SystemExit):
+        onboard.main()
+
+
+def test_no_active_waitlist_rows(app_session_factory, admin_engine,
+                                 priced_clinic):
+    """Активная очередь с синтетическими чатами заставляет матчер слать
+    пуши в никуда каждые 30 секунд, а при ошибке доставки гасит строки —
+    метрика «в очереди» пропадает посреди показа."""
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        active = conn.execute(text(
+            "SELECT count(*) FROM waitlist "
+            "WHERE status IN ('waiting', 'notified')")).scalar_one()
+    assert active == 0
+
+
+def test_appointments_carry_doctor_buffer(app_session_factory, admin_engine,
+                                          priced_clinic):
+    """buffer_min участвует в exclusion constraint: без него синтетика
+    живёт по более мягким правилам, чем живая запись."""
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        zero = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND buffer_min = 0")).scalar_one()
+    assert zero == 0, "буфер врача должен попадать в запись"
+
+
+def test_history_respects_working_days(app_session_factory, admin_engine,
+                                       priced_clinic):
+    """Записи в день, когда врач не работает, — вопрос от владельца на
+    первом же экране статистики."""
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        sundays = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND extract(isodow FROM lower(time_range) AT TIME ZONE "
+            "'Asia/Tashkent') = 7")).scalar_one()
+        lunch = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND extract(hour FROM lower(time_range) AT TIME ZONE "
+            "'Asia/Tashkent') = 13")).scalar_one()
+    assert sundays == 0, "воскресенье у демо-врачей выходной"
+    assert lunch == 0, "в обед приёмов нет"
+
+
+def test_clear_removes_everything_it_created(app_session_factory, admin_engine,
+                                             priced_clinic):
+    """Откат обязателен: без него следы демо остаются в базе навсегда."""
+    from navbat.demo_history import clear_demo_history
+
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    clear_demo_history(app_session_factory, clinic_a)
+
+    with admin_engine.begin() as conn:
+        left = conn.execute(text(
+            "SELECT (SELECT count(*) FROM appointment WHERE source = 'demo_history') "
+            "+ (SELECT count(*) FROM appointment_audit aa WHERE NOT EXISTS "
+            "   (SELECT 1 FROM appointment a WHERE a.id = aa.appointment_id))"
+        )).scalar_one()
+    assert left == 0, "не должно остаться ни записей, ни осиротевшего аудита"
