@@ -163,3 +163,36 @@ def test_confirmed_service_delete_removes_it(console, admin_engine, clinic_a,
         alive = conn.execute(text("SELECT count(*) FROM service WHERE id = :s"),
                              {"s": service_cleaning}).scalar_one()
     assert alive == 0
+
+
+# ── Ревью волны B, блокер 4: состояние могло измениться между экранами ──────
+
+def test_delyes_refuses_reactivated_doctor(console, admin_engine, clinic_a,
+                                           doctor_a):
+    """Владелец открыл подтверждение удаления скрытого врача, второй
+    администратор вернул его в работу — «Да, удалить» не должно снести
+    активного врача (TOCTOU между экраном и нажатием)."""
+    cons, worker = console
+    # врач активен на момент нажатия «Да»
+    cons.handle_callback(_callback(f"adm:doc:{doctor_a}:delyes"), CHAT,
+                         f"adm:doc:{doctor_a}:delyes")
+
+    with admin_engine.begin() as conn:
+        alive = conn.execute(text("SELECT count(*) FROM doctor WHERE id = :d"),
+                             {"d": doctor_a}).scalar_one()
+    assert alive == 1, "активный врач не удаляется"
+    assert "скр" in _last(worker).text.lower(), _last(worker).text
+
+
+def test_delyes_refuses_reactivated_service(console, admin_engine, clinic_a,
+                                            service_cleaning):
+    cons, worker = console
+
+    cons.handle_callback(_callback("adm:svc:cleaning:delyes"), CHAT,
+                         "adm:svc:cleaning:delyes")
+
+    with admin_engine.begin() as conn:
+        alive = conn.execute(text("SELECT count(*) FROM service WHERE id = :s"),
+                             {"s": service_cleaning}).scalar_one()
+    assert alive == 1
+    assert "скр" in _last(worker).text.lower()

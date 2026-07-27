@@ -33,6 +33,28 @@ def fyi_alert(notifier, chat_id: int, reason: str, context: dict) -> None:
         notifier.notify(chat_id, reason, context)
 
 
+def ops_alert(notifier, reason: str, context: dict, chat_id: int = 0,
+              detail: str | None = None) -> None:
+    """Операционный сигнал КЛИНИКЕ (и владельцу системы заодно): бот
+    что-то не смог, и с этим должен работать администратор — напоминание
+    не доставлено, синк календаря стоит, дневной лимит токенов исчерпан,
+    сообщение пациента не обработано.
+
+    Отличается от system_alert адресатом: инфраструктура (cert, бэкапы,
+    webhook, NLU-дрифт) клинике бесполезна, а эти четыре — её работа
+    (ревью волны B, блокер 2). detail — техническая часть (текст
+    исключения): уходит только владельцу, клиника читает причину
+    человеческим языком (карта продажи, №10)."""
+    handler = getattr(notifier, "notify_ops", None)
+    if handler is not None:
+        handler(reason, context, detail=detail)
+    else:
+        # у фолбэка (логи, фейки тестов) адресата разделять не на кого —
+        # техническая часть не должна потеряться при диагностике
+        notifier.notify(chat_id, f"{reason} ({detail})" if detail else reason,
+                        context)
+
+
 def system_alert(notifier, reason: str, context: dict, chat_id: int = 0) -> None:
     """Системный алерт (не пациентская эскалация): cert, синк, cap, дрифт,
     dead-letter. TelegramEscalation шлёт его и владельцу системы; нотификаторы

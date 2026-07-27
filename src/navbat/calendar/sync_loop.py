@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from navbat.calendar.api import CalendarAuthError
 from navbat.db.base import tenant_transaction
-from navbat.dialog.escalation import system_alert
+from navbat.dialog.escalation import ops_alert
 from navbat.telegram.escalation import _as_chat_tuple
 
 log = logging.getLogger("navbat.calendar.sync_loop")
@@ -68,7 +68,7 @@ class CalendarSyncLoop:
         today = datetime.now(timezone.utc).date()
         if self._auth_alert_date == today:
             return
-        system_alert(
+        ops_alert(
             self._notifier,
             f"Google OAuth-токен мёртв — синхронизация календаря остановилась "
             f"и сама не починится. Нужна переавторизация: "
@@ -84,7 +84,7 @@ class CalendarSyncLoop:
             self._consecutive_failures += 1
             if (self._consecutive_failures >= FAILURE_ALERT_THRESHOLD
                     and not self._alerted):
-                system_alert(
+                ops_alert(
                     self._notifier,
                     f"синхронизация Google Calendar не работает "
                     f"{self._consecutive_failures} циклов подряд — проверьте "
@@ -95,8 +95,8 @@ class CalendarSyncLoop:
                 self._alerted = True
             return
         if self._alerted:
-            system_alert(self._notifier,
-                         "синхронизация Google Calendar восстановлена.", {},
+            ops_alert(self._notifier,
+                      "синхронизация Google Calendar восстановлена.", {},
                          chat_id=self._admin_chat_id)
         self._consecutive_failures = 0
         self._alerted = False

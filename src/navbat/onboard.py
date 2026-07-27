@@ -288,9 +288,19 @@ def activate_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
 
 def delete_doctor(session_factory, clinic_id: uuid.UUID,
                   doctor_id: uuid.UUID) -> None:
-    """Физически удалить врача — ТОЛЬКО если на него нет ни одной записи
-    (FK RESTRICT). Иначе ValueError — нужно деактивировать."""
+    """Физически удалить врача — ТОЛЬКО скрытого и если на него нет ни одной
+    записи (FK RESTRICT). Иначе ValueError — нужно деактивировать.
+
+    Проверка is_active именно здесь, а не только при показе кнопки: между
+    экраном подтверждения и нажатием «Да» второй администратор мог вернуть
+    врача в работу (ревью волны B, блокер 4)."""
     with tenant_transaction(session_factory, clinic_id) as session:
+        active = session.execute(
+            text("SELECT is_active FROM doctor WHERE id = :d"),
+            {"d": doctor_id},
+        ).scalar_one_or_none()
+        if active:
+            raise ValueError("врач доступен пациентам — сначала скройте его")
         refs = session.execute(
             text("SELECT count(*) FROM appointment WHERE doctor_id = :d"),
             {"d": doctor_id},
@@ -307,14 +317,22 @@ def delete_doctor(session_factory, clinic_id: uuid.UUID,
 
 
 def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
-    """Физически удалить услугу — ТОЛЬКО если нет ссылок из appointment и
-    waitlist. Иначе ValueError."""
+    """Физически удалить услугу — ТОЛЬКО скрытую и если нет ссылок из
+    appointment и waitlist. Иначе ValueError.
+
+    is_active проверяется здесь, а не только при показе кнопки: между
+    экраном подтверждения и нажатием «Да» услугу могли вернуть в продажу
+    (ревью волны B, блокер 4)."""
     with tenant_transaction(session_factory, clinic_id) as session:
-        sid = session.execute(
-            text("SELECT id FROM service WHERE name = :n"), {"n": name},
-        ).scalar_one_or_none()
+        row = session.execute(
+            text("SELECT id, is_active FROM service WHERE name = :n"),
+            {"n": name},
+        ).one_or_none()
+        sid = row.id if row is not None else None
         if sid is None:
             raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+        if row.is_active:
+            raise ValueError("услуга доступна пациентам — сначала скройте её")
         refs = session.execute(
             text("SELECT (SELECT count(*) FROM appointment WHERE service_id = :s) "
                  "+ (SELECT count(*) FROM waitlist WHERE service_id = :s)"),
