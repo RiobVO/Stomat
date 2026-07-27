@@ -73,7 +73,8 @@ TEMPLATES = {
     },
     "no_slots_at_all": {
         "ru": "В ближайшие две недели свободного времени нет — передаю администратору.",
-        "uz": "Yaqin ikki haftada bo'sh vaqt yo'q — administratorga uzataman.",
+        "uz": "Yaqin ikki haftada bo'sh vaqt yo'q — sizni administratorga "
+              "ulayman.",
     },
     "doctor_not_found": {
         "ru": "Врача с таким именем не нашёл, показываю всё свободное время.",
@@ -107,7 +108,8 @@ TEMPLATES = {
     },
     "hold_expired": {
         "ru": "Бронь на выбранное время истекла. Вот свежие варианты:",
-        "uz": "Tanlangan vaqt broni tugadi. Mana yangi variantlar:",
+        "uz": "Tanlangan vaqtni band qilish muddati tugadi. "
+              "Mana yangi variantlar:",
     },
     "slot_taken": {
         "ru": "Это время только что заняли. Вот свежие варианты:",
@@ -116,12 +118,13 @@ TEMPLATES = {
     "reask": {
         "ru": "Не понял вас. Напишите, пожалуйста, иначе — например: "
               "«запись на чистку завтра».",
-        "uz": "Tushunmadim. Boshqacha yozib ko'ring — masalan: "
+        "uz": "Kechirasiz, tushunmadim. Boshqacha yozib ko'ring — masalan: "
               "«ertaga tish tozalashga yozilmoqchiman».",
     },
     "escalated": {
         "ru": "Передаю администратору — он ответит вам здесь в ближайшее время.",
-        "uz": "Administratorga uzatdim — u tez orada shu yerda javob beradi.",
+        "uz": "Administratorga ulab berdim — u tez orada shu yerda "
+              "javob beradi.",
     },
     "other_fallback": {
         "ru": "Я помогу записаться на приём: напишите услугу и удобный день.",
@@ -137,31 +140,33 @@ TEMPLATES = {
     },
     "faq_fallback": {
         "ru": "Это уточнит администратор — я передал ему ваш вопрос.",
-        "uz": "Buni administrator aniqlashtiradi — savolingizni unga uzatdim.",
+        "uz": "Buni administrator aniqlashtiradi — savolingizni unga "
+              "yubordim.",
     },
     "cancel_confirm_q": {
         "ru": "Отменить вашу запись на {when}?",
-        "uz": "{when} kungi yozuvingizni bekor qilaymi?",
+        "uz": "{when} dagi qabulni bekor qilaymi?",
     },
     "cancel_done": {
         "ru": "Запись отменена. Будем рады записать вас снова.",
-        "uz": "Yozuv bekor qilindi. Sizni yana yozishdan xursand bo'lamiz.",
+        "uz": "Qabul bekor qilindi. Sizni yana kutib qolamiz.",
     },
     "cancel_kept": {
         "ru": "Хорошо, запись остаётся в силе.",
-        "uz": "Yaxshi, yozuv o'z kuchida qoladi.",
+        "uz": "Yaxshi, qabul o'z kuchida qoladi.",
     },
     "cancel_none": {
         "ru": "Активной записи не нашёл. Хотите записаться?",
-        "uz": "Faol yozuv topilmadi. Yozilishni xohlaysizmi?",
+        "uz": "Faol qabul topilmadi. Yozilishni xohlaysizmi?",
     },
     "resched_none": {
         "ru": "Активной записи для переноса не нашёл. Хотите записаться?",
-        "uz": "Ko'chirish uchun faol yozuv topilmadi. Yozilishni xohlaysizmi?",
+        "uz": "Boshqa vaqtga ko'chirish uchun faol qabul topilmadi. "
+              "Yozilishni xohlaysizmi?",
     },
     "resched_done": {
         "ru": "Перенёс вашу запись на {when}. Ждём вас!",
-        "uz": "Yozuvingizni {when} ga ko'chirdim. Sizni kutamiz!",
+        "uz": "Qabulni {when} ga ko'chirdim. Sizni kutamiz!",
     },
     "btn_other_time": {"ru": "Другое время", "uz": "Boshqa vaqt"},
     "btn_today": {"ru": "Сегодня", "uz": "Bugun"},
@@ -175,7 +180,7 @@ TEMPLATES = {
               "Sizni kutamiz!",
     },
     "btn_attend": {"ru": "✓ Приду", "uz": "✓ Kelaman"},
-    "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Yozuvni bekor qilish"},
+    "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Qabulni bekor qilish"},
     "attend_ok": {
         "ru": "Отлично, ждём вас!",
         "uz": "Ajoyib, sizni kutamiz!",
@@ -190,24 +195,25 @@ TEMPLATES = {
               "помогу записаться, перенести или отменить приём. "
               "По медицинским вопросам ответит врач.",
         "uz": "Assalomu alaykum! Men «{clinic}» klinikasining virtual "
-              "administratoriman: qabulga yozilish, ko'chirish yoki bekor "
-              "qilishda yordam beraman. Tibbiy savollarga shifokor javob beradi.",
+              "administratoriman: qabulga yozilish, uni boshqa vaqtga "
+              "ko'chirish yoki bekor qilishda yordam beraman. "
+              "Tibbiy savollarga shifokor javob beradi.",
     },
     "stale_button": {
         "ru": "Эта кнопка устарела.",
-        "uz": "Bu tugma eskirgan.",
+        "uz": "Bu tugma endi faol emas.",
     },
     "conflict_moved": {
         "ru": "К сожалению, время {old} стало недоступно — перенёс вашу запись "
               "на {new}. Если не подходит, выберите другое:",
-        "uz": "Afsuski, {old} vaqti band bo'lib qoldi — yozuvingizni {new} ga "
+        "uz": "Afsuski, {old} vaqti band bo'lib qoldi — qabulni {new} ga "
               "ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:",
     },
     "conflict_cancelled": {
         "ru": "К сожалению, время {old} стало недоступно, а свободного времени "
               "в ближайшие дни нет — запись отменена. Напишите, и подберём новое.",
         "uz": "Afsuski, {old} vaqti band bo'lib qoldi, yaqin kunlarda bo'sh vaqt "
-              "yo'q — yozuv bekor qilindi. Yozing, yangisini topamiz.",
+              "yo'q — qabul bekor qilindi. Yozing, boshqa vaqt topamiz.",
     },
     "text_only": {
         "ru": "Пока я понимаю только текст — напишите, пожалуйста, словами.",
