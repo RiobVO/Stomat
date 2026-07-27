@@ -308,12 +308,16 @@ def delete_doctor(session_factory, clinic_id: uuid.UUID,
         if refs:
             raise ValueError(
                 f"у врача есть записи ({refs}) — удалить нельзя, деактивируйте")
+        # условие в самом DELETE, а не только в прочитанном выше SELECT:
+        # активация параллельной транзакцией между чтением и удалением иначе
+        # проходит (ре-ревью волны B, дефект 2)
         deleted = session.execute(
-            text("DELETE FROM doctor WHERE id = :d RETURNING id"),
+            text("DELETE FROM doctor WHERE id = :d AND NOT is_active "
+                 "RETURNING id"),
             {"d": doctor_id},
         ).scalar_one_or_none()
     if deleted is None:
-        raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+        raise ValueError(f"врач {doctor_id} не найден или доступен пациентам")
 
 
 def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
@@ -341,7 +345,14 @@ def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
         if refs:
             raise ValueError(
                 f"на услугу есть записи ({refs}) — удалить нельзя, деактивируйте")
-        session.execute(text("DELETE FROM service WHERE id = :s"), {"s": sid})
+        # см. delete_doctor: активность проверяется атомарно с удалением
+        deleted = session.execute(
+            text("DELETE FROM service WHERE id = :s AND NOT is_active "
+                 "RETURNING id"),
+            {"s": sid},
+        ).scalar_one_or_none()
+        if deleted is None:
+            raise ValueError("услуга доступна пациентам — сначала скройте её")
 
 
 def add_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:

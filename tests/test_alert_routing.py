@@ -160,3 +160,22 @@ def test_infrastructure_alerts_do_not_reach_clinic(monkeypatch):
     escalation.notify_system("TLS-cert истекает через 3 дн.", {})
 
     assert [chat for chat, _, _ in api.sent] == [OWNER_CHAT]
+
+
+def test_owner_in_admin_chats_still_gets_detail(monkeypatch):
+    """Владелец системы часто и есть админ-чат клиники (пилот на одном
+    аккаунте). Раньше он попадал в ветку клиники и терял detail — при
+    dead letter это ровно та строка, по которой чинят (ре-ревью, дефект 1)."""
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", str(ADMIN_CHAT))
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=[ADMIN_CHAT, 888])
+
+    escalation.notify_ops("сообщение пациента не обработано", {},
+                          detail="KeyError: 'message'")
+
+    to_owner = next(t for chat, t, _ in api.sent if chat == ADMIN_CHAT)
+    to_other = next(t for chat, t, _ in api.sent if chat == 888)
+    assert "KeyError" in to_owner, "владельцу нужна техническая часть"
+    assert "KeyError" not in to_other, "второй админ-чат — без трассировки"
+    assert len([1 for chat, _, _ in api.sent if chat == ADMIN_CHAT]) == 1, \
+        "дубля сообщения быть не должно"
