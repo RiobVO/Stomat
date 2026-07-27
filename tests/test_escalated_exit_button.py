@@ -113,3 +113,50 @@ def test_exit_button_outside_escalation_is_harmless(app_session_factory,
 
     assert fsm_state(admin_engine) == "idle"
     assert reply.menu
+
+
+# ── Сквозь адаптер: кнопка проходит нумерацию callback'ов воркера ────────────
+
+def test_exit_button_survives_callback_numbering(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """Тесты выше зовут движок напрямую, а в Telegram кнопка едет как «a:N»
+    через map в conversation.context (worker._number_buttons). Проверяем
+    весь путь: заморозка → тап по реальной кнопке → диалог разморожен."""
+    from test_tg_worker import make_worker, put_callback, put_message
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [])
+    put_message(app_session_factory, clinic_a, "позовите администратора")
+    worker.process_one()
+    assert fsm_state(admin_engine) == "escalated"
+
+    _, _, buttons = api.sent[-1]
+    actions = [b.action for b in buttons]
+    assert actions, "в замороженном ответе должна быть кнопка"
+    assert actions[0].startswith("a:"),         f"кнопка обязана ехать пронумерованной, а не сырой: {actions[0]}"
+
+    put_callback(app_session_factory, clinic_a, actions[0])
+    worker.process_one()
+
+    assert fsm_state(admin_engine) == "idle", \
+        "тап по реальной кнопке обязан размораживать так же, как /start"
+
+
+def test_stale_exit_button_offers_fresh_one(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a,
+                                            service_cleaning):
+    """Кнопка из старого сообщения (map перезаписан) не должна оставлять
+    пациента ни с чем: ответ на «stale» снова несёт выход."""
+    from test_tg_worker import make_worker, put_callback, put_message
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [])
+    put_message(app_session_factory, clinic_a, "позовите администратора")
+    worker.process_one()
+
+    put_callback(app_session_factory, clinic_a, "a:99")  # такого ключа нет
+    worker.process_one()
+
+    _, _, buttons = api.sent[-1]
+    labels = [b.label for b in buttons]
+    assert any("Вернуться" in label for label in labels), labels
+    assert fsm_state(admin_engine) == "escalated", "stale не размораживает сам"
