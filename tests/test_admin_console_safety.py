@@ -221,11 +221,12 @@ def test_reactivation_between_screens_blocks_delete(console, admin_engine,
     assert alive == 1, "вернувшегося в работу врача удалять нельзя"
 
 
-def test_delete_is_atomic_against_activation(app_session_factory, admin_engine,
-                                             clinic_a, doctor_a):
-    """Само удаление обязано нести условие is_active=false, а не полагаться
-    на прочитанное ранее значение: иначе активация между SELECT и DELETE
-    проходит. Проверяем сам SQL-инвариант через прямой вызов executor'а."""
+def test_executor_refuses_to_delete_active_doctor(app_session_factory,
+                                                  admin_engine, doctor_a,
+                                                  clinic_a):
+    """Исполнитель отказывает для активной сущности (гонку SELECT/DELETE
+    закрывает условие в самом DELETE — это видно в коде, тестом на одной
+    транзакции не воспроизводится; финальное ревью это отметило)."""
     from navbat import onboard
 
     with admin_engine.begin() as conn:
