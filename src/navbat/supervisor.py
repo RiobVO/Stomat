@@ -180,10 +180,16 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
             services = session.execute(
                 text("SELECT count(*) FROM service WHERE is_active")).scalar_one()
             # привязка календаря живёт на враче: живой токен клиники сам по себе
-            # не значит, что записи уедут в Google (карта продажи, №1)
-            calendars = session.execute(text(
-                "SELECT count(*) FROM doctor "
-                "WHERE is_active AND gcal_calendar_id IS NOT NULL")).scalar_one()
+            # не значит, что записи уедут в Google (карта продажи, №1).
+            # Два счётчика, а не один: синк и watch выбирают врачей БЕЗ
+            # is_active (sync_loop.py:48, watch.py:41 — контракт инкремента 2,
+            # существующие записи скрытого врача продолжают синхаться), а до
+            # пациента доходят только активные — состояния «не привязан вовсе»
+            # и «привязан только скрытому» требуют разных подсказок
+            bound_total, bound_active = session.execute(text(
+                "SELECT count(*) FILTER (WHERE gcal_calendar_id IS NOT NULL), "
+                "count(*) FILTER (WHERE gcal_calendar_id IS NOT NULL AND is_active) "
+                "FROM doctor")).one()
         report(True, "БД и миграции")
     except Exception as e:
         report(False, "БД и миграции", str(e)[:120])
@@ -236,17 +242,24 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
         report(True, "Google Calendar",
                "не настроен — бот работает без календаря, событий в Google "
                "не будет (python -m navbat.calendar.auth)")
-    elif not calendars:
+    elif not bound_total:
         report(False, "Google Calendar",
                "токен есть, но календарь не привязан ни одному врачу — "
                "записи никуда не уедут: onboard --doctor <uuid> --calendar <id>")
+    elif not bound_active:
+        # токен не проверяем: записи к скрытому врачу не идут в любом случае,
+        # а его календарь синк всё равно ведёт и об OAuth-сбое алертит сам
+        report(False, "Google Calendar",
+               f"календарь привязан только скрытым врачам ({bound_total}) — "
+               f"пациентам они не предлагаются, событий не будет: "
+               f"верните врача кнопкой «✅ Показать» в админ-чате")
     else:
         from navbat.calendar.api import CalendarAuthError, GoogleCalendarAPI
         from navbat.crypto import decrypt_text
         try:
             GoogleCalendarAPI(decrypt_text(clinic.gcal_refresh_token_encrypted)).check_auth()
             report(True, "Google Calendar (refresh-токен жив)",
-                   f"врачей с календарём: {calendars}")
+                   f"врачей с календарём: {bound_active}")
         except CalendarAuthError as e:
             report(False, "Google Calendar", str(e)[:120])
 

@@ -83,3 +83,24 @@ def test_token_without_bound_doctor_fails(app_session_factory, clinic_a,
     assert line.startswith("[FAIL]"), line
     assert "--calendar" in line, "нужна подсказка, чем привязать"
     assert code == 1
+
+
+def test_binding_only_on_hidden_doctor_fails(app_session_factory, clinic_a,
+                                             doctor_a, admin_engine, capsys):
+    """Календарь привязан, но врач скрыт: записи к нему не идут, значит шаг
+    показа с событием в Google мёртв — и причина обязана отличаться от
+    «не привязан ни одному врачу» (находка ревью: синк выбирает врачей БЕЗ
+    is_active — sync_loop.py:48, watch.py:41 — и продолжает ходить в этот
+    календарь). Сети здесь тоже нет: проверять токен незачем."""
+    _set_clinic(admin_engine, clinic_a, "gcal_refresh_token_encrypted",
+                "ciphertext-placeholder")
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET gcal_calendar_id = 'primary', "
+                          "is_active = false WHERE id = :d"), {"d": doctor_a})
+
+    code = run_check(app_session_factory, clinic_a, use_real=False)
+
+    line = _line(capsys.readouterr().out, "Google Calendar")
+    assert line.startswith("[FAIL]"), line
+    assert "скрыт" in line, f"причина должна быть названа точно: {line}"
+    assert code == 1
