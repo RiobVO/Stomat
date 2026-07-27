@@ -62,8 +62,12 @@ def render(reply: Reply) -> list[str]:
     деградирует до нумерованного пункта: выбор отправляет DEMO_PHONE.
     """
     print(f"\nБот: {reply.text}")
-    actions = [b.action for b in reply.buttons]
-    for idx, button in enumerate(reply.buttons, 1):
+    # button_rows — многорядные клавиатуры (сетка календаря, слоты дня,
+    # лист ожидания). Без них репетиция обрывалась на «📅 Выбрать дату»:
+    # приходила подпись месяца и ни одной кнопки (карта продажи, №8)
+    buttons = list(reply.buttons) + [b for row in reply.button_rows for b in row]
+    actions = [b.action for b in buttons]
+    for idx, button in enumerate(buttons, 1):
         print(f"  {idx}. {button.label}")
     if reply.menu:
         labels = " | ".join(label for row in reply.menu for label in row)

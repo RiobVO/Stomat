@@ -308,6 +308,12 @@ class AdminConsole:
             r = self._services_menu(notice="✅ Услуга снова доступна")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "del":
+            r = self._service_card(
+                key,
+                notice="🗑 Удалить услугу навсегда? Отменить это будет нельзя.",
+                confirm_delete=True)
+            self._edit_or_send(chat_id, message_id, r)
+        elif action == "delyes":
             try:
                 onboard.delete_service(self._sf, self._cid, key)
                 r = self._services_menu(notice="✅ Услуга удалена")
@@ -333,7 +339,8 @@ class AdminConsole:
             {"n": key},
         ).scalar_one()
 
-    def _service_card(self, key: str, notice: str = "") -> Reply:
+    def _service_card(self, key: str, notice: str = "",
+                      confirm_delete: bool = False) -> Reply:
         with tenant_transaction(self._sf, self._cid) as session:
             rows_data = services_repo.service_list_all(session)
             row = next((r for r in rows_data if r.name == key), None)
@@ -353,6 +360,10 @@ class AdminConsole:
             if row.is_active else
             Button("✅ Показать", f"adm:svc:{key}:act")
         )
+        if confirm_delete:
+            return Reply(text, button_rows=(
+                (Button("🗑 Да, удалить", f"adm:svc:{key}:delyes"),),
+                (Button("✖ Отмена", f"adm:svc:{key}"),)))
         btn_rows_list = [
             (Button("💰 Изм. цену", f"adm:svc:{key}:price"),
              Button("⏱ Изм. длит.", f"adm:svc:{key}:dur")),
@@ -557,14 +568,29 @@ class AdminConsole:
         elif action == "sched":
             self._sched_entry(chat_id, doc_id_str, message_id)
         elif action == "deact":
+            # будущие записи скрытие НЕ отменяет — владелец обязан это узнать
+            # сразу, иначе пациенты придут к «убранному» врачу (карта, №11)
+            with tenant_transaction(self._sf, self._cid) as session:
+                upcoming = self._future_bookings(session, doc_id)
             onboard.deactivate_doctor(self._sf, self._cid, doc_id)
-            r = self._doctors_menu(notice="⛔ Врач скрыт")
+            notice = "⛔ Врач скрыт"
+            if upcoming:
+                notice += (f"\n⚠️ Будущих записей к нему: {upcoming} — они "
+                           f"остаются в силе, перенесите их сами")
+            r = self._doctors_menu(notice=notice)
             self._edit_or_send(chat_id, message_id, r)
         elif action == "act":
             onboard.activate_doctor(self._sf, self._cid, doc_id)
             r = self._doctors_menu(notice="✅ Врач снова в записи")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "del":
+            # первый тап только спрашивает: удаление физическое и необратимое
+            r = self._doctor_card(
+                doc_id_str,
+                notice="🗑 Удалить врача навсегда? Отменить это будет нельзя.",
+                confirm_delete=True)
+            self._edit_or_send(chat_id, message_id, r)
+        elif action == "delyes":
             try:
                 onboard.delete_doctor(self._sf, self._cid, doc_id)
                 r = self._doctors_menu(notice="✅ Врач удалён")
@@ -576,6 +602,17 @@ class AdminConsole:
             self._edit_or_send(chat_id, message_id, r)
 
     @staticmethod
+    def _future_bookings(session, doctor_id) -> int:
+        """Живые записи врача впереди: скрытие их не трогает (карта, №11)."""
+        from sqlalchemy import text as _text
+        return session.execute(
+            _text("SELECT count(*) FROM appointment "
+                  "WHERE doctor_id = :d AND status = 'booked' "
+                  "AND lower(time_range) > now()"),
+            {"d": str(doctor_id)},
+        ).scalar_one()
+
+    @staticmethod
     def _doctor_refs(session, doctor_id) -> int:
         """Число ссылок на врача в appointment (для гейтинга кнопки удаления).
         Физическое удаление при наличии записей заблокировано FK RESTRICT."""
@@ -585,7 +622,8 @@ class AdminConsole:
             {"d": str(doctor_id)},
         ).scalar_one()
 
-    def _doctor_card(self, doc_id_str: str, notice: str = "") -> Reply:
+    def _doctor_card(self, doc_id_str: str, notice: str = "",
+                     confirm_delete: bool = False) -> Reply:
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
@@ -610,6 +648,11 @@ class AdminConsole:
             if doc.is_active else
             Button("✅ Показать", f"adm:doc:{doc_id}:act")
         )
+        if confirm_delete:
+            # экран подтверждения: только «да» и «нет», чтобы не промахнуться
+            return Reply(text, button_rows=(
+                (Button("🗑 Да, удалить", f"adm:doc:{doc_id}:delyes"),),
+                (Button("✖ Отмена", f"adm:doc:{doc_id}"),)))
         btn_rows_list = [
             (Button("👤 Имя", f"adm:doc:{doc_id}:name"),
              Button("⏲ Буфер", f"adm:doc:{doc_id}:buf")),
