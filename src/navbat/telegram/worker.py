@@ -32,7 +32,7 @@ from navbat.dialog.escalation import (
 )
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
-from navbat.telegram.admin_console import AdminConsole
+from navbat.telegram.admin_console import AdminConsole, booked_warning
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
@@ -393,9 +393,12 @@ class UpdateWorker:
                      "(current_setting('app.clinic_id')::uuid, :d, :r)"),
                 {"d": target, "r": reason},
             )
+            # закрытие дня записи не отменяет (решение владельца) — но владелец
+            # обязан узнать о них здесь, а не от пришедшего пациента (карта, №7)
+            warning = booked_warning(session, target)
         # причина — текст админа: ответ уходит с parse_mode=HTML (П-7)
         label = f" ({html.escape(reason, quote=False)})" if reason else ""
-        return Reply(f"[OK] {target:%d.%m.%Y} — выходной{label}")
+        return Reply(f"[OK] {target:%d.%m.%Y} — выходной{label}{warning}")
 
     def _dayopen_reply(self, command: str) -> Reply:
         """Снова открыть закрытый день: /dayopen DD.MM."""
