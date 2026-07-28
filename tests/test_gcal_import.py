@@ -567,3 +567,48 @@ def test_swap_with_overlapping_targets_keeps_coverage(app_session_factory,
             {"d": doctor}).scalar_one()
     assert token != token_before, "токен залип — инкремент больше не продвинется"
     assert notifier.calls, "администратор не узнал о пересечении приёмов"
+
+
+def test_swap_into_foreign_import_does_not_freeze_token(app_session_factory,
+                                                        admin_engine, clinic_a,
+                                                        service_cleaning):
+    """Перестановка упирается в приём, которого в батче нет.
+
+    Третий приём не менялся и не изменится — значит перестановку не
+    применить ни в этом цикле, ни в следующих. Пытаться заново каждый раз
+    нельзя: токен залипнет навсегда и инкремент выродится в полный обход.
+    Узел объявляется неразрешимым: покрытие сохраняется, администратор
+    получает сигнал, синк идёт дальше."""
+    doctor = make_doctor(admin_engine, clinic_a, buffer_min=0)
+    bind_calendar(admin_engine, doctor)
+    day = next_monday()
+    notifier = RecordingNotifier()
+    api = FakeCalendarAPI()
+    sync = CalendarSync(app_session_factory, clinic_a, api=api, notifier=notifier)
+    first = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                  end=at_tashkent(day, "09:30"))
+    second = api.seed_manual_event(start=at_tashkent(day, "10:00"),
+                                   end=at_tashkent(day, "10:30"))
+    api.seed_manual_event(start=at_tashkent(day, "11:00"),
+                          end=at_tashkent(day, "11:30"))  # в батче не будет
+    sync.sync_doctor(doctor)
+    with admin_engine.begin() as conn:
+        token_before = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor}).scalar_one()
+
+    # first уезжает на диапазон, накрывающий третий приём, second — на его место
+    api.move_event(CAL, first, at_tashkent(day, "10:00"), at_tashkent(day, "11:30"))
+    api.move_event(CAL, second, at_tashkent(day, "09:00"), at_tashkent(day, "09:30"))
+
+    sync.sync_doctor(doctor)
+
+    with admin_engine.begin() as conn:
+        token = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor}).scalar_one()
+    assert token != token_before, "токен залип на неразрешимой перестановке"
+    starts = free_starts(app_session_factory, clinic_a, doctor, service_cleaning, day)
+    busy = {at_tashkent(day, hhmm) for hhmm in ("09:00", "10:00", "11:00")}
+    assert not (busy & starts), "освободились слоты, занятые в календаре врача"
+    assert notifier.calls, "администратор не узнал о непринятых приёмах"
