@@ -26,9 +26,11 @@ CHAT = 100
 class RecordingNotifier:
     def __init__(self) -> None:
         self.calls: list[tuple[int, str]] = []
+        self.contexts: list[dict] = []
 
     def notify(self, chat_id: int, reason: str, context: dict) -> None:
         self.calls.append((chat_id, reason))
+        self.contexts.append(dict(context))
 
 
 def extr(intent="book", service=None, doctor=None, date_ref=None,
@@ -67,6 +69,29 @@ def fsm_state(admin_engine, chat_id=CHAT) -> str:
 def appt_status(admin_engine) -> str:
     with admin_engine.begin() as conn:
         return conn.execute(text("SELECT status FROM appointment")).scalar_one()
+
+
+# ── Эскалация не должна выносить имя пациента персоналу (m1) ──────────────────
+
+def test_escalation_context_omits_patient_name(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # имя лежит в context['pending_name'] между шагом имени и подтверждением;
+    # при эскалации (не-узбекский номер) весь context уходит админу — имя
+    # пациента не должно утечь персоналу
+    day = next_monday()
+    notifier = RecordingNotifier()
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[extr(
+                              service="cleaning", date_ref=explicit(day))]),
+                          notifier=notifier)
+    offer = engine.handle_text(CHAT, "чистка в понедельник")
+    engine.handle_action(CHAT, slot_buttons(offer)[0].action)
+    engine.handle_text(CHAT, "Гульнора")  # → context['pending_name']
+    engine.handle_contact(CHAT, "79991234567", own=True)  # рос. номер → эскалация
+
+    assert any("не-узбек" in reason for _, reason in notifier.calls)
+    assert all("Гульнора" not in str(ctx) for ctx in notifier.contexts), \
+        "имя пациента не должно попадать в контекст эскалации"
 
 
 # ── Точное некруглое время: предпочтение, не жёсткий фильтр (M1) ──────────────
