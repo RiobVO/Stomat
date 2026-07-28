@@ -96,8 +96,12 @@ class FakeCalendarAPI:
         if sync_token is not None and sync_token not in self._tokens:
             raise ResyncRequired(f"syncToken {sync_token} протух")
         since = self._tokens.get(sync_token, 0) if sync_token else 0
-        changed = [event for event_id, event in self.events(calendar_id).items()
-                   if self._event_revision.get((calendar_id, event_id), 0) > since]
+        changed = [(self._event_revision.get((calendar_id, event_id), 0), event)
+                   for event_id, event in self.events(calendar_id).items()]
+        # выдаём в порядке, в котором изменения совершались; Google порядок
+        # не гарантирует вовсе, так что синк обязан быть устойчив к любому
+        changed = [event for revision, event in sorted(changed, key=lambda p: p[0])
+                   if revision > since]
         token = f"SYNC{len(self._tokens) + 1}"
         self._tokens[token] = self._revision
         return changed, token

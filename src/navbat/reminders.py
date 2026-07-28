@@ -125,9 +125,9 @@ class ReminderService:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             due = session.execute(
                 text("""
-                    SELECT r.id, r.appointment_id, r.attempts, a.tg_chat_id,
-                           lower(a.time_range) AS start, s.name AS service,
-                           c.timezone
+                    SELECT r.id, r.appointment_id, r.attempts, r.send_at,
+                           a.tg_chat_id, lower(a.time_range) AS start,
+                           s.name AS service, c.timezone
                     FROM reminder r
                     JOIN appointment a ON a.id = r.appointment_id
                     JOIN clinic c ON c.id = r.clinic_id
@@ -182,10 +182,13 @@ class ReminderService:
                     chat_id=row.tg_chat_id or 0)
             return False
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            # отметка относится к взятой в работу версии: если за время
+            # отправки запись перенесли и напоминание перевзвели на новое
+            # время, гасить его нельзя — о переносе никто не напомнит
             session.execute(
                 text("UPDATE reminder SET status = 'sent', sent_at = now() "
-                     "WHERE id = :id"),
-                {"id": row.id},
+                     "WHERE id = :id AND send_at = :send_at"),
+                {"id": row.id, "send_at": row.send_at},
             )
         return True
 
