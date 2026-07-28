@@ -15,7 +15,7 @@ from navbat.db.base import tenant_transaction
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Reply, TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
-from navbat.telegram.api import TelegramAPIError
+from navbat.telegram.api import ChatUnavailableError, TelegramAPIError
 from navbat.telegram.queue import enqueue
 from navbat.telegram.worker import UpdateWorker, send_reply
 from test_dialog_booking import CHAT, RecordingNotifier, explicit, extr
@@ -29,9 +29,12 @@ class FakeTelegramAPI:
         self.keyboards: list[tuple] = []  # (contact_request, menu)
         self.answered: list[str] = []
         self.send_failures = 0  # сколько ближайших send уронить
+        self.chat_gone = False  # пациент заблокировал бота / удалил чат
 
     def send_message(self, chat_id, text, buttons=(),
                      contact_request=None, menu=None):
+        if self.chat_gone:
+            raise ChatUnavailableError("Forbidden: bot was blocked by the user")
         if self.send_failures > 0:
             self.send_failures -= 1
             raise TelegramAPIError("эмуляция падения сети")
@@ -282,6 +285,22 @@ def test_send_failure_returns_update_to_pending(app_session_factory, admin_engin
     worker.process_one()  # повтор успешен
     assert queue_statuses(admin_engine) == ["done"]
     assert len(api.sent) == 1
+
+
+def test_chat_unavailable_acks_without_escalation(app_session_factory, admin_engine,
+                                                  clinic_a, doctor_a,
+                                                  service_cleaning):
+    # пациент заблокировал бота: ответ не доставить — это НЕ сбой системы,
+    # апдейт гасим без ретраев и без спама эскалаций админу (C2)
+    api = FakeTelegramAPI()
+    api.chat_gone = True
+    worker, api, notifier = make_worker(app_session_factory, clinic_a, [
+        extr(service="cleaning", date_ref=explicit(next_monday()))], api=api)
+    put_message(app_session_factory, clinic_a, "чистку в понедельник")
+
+    worker.process_one()
+    assert queue_statuses(admin_engine) == ["done"], "ack сразу, без ретраев"
+    assert notifier.calls == [], "ложной эскалации быть не должно"
 
 
 def test_dead_letter_notifies_admin(app_session_factory, admin_engine, clinic_a,

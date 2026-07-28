@@ -26,6 +26,12 @@ class TelegramAPIError(Exception):
     """Ответ ok:false либо исчерпанные повторы."""
 
 
+class ChatUnavailableError(TelegramAPIError):
+    """Чат недоступен навсегда: пациент заблокировал бота, удалил чат или
+    деактивирован (403, либо 400 «chat not found»). Не сбой системы —
+    повтор и эскалация бессмысленны, апдейт просто гасится."""
+
+
 class TelegramAPI:
     def __init__(
         self,
@@ -113,7 +119,13 @@ class TelegramAPI:
                 continue
             payload = response.json()
             if not payload.get("ok"):
-                # логическая ошибка (chat not found и т.п.) — повтор не поможет
-                raise TelegramAPIError(payload.get("description", str(payload)))
+                # логическая ошибка — повтор не поможет
+                code = payload.get("error_code")
+                desc = payload.get("description", str(payload))
+                # пациент недоступен навсегда (заблокировал/удалил чат) —
+                # отдельный тип: воркеру это не сбой, а штатный конец (C2)
+                if code == 403 or (code == 400 and "chat not found" in desc.lower()):
+                    raise ChatUnavailableError(desc)
+                raise TelegramAPIError(desc)
             return payload["result"]
         raise TelegramAPIError(f"{method}: повторы исчерпаны: {last_error}")
