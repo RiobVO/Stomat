@@ -245,8 +245,14 @@ class CalendarSync:
                 # друга старыми привязками (два приёма поменялись временами —
                 # ни один не ляжет ни в каком порядке), либо мешает чужое:
                 # первое развязываем один раз, второе разбирает финал
-                if untangled or not self._untangle_batch(doctor_id, deferred,
-                                                         buffer_min):
+                if untangled:
+                    break
+                outcome = self._untangle_batch(doctor_id, deferred, buffer_min)
+                if outcome == "blocked":
+                    # узел есть, но применить перестановку сейчас нечем —
+                    # держим токен, следующий цикл получит события снова
+                    return moved, True
+                if outcome != "applied":
                     break
                 untangled = True
             pending = deferred
@@ -330,8 +336,12 @@ class CalendarSync:
         return moved, written
 
     def _untangle_batch(self, doctor_id: uuid.UUID, events: list[dict],
-                        buffer_min: int) -> bool:
+                        buffer_min: int) -> str:
         """Развязать взаимную блокировку внутри батча.
+
+        Возвращает «applied» (перестановка записана), «blocked» (узел есть,
+        но применить его сейчас нечем — токен придётся удержать) или
+        «none» (узла нет, дальше разбирается финальный проход).
 
         Два приёма поменялись временами: правка каждого упирается в старую
         строку другого, и в базе навсегда оставались зеркальные привязки.
@@ -362,16 +372,47 @@ class CalendarSync:
         tangled = {event_id for event_id in tangled
                    if self._import_span(doctor_id, event_id) != wanted[event_id][0]}
         if not tangled:
-            return False
-        with tenant_transaction(self._session_factory, self._clinic_id) as session:
-            session.execute(
-                text("DELETE FROM appointment WHERE doctor_id = :doctor "
-                     "AND source = 'gcal_import' AND gcal_event_id = ANY(:ids)"),
-                {"doctor": doctor_id, "ids": list(tangled)},
-            )
-        log.info("календарь: события %s поменялись временами — привязки сняты "
-                 "и будут записаны заново", sorted(tangled))
-        return True
+            return "none"
+        if _targets_overlap([wanted[event_id] for event_id in tangled]):
+            # приёмы разведены внахлёст — это не перестановка, а честное
+            # пересечение: развязывать нечего (двум пересекающимся строкам
+            # constraint жить не даст), а попытки залипли бы на токене
+            # навсегда. Пусть разбирает финальный проход: покрытие остаётся
+            # прежним, администратор получает сигнал
+            return "none"
+        try:
+            with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                # снятие и запись — одной транзакцией: иначе слот на мгновение
+                # выглядит свободным и его успевает занять живой пациент
+                session.execute(
+                    text("DELETE FROM appointment WHERE doctor_id = :doctor "
+                         "AND source = 'gcal_import' AND gcal_event_id = ANY(:ids)"),
+                    {"doctor": doctor_id, "ids": list(tangled)},
+                )
+                for event_id in tangled:
+                    span, manual_buffer = wanted[event_id]
+                    session.execute(
+                        text("""
+                            INSERT INTO appointment
+                                (clinic_id, doctor_id, time_range, buffer_min,
+                                 status, source, gcal_event_id)
+                            VALUES (current_setting('app.clinic_id')::uuid, :doctor,
+                                    tstzrange(:start, :finish, '[)'), :buffer,
+                                    'booked', 'gcal_import', :event)
+                        """),
+                        {"doctor": doctor_id, "start": span[0], "finish": span[1],
+                         "buffer": manual_buffer, "event": event_id},
+                    )
+                session.flush()
+        except IntegrityError:
+            # перестановке мешает не только она сама (живой hold пациента на
+            # целевом времени) — откатились целиком, ничего не потеряв
+            log.warning("календарь: перестановку %s применить нечем — повтор "
+                        "следующим циклом", sorted(tangled))
+            return "blocked"
+        log.info("календарь: события %s поменялись временами — привязки "
+                 "переписаны", sorted(tangled))
+        return "applied"
 
     def _import_span(self, doctor_id: uuid.UUID,
                      event_id: str) -> tuple[datetime, datetime] | None:
@@ -649,6 +690,17 @@ class CalendarSync:
                 text("SELECT timezone FROM clinic "
                      "WHERE id = current_setting('app.clinic_id')::uuid")
             ).scalar_one())
+
+
+def _targets_overlap(targets: list[tuple[tuple[datetime, datetime], int]]) -> bool:
+    """Уживутся ли целевые интервалы друг с другом (буфер с обеих сторон)."""
+    for index, ((start, finish), buffer_min) in enumerate(targets):
+        finish_buffered = finish + timedelta(minutes=buffer_min)
+        for (other_start, other_finish), other_buffer in targets[index + 1:]:
+            if (start < other_finish + timedelta(minutes=other_buffer)
+                    and other_start < finish_buffered):
+                return True
+    return False
 
 
 def _own_marker(event: dict) -> str | None:
