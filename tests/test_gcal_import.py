@@ -89,8 +89,7 @@ def test_moved_manual_event_moves_block(app_session_factory, admin_engine, clini
                                      end=at_tashkent(day, "09:30"))
     sync.sync_doctor(doctor_a)
 
-    api.events(CAL)[event_id]["start"] = {"dateTime": at_tashkent(day, "15:00").isoformat()}
-    api.events(CAL)[event_id]["end"] = {"dateTime": at_tashkent(day, "15:30").isoformat()}
+    api.move_event(CAL, event_id, at_tashkent(day, "15:00"), at_tashkent(day, "15:30"))
     sync.sync_doctor(doctor_a)
 
     starts = free_starts(app_session_factory, clinic_a, doctor_a, service_cleaning, day)
@@ -130,8 +129,8 @@ def test_manually_moved_bot_event_is_restored(app_session_factory, admin_engine,
     sync.sync_doctor(doctor_a)
     bot_event_id = next(iter(api.events(CAL)))
 
-    api.events(CAL)[bot_event_id]["start"] = {"dateTime": at_tashkent(day, "16:00").isoformat()}
-    api.events(CAL)[bot_event_id]["end"] = {"dateTime": at_tashkent(day, "16:30").isoformat()}
+    api.move_event(CAL, bot_event_id, at_tashkent(day, "16:00"),
+                   at_tashkent(day, "16:30"))
     sync.sync_doctor(doctor_a)
 
     assert api.events(CAL)[bot_event_id]["start"]["dateTime"] == \
@@ -153,6 +152,71 @@ def test_sync_token_is_persisted_and_reused(app_session_factory, admin_engine,
     with admin_engine.begin() as conn:
         token = conn.execute(text("SELECT gcal_sync_token FROM doctor")).scalar_one()
     assert token == "SYNC2"
+
+
+def test_incremental_cycle_receives_only_changes(app_session_factory, admin_engine,
+                                                 clinic_a, doctor_a,
+                                                 service_cleaning):
+    """Второй цикл видит только новое событие, а не весь календарь.
+
+    Синк живёт на инкременте Google: всё, что не пришло с syncToken, для
+    него не существует. Тест держит это условие — без него регрессы вида
+    «токен продвинулся, событие потеряно» невидимы."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    first = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                  end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+
+    api.seed_manual_event(start=at_tashkent(day, "11:00"),
+                          end=at_tashkent(day, "11:30"))
+    with admin_engine.begin() as conn:
+        saved_token = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+    delivered, _ = api.list_events(CAL, sync_token=saved_token)
+    assert [e["id"] for e in delivered] != [] and first not in [
+        e["id"] for e in delivered], \
+        "инкремент отдал давно не менявшееся событие"
+
+    sync.sync_doctor(doctor_a)
+
+    rows = import_rows(admin_engine)
+    assert len(rows) == 2, "второе событие не импортировано"
+    assert {r.start for r in rows} == {at_tashkent(day, "09:00"),
+                                       at_tashkent(day, "11:00")}
+    assert all(r.status == "booked" for r in rows)
+
+
+def test_expired_sync_token_falls_back_to_full_resync(app_session_factory,
+                                                      admin_engine, clinic_a,
+                                                      doctor_a, service_cleaning):
+    """Протухший syncToken (410 Gone) не должен стоить клинике событий.
+
+    Google выбрасывает токен после недели простоя или чистки истории —
+    синк обязан перезапросить календарь целиком."""
+    from datetime import timedelta
+
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)  # токен получен и сохранён
+
+    api.seed_manual_event(start=at_tashkent(day, "14:00"),
+                          end=at_tashkent(day, "14:00") + timedelta(minutes=30))
+    api.expire_sync_tokens()
+
+    sync.sync_doctor(doctor_a)
+
+    rows = import_rows(admin_engine)
+    assert len(rows) == 1 and rows[0].start == at_tashkent(day, "14:00"), \
+        "событие потеряно на протухшем токене"
+    with admin_engine.begin() as conn:
+        token = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+    assert token is not None, "после full resync должен быть свежий токен"
 
 
 def test_event_span_naive_datetime_assumed_clinic_local():

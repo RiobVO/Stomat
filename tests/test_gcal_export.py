@@ -9,6 +9,7 @@ import itertools
 from sqlalchemy import text
 
 from conftest import at_tashkent, next_monday
+from navbat.calendar.api import ResyncRequired
 from navbat.calendar.sync import CalendarSync
 from navbat.db.base import tenant_transaction
 from navbat.dialog.patients import create_patient
@@ -20,19 +21,29 @@ CAL = "doc-cal"
 class FakeCalendarAPI:
     """Память вместо Google: события с семантикой showDeleted (cancelled).
 
-    list_events отдаёт всё содержимое (full sync) — импорт обязан быть
-    идемпотентным, поэтому инкрементальность фейку не нужна.
+    Инкрементален как настоящий Google: list_events с syncToken отдаёт
+    только изменившееся после его выдачи, неизвестный (протухший) токен —
+    ResyncRequired. Прежний фейк отдавал всё содержимое всегда, и потому
+    прятал целый класс регрессов: событие, потерянное из-за продвинутого
+    токена, всё равно приходило в следующем цикле и тест был зелёным.
     """
 
     def __init__(self) -> None:
         self.calendars: dict[str, dict[str, dict]] = {}
         self._ids = itertools.count(1)
+        self._revision = 0  # версия календаря; растёт на каждое изменение
+        self._event_revision: dict[tuple[str, str], int] = {}
+        self._tokens: dict[str, int] = {}  # выданный syncToken → версия
         self.insert_calls = 0
         self.patch_calls = 0
         self.list_tokens: list[str | None] = []  # какие syncToken передавали
 
     def events(self, calendar_id: str = CAL) -> dict[str, dict]:
         return self.calendars.setdefault(calendar_id, {})
+
+    def _touch(self, calendar_id: str, event_id: str) -> None:
+        self._revision += 1
+        self._event_revision[(calendar_id, event_id)] = self._revision
 
     def seed_manual_event(self, start=None, end=None, day=None,
                           calendar_id: str = CAL, summary: str = "Ручная запись") -> str:
@@ -47,27 +58,49 @@ class FakeCalendarAPI:
                      "end": {"dateTime": end.isoformat()}}
         self.events(calendar_id)[event_id] = {
             "id": event_id, "status": "confirmed", "summary": summary, **times}
+        self._touch(calendar_id, event_id)
         return event_id
+
+    def move_event(self, calendar_id: str, event_id: str, start, end) -> None:
+        """Событие подвинули руками в интерфейсе Google."""
+        self.events(calendar_id)[event_id].update(
+            {"start": {"dateTime": start.isoformat()},
+             "end": {"dateTime": end.isoformat()}})
+        self._touch(calendar_id, event_id)
+
+    def expire_sync_tokens(self) -> None:
+        """Все выданные токены протухли (Google отвечает 410 Gone)."""
+        self._tokens.clear()
 
     def insert_event(self, calendar_id: str, body: dict) -> dict:
         self.insert_calls += 1
         event = {**body, "id": f"ev{next(self._ids)}", "status": "confirmed"}
         self.events(calendar_id)[event["id"]] = event
+        self._touch(calendar_id, event["id"])
         return event
 
     def patch_event(self, calendar_id: str, event_id: str, body: dict) -> dict:
         self.patch_calls += 1
         self.events(calendar_id)[event_id].update(body)
+        self._touch(calendar_id, event_id)
         return self.events(calendar_id)[event_id]
 
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         event = self.events(calendar_id).get(event_id)
         if event:
             event["status"] = "cancelled"
+            self._touch(calendar_id, event_id)
 
     def list_events(self, calendar_id: str, sync_token=None, time_min=None):
         self.list_tokens.append(sync_token)
-        return list(self.events(calendar_id).values()), f"SYNC{len(self.list_tokens)}"
+        if sync_token is not None and sync_token not in self._tokens:
+            raise ResyncRequired(f"syncToken {sync_token} протух")
+        since = self._tokens.get(sync_token, 0) if sync_token else 0
+        changed = [event for event_id, event in self.events(calendar_id).items()
+                   if self._event_revision.get((calendar_id, event_id), 0) > since]
+        token = f"SYNC{len(self._tokens) + 1}"
+        self._tokens[token] = self._revision
+        return changed, token
 
     def free_busy(self, calendar_id: str, time_min: str, time_max: str) -> bool:
         return False
