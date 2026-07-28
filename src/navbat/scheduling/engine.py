@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from navbat.db.base import tenant_transaction
 from navbat.scheduling.calendar_rules import day_intervals, slot_candidates
 from navbat.scheduling.errors import (
+    AppointmentChangedError,
     AppointmentNotFoundError,
     DuplicateMessageError,
     HoldExpiredError,
@@ -138,23 +139,31 @@ class SchedulingEngine:
             self._audit(session, appointment_id, "confirm",
                         {"status": "hold"}, {"status": "booked"})
 
-    def cancel(self, appointment_id: uuid.UUID, actor: str | None = None) -> None:
+    def cancel(self, appointment_id: uuid.UUID, actor: str | None = None,
+               expected_start: datetime | None = None) -> None:
         # actor «reminder» отличает отмену из напоминания — топливо метрики
-        # предотвращённых неявок (E.1); None → default-актор движка
+        # предотвращённых неявок (E.1); None → default-актор движка.
+        # expected_start — отменять только запись, не изменившуюся с момента
+        # снимка вызывающего (перенос вытесненной записи, calendar/sync.py)
         with self._txn() as session:
             row = session.execute(
                 text("UPDATE appointment SET status = 'cancelled' "
                      "WHERE id = :id AND status IN ('hold', 'booked') "
+                     "AND lower(time_range) IS NOT DISTINCT FROM "
+                     "    COALESCE(CAST(:expected AS timestamptz), lower(time_range)) "
                      "RETURNING status"),
-                {"id": appointment_id},
+                {"id": appointment_id, "expected": expected_start},
             ).scalar_one_or_none()
             if row is None:
-                raise AppointmentNotFoundError(str(appointment_id))
+                raise self._cancel_failure(session, appointment_id, expected_start)
             self._audit(session, appointment_id, "cancel",
                         {"status": "active"}, {"status": "cancelled"},
                         actor=actor)
 
-    def reschedule(self, appointment_id: uuid.UUID, new_start: datetime) -> None:
+    def reschedule(self, appointment_id: uuid.UUID, new_start: datetime,
+                   expected_start: datetime | None = None) -> None:
+        """expected_start — переносить только запись, не изменившуюся с момента
+        снимка вызывающего (перенос вытесненной записи, calendar/sync.py)."""
         with self._txn() as session:
             # advisory-лок врача ПЕРВЫМ (как hold/confirm) — единый порядок
             # захвата; row-lock (FOR UPDATE) берём уже под ним. Обратный порядок
@@ -174,15 +183,24 @@ class SchedulingEngine:
             ).one_or_none()
             if current is None:
                 raise AppointmentNotFoundError(str(appointment_id))
+            if expected_start is not None and current.lo != expected_start:
+                # запись сдвинулась после снимка вызывающего (пациент перенёс
+                # её сам) — его выбор свежее, затирать нельзя
+                raise AppointmentChangedError(
+                    f"{appointment_id}: запись уже на {current.lo.isoformat()}")
 
             slot = self._validated_slot(
                 session, doctor_id, current.service_id, new_start
             )
             try:
                 session.execute(
-                    text("UPDATE appointment SET time_range = tstzrange(:s, :e, '[)') "
-                         "WHERE id = :id"),
-                    {"s": slot.start, "e": slot.end, "id": appointment_id},
+                    # буфер берём у врача заново — как это делает hold: иначе
+                    # сетка слотов (doctor.buffer_min) и exclusion constraint
+                    # (appointment.buffer_min) расходятся после смены настройки
+                    text("UPDATE appointment SET time_range = tstzrange(:s, :e, '[)'), "
+                         "buffer_min = :buf WHERE id = :id"),
+                    {"s": slot.start, "e": slot.end, "id": appointment_id,
+                     "buf": self._doctor_buffer(session, doctor_id)},
                 )
                 # exclusion проверяется на UPDATE; конфликт всплывает на flush
                 session.flush()
@@ -320,6 +338,20 @@ class SchedulingEngine:
         return AppointmentNotFoundError(
             f"{appointment_id}: status={row.status}, подтверждать нечего"
         )
+
+    def _cancel_failure(self, session: Session, appointment_id,
+                        expected_start: datetime | None) -> Exception:
+        """Разбор причины несработавшей отмены (строка уже под транзакцией)."""
+        row = session.execute(
+            text("SELECT status, lower(time_range) AS lo FROM appointment "
+                 "WHERE id = :id"),
+            {"id": appointment_id},
+        ).one_or_none()
+        if (expected_start is not None and row is not None
+                and row.status in ("hold", "booked")):
+            return AppointmentChangedError(
+                f"{appointment_id}: запись уже на {row.lo.isoformat()}")
+        return AppointmentNotFoundError(str(appointment_id))
 
     def _map_integrity(self, error: IntegrityError) -> Exception:
         sqlstate = getattr(error.orig, "sqlstate", None)

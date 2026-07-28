@@ -30,7 +30,11 @@ from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import fyi_alert, EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
-from navbat.scheduling.errors import AppointmentNotFoundError, SchedulingError
+from navbat.scheduling.errors import (
+    AppointmentChangedError,
+    AppointmentNotFoundError,
+    SchedulingError,
+)
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.calendar")
@@ -412,12 +416,13 @@ class CalendarSync:
             # confirm тремя транзакциями, и падение процесса между ними
             # оставляло пациента без записи навсегда: жертва отменена, замены
             # нет, а следующий цикл синка её уже не увидит (H2)
-            scheduler.reschedule(victim.id, new_start)
-        except AppointmentNotFoundError:
-            # запись ушла из-под переноса (пациент отменил её сам между
-            # сканом жертв и этим моментом) — переносить нечего, и об отмене,
-            # которой бот не делал, сообщать нельзя
-            log.info("запись %s исчезла до переноса — пропускаю", victim.id)
+            scheduler.reschedule(victim.id, new_start,
+                                 expected_start=victim.start)
+        except (AppointmentNotFoundError, AppointmentChangedError):
+            # запись ушла из-под переноса: пациент отменил или перенёс её сам
+            # между сканом жертв и этим моментом. Его действие свежее нашего
+            # снимка — ни двигать, ни рассказывать про вытеснение не за что
+            log.info("запись %s изменилась до переноса — пропускаю", victim.id)
             return
         except SchedulingError:
             # слот перехвачен конкурентной бронью между выбором и переносом.
@@ -457,11 +462,11 @@ class CalendarSync:
         """Жертву вытеснили, перенести некуда (нет слота ИЛИ перенос сорвался) —
         отменяем и уведомляем пациента с админом, не теряем запись молча."""
         try:
-            scheduler.cancel(victim.id)
-        except AppointmentNotFoundError:
-            # запись уже неактивна (пациент отменил сам) — отменять и
-            # уведомлять нечего
-            log.info("запись %s уже неактивна — отмена не требуется", victim.id)
+            scheduler.cancel(victim.id, expected_start=victim.start)
+        except (AppointmentNotFoundError, AppointmentChangedError):
+            # запись уже неактивна или сдвинута пациентом — отменять чужое
+            # решение и уведомлять об отмене нечего
+            log.info("запись %s изменилась — отмена не требуется", victim.id)
             return
         self._notify_patient(victim.tg_chat_id,
                              Reply(t("conflict_cancelled", lang, old=old_label)))

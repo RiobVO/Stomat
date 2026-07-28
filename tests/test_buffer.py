@@ -39,3 +39,26 @@ def test_buffer_enforced_by_database(
         admin_engine, clinic_a, doctor_a, service_cleaning,
         at_tashkent(day, "10:40"), at_tashkent(day, "11:10"),
     )
+
+
+def test_reschedule_refreshes_buffer_from_doctor(sched, admin_engine, doctor_a,
+                                                 service_cleaning):
+    """Буфер записи берётся у врача на момент действия — как при hold.
+
+    Иначе сетка слотов (считает по doctor.buffer_min) и exclusion constraint
+    (считает по appointment.buffer_min) расходятся: предложенный слот
+    отклоняется базой, и перенос срывается на ровном месте."""
+    day = next_monday()
+    appointment_id = sched.hold(doctor_a, service_cleaning, at_tashkent(day, "10:00"))
+    sched.confirm(appointment_id)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET buffer_min = 20 WHERE id = :d"),
+                     {"d": doctor_a})
+
+    sched.reschedule(appointment_id, at_tashkent(day, "12:00"))
+
+    with admin_engine.begin() as conn:
+        buffer_min = conn.execute(
+            text("SELECT buffer_min FROM appointment WHERE id = :i"),
+            {"i": appointment_id}).scalar_one()
+    assert buffer_min == 20
