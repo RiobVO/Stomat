@@ -334,8 +334,11 @@ class UpdateWorker:
                      "WHERE tg_chat_id = :chat"),
                 {"chat": target},
             )
-        lang = row.lang or "ru"
-        self._send(target, Reply(t("menu_hint", lang), menu=menu_rows(lang)))
+        # у пациента свой язык, у администратора свой: меню уходит на
+        # пациентском, подтверждение — на языке админ-чата
+        patient_lang = row.lang or "ru"
+        self._send(target, Reply(t("menu_hint", patient_lang),
+                                 menu=menu_rows(patient_lang)))
         return Reply(at("release_ok", lang, chat=target))
 
     def _forget_reply(self, command: str, lang: str = "ru") -> Reply:
@@ -465,7 +468,9 @@ class UpdateWorker:
             upcoming = at("dayoff_upcoming", lang, days=days)
         else:
             upcoming = at("dayoff_none_ahead", lang)
-        return at("dayoff_usage", lang, upcoming=upcoming)
+        # склейка, а не подстановка: at() внутри at() экранировал бы
+        # причину дважды и показывал «&lt;ремонт&gt;» (ревью, дефект 5)
+        return at("dayoff_usage", lang) + "\n" + upcoming
 
     def _stats_reply(self, command: str = "/stats", lang: str = "ru") -> Reply:
         """Сводка владельца (П-6): /stats — день, /stats 7|30 — период."""

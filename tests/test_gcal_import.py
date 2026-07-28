@@ -212,3 +212,36 @@ def test_manual_event_wins_over_demo_history(app_session_factory, admin_engine,
             "AND status = 'booked'")).scalar_one()
     assert imported == 1, "событие врача потеряно из-за синтетики"
     assert demo_alive == 0, "демо-запись должна уступить настоящему событию"
+
+
+def test_unwritten_manual_event_keeps_sync_token(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """Событие, которое не удалось записать, обязано прийти снова.
+
+    Живой hold пациента занимает время ручного события: вставка не проходит,
+    а syncToken продвигался — при инкрементальном синке событие больше не
+    приходило и пропадало навсегда (ревью исправлений волны C)."""
+    from datetime import timedelta
+
+    from sqlalchemy import text as _text
+
+    bind_calendar(admin_engine, doctor_a)
+    start = at_tashkent(next_monday(), "11:00")
+    sched = SchedulingEngine(app_session_factory, clinic_a)
+    # живой hold: TTL ещё не истёк, синк его не трогает
+    sched.hold(doctor_a, service_cleaning, start, tg_chat_id=777)
+    sync, api = make_sync(app_session_factory, clinic_a)
+    api.seed_manual_event(start=start, end=start + timedelta(minutes=30))
+
+    sync.sync_doctor(doctor_a)
+
+    with admin_engine.begin() as conn:
+        token = conn.execute(_text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+        imported = conn.execute(_text(
+            "SELECT count(*) FROM appointment WHERE source = 'gcal_import'"
+        )).scalar_one()
+    assert imported == 0, "hold должен был помешать вставке — иначе тест не о том"
+    assert token is None, "токен продвинулся, событие врача больше не придёт"
