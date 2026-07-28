@@ -343,6 +343,34 @@ def test_overlapping_manual_events_do_not_freeze_sync_token(
     assert token is not None, "токен застрял на неисполнимом событии"
 
 
+def test_unimportable_overlap_warns_the_clinic(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a, service_cleaning):
+    """Событие, которое бот не может отразить, не исчезает молча.
+
+    Второе ручное событие внахлёст неисполнимо (вытеснять импортированное
+    нечем), и токен продвигается — больше оно не придёт. Значит календарь
+    врача и база расходятся навсегда, и знать об этом должен администратор,
+    а не только лог."""
+    from datetime import timedelta
+
+    bind_calendar(admin_engine, doctor_a)
+    notifier = RecordingNotifier()
+    api = FakeCalendarAPI()
+    sync = CalendarSync(app_session_factory, clinic_a, api=api, notifier=notifier)
+    start = at_tashkent(next_monday(), "10:00")
+    api.seed_manual_event(start=start, end=start + timedelta(minutes=60))
+    api.seed_manual_event(start=start + timedelta(minutes=30),
+                          end=start + timedelta(minutes=90))
+
+    sync.sync_doctor(doctor_a)
+
+    assert notifier.calls, "клиника не предупреждена о непринятом событии"
+
+    notifier.calls.clear()
+    sync.sync_doctor(doctor_a)
+    assert not notifier.calls, "предупреждение не должно повторяться каждый цикл"
+
+
 def test_recreated_manual_event_survives_batch_order(app_session_factory,
                                                      admin_engine, clinic_a,
                                                      doctor_a, service_cleaning):
@@ -376,3 +404,33 @@ def test_recreated_manual_event_survives_batch_order(app_session_factory,
     starts = free_starts(app_session_factory, clinic_a, doctor_a, service_cleaning, day)
     assert at_tashkent(day, "09:30") not in starts, \
         "слот свободен в боте, хотя в календаре врача идёт приём"
+
+
+def test_moved_and_refilled_slot_in_one_batch(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a, service_cleaning):
+    """Админ подвинул приём и на освободившееся место поставил другого.
+
+    Обе правки приходят одним инкрементом. Если новое событие обработать
+    раньше переезда старого, оно упрётся в ещё не сдвинутый импорт — и
+    потеряется навсегда с продвинутым токеном: в базе слот свободен, в
+    календаре врача идёт приём."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    old_event = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                      end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+
+    # в Google события могут пересекаться: сперва вписан новый приём,
+    # потом старый отодвинут
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    api.move_event(CAL, old_event, at_tashkent(day, "11:00"),
+                   at_tashkent(day, "11:30"))
+
+    sync.sync_doctor(doctor_a)
+
+    starts = free_starts(app_session_factory, clinic_a, doctor_a, service_cleaning, day)
+    assert at_tashkent(day, "11:00") not in starts, "переехавший приём не заблокирован"
+    assert at_tashkent(day, "09:00") not in starts, \
+        "новый приём потерян: слот свободен в боте, занят в календаре"
