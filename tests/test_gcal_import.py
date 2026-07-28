@@ -245,3 +245,35 @@ def test_unwritten_manual_event_keeps_sync_token(app_session_factory,
         )).scalar_one()
     assert imported == 0, "hold должен был помешать вставке — иначе тест не о том"
     assert token is None, "токен продвинулся, событие врача больше не придёт"
+
+
+def test_overlapping_manual_events_do_not_freeze_sync_token(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Два ручных события внахлёст не должны застревать навсегда.
+
+    Второе никогда не ляжет в базу (exclusion constraint, а вытеснять
+    импортированное событие нечем), и «не двигать токен, пока не записано»
+    превращало синк в вечный full-обход — свой же фикс потери события
+    (ревью, 4-й проход)."""
+    from datetime import timedelta
+
+    from sqlalchemy import text as _text
+
+    bind_calendar(admin_engine, doctor_a)
+    start = at_tashkent(next_monday(), "10:00")
+    sync, api = make_sync(app_session_factory, clinic_a)
+    api.seed_manual_event(start=start, end=start + timedelta(minutes=60))
+    api.seed_manual_event(start=start + timedelta(minutes=30),
+                          end=start + timedelta(minutes=90))
+
+    sync.sync_doctor(doctor_a)
+
+    with admin_engine.begin() as conn:
+        token = conn.execute(_text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+        imported = conn.execute(_text(
+            "SELECT count(*) FROM appointment WHERE source = 'gcal_import'"
+        )).scalar_one()
+    assert imported == 1, "первое событие обязано импортироваться"
+    assert token is not None, "токен застрял на неисполнимом событии"

@@ -200,10 +200,17 @@ def test_alert_frame_uses_admin_chat_language(app_session_factory, admin_engine,
         api, admin_chat_id=admin_chat,
         lang_of=lambda chat: _admin_lang(app_session_factory, clinic_a, chat))
     escalation.notify(555, "bemor odam so'radi", {})
-
     body = api.sent[-1][1]
     assert "Эскалация" not in body and "Причина" not in body, body
     assert "/release 555" in body, "подсказка снятия обязана остаться"
+
+    # каркас переведён во ВСЕХ каналах, а не только в эскалации
+    escalation.notify_fyi(555, "vaqt yo'q", {})
+    assert "К сведению" not in api.sent[-1][1], api.sent[-1][1]
+    escalation.notify_ops("kalendar sinxronizatsiyasi to'xtadi", {})
+    assert "Системный алерт" not in api.sent[-1][1], api.sent[-1][1]
+    escalation.notify_system("zaxira nusxa olinmadi", {})
+    assert "Системный алерт" not in api.sent[-1][1], api.sent[-1][1]
 
 
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:

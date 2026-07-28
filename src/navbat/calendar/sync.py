@@ -251,11 +251,41 @@ class CalendarSync:
         written = self._try_write_manual(existing, doctor_id, event["id"], span,
                                          manual_buffer)
         if not written:
-            # живой hold: не трогаем (пациент выбирает прямо сейчас),
-            # hold истечёт за 3 минуты — заберём блок следующим циклом
+            # Кто мешает: живой hold истечёт за 3 минуты — тогда ждём и
+            # держим токен. А вот другое ручное событие внахлёст не уйдёт
+            # никогда (вытеснять импортированное нечем), и удерживать из-за
+            # него токен значит навсегда превратить инкремент в full-обход
+            if self._blocked_by_import(doctor_id, span, manual_buffer,
+                                       event["id"]):
+                log.warning("событие %s пересекается с другим ручным событием "
+                            "— в БД не попадёт, слот уже занят им", event["id"])
+                return moved, True
             log.warning("событие %s: конфликт не разрешён (живой hold?) — "
                         "повтор следующим циклом", event["id"])
         return moved, written
+
+    def _blocked_by_import(self, doctor_id: uuid.UUID,
+                           span: tuple[datetime, datetime], manual_buffer: int,
+                           event_id: str) -> bool:
+        """Мешает ли уже импортированное ручное событие (а не запись бота)."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            return bool(session.execute(
+                text("""
+                    SELECT 1 FROM appointment
+                    WHERE doctor_id = :doctor AND source = 'gcal_import'
+                      AND status IN ('hold', 'booked')
+                      AND gcal_event_id IS DISTINCT FROM :event
+                      AND tstzrange(lower(time_range),
+                                    upper(time_range)
+                                    + (buffer_min * interval '1 minute'), '[)')
+                          && tstzrange(:start,
+                                       :finish + (:buffer * interval '1 minute'),
+                                       '[)')
+                    LIMIT 1
+                """),
+                {"doctor": doctor_id, "start": span[0], "finish": span[1],
+                 "buffer": manual_buffer, "event": event_id},
+            ).scalar_one_or_none())
 
     def _try_write_manual(self, existing, doctor_id: uuid.UUID, event_id: str,
                           span: tuple[datetime, datetime], buffer_min: int) -> bool:
