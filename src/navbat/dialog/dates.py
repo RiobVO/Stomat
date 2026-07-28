@@ -59,3 +59,15 @@ def matches_time_ref(ref: str | None, slot_start: time) -> bool:
         return window[0] <= slot_start < window[1]
     hours, minutes = map(int, ref.split(":"))
     return slot_start == time(hours, minutes)
+
+
+def exact_time_ref(ref: str | None) -> time | None:
+    """Точное HH:MM как МЯГКОЕ предпочтение (не окно). None — для окон
+    morning/afternoon/evening и отсутствия ref. Нужно, чтобы некруглое
+    время (14:15 при 30-минутной сетке) не давало ложное «нет слотов»."""
+    if ref is None or ref in _TIME_WINDOWS:
+        return None
+    if not TIME_REF_RE.match(ref):
+        raise ValueError(f"time_ref вне словаря: {ref!r}")
+    hours, minutes = map(int, ref.split(":"))
+    return time(hours, minutes)

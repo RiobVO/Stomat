@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time as dt_time
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -67,6 +67,32 @@ def fsm_state(admin_engine, chat_id=CHAT) -> str:
 def appt_status(admin_engine) -> str:
     with admin_engine.begin() as conn:
         return conn.execute(text("SELECT status FROM appointment")).scalar_one()
+
+
+# ── Точное некруглое время: предпочтение, не жёсткий фильтр (M1) ──────────────
+
+def test_exact_offgrid_time_offers_nearest_not_escalation(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # пациент просит 14:15; сетка слотов 30-минутная (14:00, 14:30…) —
+    # точного совпадения нет. Раньше: «нет слотов» + эскалация. Должно:
+    # показать слоты дня, ближайший к 14:15 первым.
+    day = next_monday()
+    notifier = RecordingNotifier()
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[extr(
+                              service="cleaning", date_ref=explicit(day),
+                              time_ref="14:15")]),
+                          notifier=notifier)
+
+    reply = engine.handle_text(CHAT, "чистка в понедельник на 14:15")
+    buttons = slot_buttons(reply)
+    assert buttons, "некруглое время не должно давать «нет слотов»"
+    assert notifier.calls == [], "ложной эскалации быть не должно"
+
+    times = [slot_start(b).astimezone(TASHKENT).time() for b in buttons]
+    target = 14 * 60 + 15
+    nearest = min(times, key=lambda t: abs(t.hour * 60 + t.minute - target))
+    assert times[0] == nearest, "первым — ближайший к запрошенному времени слот"
 
 
 # ── Happy path ───────────────────────────────────────────────────────────────
