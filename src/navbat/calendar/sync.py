@@ -30,7 +30,7 @@ from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import fyi_alert, EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
-from navbat.scheduling.errors import SchedulingError
+from navbat.scheduling.errors import AppointmentNotFoundError, SchedulingError
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.calendar")
@@ -396,7 +396,6 @@ class CalendarSync:
 
     def _relocate(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,
                   victim, span: tuple[datetime, datetime], manual_buffer: int) -> None:
-        scheduler.cancel(victim.id)
         tz = self._clinic_tz()
         old_label = f"{victim.start.astimezone(tz):%d.%m %H:%M}"
         lang = self._chat_lang(victim.tg_chat_id)
@@ -404,21 +403,29 @@ class CalendarSync:
         new_start, alternatives = self._relocation_slot(
             scheduler, doctor_id, victim, span, manual_buffer, tz)
         if new_start is None:
-            self._notify_unrelocatable(victim, old_label, lang)
+            self._cancel_unrelocatable(scheduler, victim, old_label, lang)
             return
 
         try:
-            new_id = scheduler.hold(doctor_id, victim.service_id, new_start,
-                                    patient_id=victim.patient_id,
-                                    tg_chat_id=victim.tg_chat_id)
-            scheduler.confirm(new_id)
+            # перенос — ОДНА транзакция движка: старое время освобождается и
+            # новое занимается атомарно. Раньше здесь были cancel → hold →
+            # confirm тремя транзакциями, и падение процесса между ними
+            # оставляло пациента без записи навсегда: жертва отменена, замены
+            # нет, а следующий цикл синка её уже не увидит (H2)
+            scheduler.reschedule(victim.id, new_start)
+        except AppointmentNotFoundError:
+            # запись ушла из-под переноса (пациент отменил её сам между
+            # сканом жертв и этим моментом) — переносить нечего, и об отмене,
+            # которой бот не делал, сообщать нельзя
+            log.info("запись %s исчезла до переноса — пропускаю", victim.id)
+            return
         except SchedulingError:
-            # слот перехвачен конкурентной бронью между выбором и hold (либо
-            # confirm не прошёл). Жертва уже отменена — не теряем её молча:
-            # деградируем в «перенести некуда» (пациент + админ уведомлены).
+            # слот перехвачен конкурентной бронью между выбором и переносом.
+            # Приоритет у ручного события (человек в кресле) — деградируем
+            # в «перенести некуда»: пациент и админ уведомлены, не тишина
             log.warning("перенос записи %s не удался (слот перехвачен?) — "
                         "деградация в отмену", victim.id)
-            self._notify_unrelocatable(victim, old_label, lang)
+            self._cancel_unrelocatable(scheduler, victim, old_label, lang)
             return
         new_label = f"{new_start.astimezone(tz):%d.%m %H:%M}"
         if victim.tg_chat_id:
@@ -427,7 +434,7 @@ class CalendarSync:
                 conversation = load_conversation(session, victim.tg_chat_id)
                 conversation.state = "resched_offer_slots"
                 ctx = conversation.context
-                ctx.resched_id = str(new_id)
+                ctx.resched_id = str(victim.id)
                 ctx.resched_doctor = str(doctor_id)
                 ctx.service = victim.service
                 ctx.date = str(new_start.astimezone(tz).date())
@@ -443,11 +450,19 @@ class CalendarSync:
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
                   f"запись {old_label} вытеснена ручным событием — "
                               f"перенесена на {new_label}",
-                              {"appointment": str(new_id)})
+                              {"appointment": str(victim.id)})
 
-    def _notify_unrelocatable(self, victim, old_label: str, lang: str) -> None:
+    def _cancel_unrelocatable(self, scheduler: SchedulingEngine, victim,
+                              old_label: str, lang: str) -> None:
         """Жертву вытеснили, перенести некуда (нет слота ИЛИ перенос сорвался) —
-        уведомляем пациента и админа об отмене, не теряем запись молча."""
+        отменяем и уведомляем пациента с админом, не теряем запись молча."""
+        try:
+            scheduler.cancel(victim.id)
+        except AppointmentNotFoundError:
+            # запись уже неактивна (пациент отменил сам) — отменять и
+            # уведомлять нечего
+            log.info("запись %s уже неактивна — отмена не требуется", victim.id)
+            return
         self._notify_patient(victim.tg_chat_id,
                              Reply(t("conflict_cancelled", lang, old=old_label)))
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
@@ -468,8 +483,12 @@ class CalendarSync:
         for offset in range(RELOCATION_SCAN_DAYS + 1):
             day = first_day + timedelta(days=offset)
             slots = [
-                slot for slot in scheduler.find_free_slots(doctor_id,
-                                                           victim.service_id, day)
+                # собственное время жертвы не считается занятым: она его
+                # освобождает переносом (иначе соседний слот, задетый только
+                # ею, выпал бы из выбора и пациента унесло бы дальше)
+                slot for slot in scheduler.find_free_slots(
+                    doctor_id, victim.service_id, day,
+                    exclude_appointment_id=victim.id)
                 if not (slot.start < manual_hi and manual_lo < slot.end + victim_buffer)
             ]
             if slots:
