@@ -434,3 +434,41 @@ def test_moved_and_refilled_slot_in_one_batch(app_session_factory, admin_engine,
     assert at_tashkent(day, "11:00") not in starts, "переехавший приём не заблокирован"
     assert at_tashkent(day, "09:00") not in starts, \
         "новый приём потерян: слот свободен в боте, занят в календаре"
+
+
+def test_swapped_manual_events_end_up_where_google_has_them(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Два приёма поменялись временами — обе правки в одном инкременте.
+
+    Ни одна не ложится, пока живы старые привязки: каждая упирается в
+    чужую строку. Прежде обе засчитывались неисполнимыми, токен
+    продвигался, и база навсегда оставалась с зеркальными привязками.
+    Цена — не косметика: удаление одного приёма освобождало тогда ЧУЖОЙ
+    слот, и бот мог записать пациента поверх реального приёма."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    first = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                  end=at_tashkent(day, "09:30"))
+    second = api.seed_manual_event(start=at_tashkent(day, "11:00"),
+                                   end=at_tashkent(day, "11:30"))
+    sync.sync_doctor(doctor_a)
+
+    api.move_event(CAL, first, at_tashkent(day, "11:00"), at_tashkent(day, "11:30"))
+    api.move_event(CAL, second, at_tashkent(day, "09:00"), at_tashkent(day, "09:30"))
+
+    sync.sync_doctor(doctor_a)
+
+    placed = {r.gcal_event_id: r.start for r in import_rows(admin_engine)
+              if r.status == "booked"}
+    assert placed == {first: at_tashkent(day, "11:00"),
+                      second: at_tashkent(day, "09:00")}, \
+        "привязки событий к времени зеркальны настоящему календарю"
+
+    # последствие рассинхрона: снос одного приёма обязан освободить его слот
+    api.delete_event(CAL, first)
+    sync.sync_doctor(doctor_a)
+    starts = free_starts(app_session_factory, clinic_a, doctor_a, service_cleaning, day)
+    assert at_tashkent(day, "11:00") in starts, "снятый приём не освободил слот"
+    assert at_tashkent(day, "09:00") not in starts, \
+        "освободился чужой слот — бот запишет пациента поверх приёма"
