@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 import uuid as _uuid_mod
 
@@ -21,6 +22,8 @@ from navbat.dialog.replies import SERVICE_EMOJI, SERVICE_LABELS, Button, Reply
 from navbat.scheduling.calendar_rules import WEEKDAY_KEYS
 from navbat.telegram.admin_texts import (CANCEL_WORDS, DEFAULT_LANG, LANGS,
                                          TEMPLATES, at, menu_key)
+
+log = logging.getLogger("navbat.telegram.admin")
 
 # верхнее меню — reply-клавиатура. Константы = русские подписи: их знают
 # тесты и онбординг-руководство, узбекские приходят из словаря по языку чата
@@ -137,6 +140,15 @@ def booked_warning(session, day, lang: str = DEFAULT_LANG) -> str:
     if len(rows) > 5:
         shown += at("dayoff_warning_more", lang, count=len(rows) - 5)
     return at("dayoff_booked_warning", lang, count=len(rows), times=shown)
+
+
+def _failure_key(error: Exception, kind: str) -> str:
+    """Ключ строки отказа по ТИПУ ошибки слоя данных: причины разные
+    («ещё доступна пациентам» против «на неё ссылаются записи»), а разбирать
+    русский текст исключения нельзя (ревью волны C)."""
+    if isinstance(error, onboard.EntityActive):
+        return f"{kind}_still_active"
+    return f"{kind}_in_use"
 
 
 def _day_hours(shifts, lang: str = DEFAULT_LANG) -> str:
@@ -264,6 +276,10 @@ class AdminConsole:
         if kind == "dayoff":
             self._handle_dayoff_callback(chat_id, message_id, arg)
             return
+        if kind == "preview":
+            self._edit_or_send(chat_id, message_id,
+                               self._preview(self._lang(chat_id), arg))
+            return
         if kind == "faq":
             self._begin_faq_edit(chat_id, arg, message_id)
 
@@ -273,8 +289,8 @@ class AdminConsole:
         pause_btn = at("btn_resume" if paused else "btn_pause", lang)
         rows = ((at("btn_services", lang), at("btn_doctors", lang)),
                 (at("btn_about", lang), at("btn_dayoff", lang)),
-                (at("btn_stats", lang), at("btn_lang", lang)),
-                (pause_btn,))
+                (at("btn_stats", lang), at("btn_preview", lang)),
+                (at("btn_lang", lang), pause_btn))
         head = at("console_paused", lang) if paused else ""
         return Reply(f"{head}{at('console_title', lang)}", menu=rows)
 
@@ -291,9 +307,11 @@ class AdminConsole:
         if key == "btn_dayoff":
             return self._dayoff_menu(lang)
         if key == "btn_stats":
-            return self._worker._stats_reply()
+            return self._worker._stats_reply(lang=lang)
         if key == "btn_lang":
             return self._switch_lang(chat_id, lang)
+        if key == "btn_preview":
+            return self._preview(lang, DEFAULT_LANG)
         if key in ("btn_pause", "btn_resume"):
             return self._toggle_pause(chat_id)
         return self.main_menu(chat_id)
@@ -306,11 +324,40 @@ class AdminConsole:
         return Reply(at("lang_switched", new_lang), menu=menu.menu)
 
     def _toggle_pause(self, chat_id: int | None = None) -> Reply:
+        lang = self._lang(chat_id) if chat_id is not None else DEFAULT_LANG
         if self._worker._bot_paused():
-            conf = self._worker._resume_reply()
+            conf = self._worker._resume_reply(lang)
         else:
-            conf = self._worker._pause_reply("/pause")
+            conf = self._worker._pause_reply("/pause", lang)
         return Reply(conf.text, menu=self.main_menu(chat_id).menu)
+
+    # -- Превью «глазами пациента» (карта, №14) --------------------------------
+
+    def _preview(self, lang: str, patient_lang: str) -> Reply:
+        """Экраны пациента одним сообщением админ-чата.
+
+        Пациентское меню — reply-клавиатура: показать её здесь значит
+        затереть админскую, поэтому кнопки пациента рисуются текстом.
+        Язык превью живёт в самом callback'е — он про пациента, а не про
+        консоль, и не должен переключать язык владельца."""
+        if patient_lang not in LANGS:
+            patient_lang = DEFAULT_LANG
+        screens = self._worker._dialog.preview_screens(patient_lang)
+        blocks = []
+        for reply in screens:
+            block = reply.text
+            if reply.menu:
+                buttons = " · ".join(label for row in reply.menu for label in row)
+                block += at("preview_menu", lang, buttons=buttons)
+            blocks.append(block)
+        head = at("preview_head", lang,
+                  language=at(f"preview_lang_{patient_lang}", lang))
+        other = "uz" if patient_lang == "ru" else "ru"
+        return Reply(
+            head + "\n\n— — —\n\n".join(blocks),
+            button_rows=((Button(at(f"btn_preview_{other}", lang),
+                                 f"adm:preview:{other}"),),
+                         (Button(at("btn_home", lang), "adm:home"),)))
 
     # -- Раздел Услуги (P-2) -------------------------------------------------
 
@@ -363,7 +410,11 @@ class AdminConsole:
                 onboard.delete_service(self._sf, self._cid, key)
                 r = self._services_menu(lang, notice=at("svc_deleted", lang))
             except ValueError as e:
-                r = self._service_card(key, lang, notice=f"⚠️ {_esc(str(e))}")
+                # причина различается (ещё активна / есть записи), а текст
+                # исключения только русский — ключ выбираем по ТИПУ ошибки
+                log.warning("удаление услуги %s отклонено: %s", key, e)
+                r = self._service_card(key, lang,
+                                       notice=at(_failure_key(e, "svc"), lang))
             self._edit_or_send(chat_id, message_id, r)
         else:
             r = self._service_card(key, lang)
@@ -499,8 +550,9 @@ class AdminConsole:
         try:
             onboard.add_service(self._sf, self._cid, key, dur)
         except ValueError as exc:
+            log.warning("добавление услуги %s отклонено: %s", key, exc)
             self._clear_pending(chat_id)
-            return self._services_menu(lang, notice=f"⚠️ {_esc(str(exc))}")
+            return self._services_menu(lang, notice=at("svc_exists", lang))
         self._clear_pending(chat_id)
         return self._services_menu(
             lang, notice=at("svcadd_done", lang,
@@ -652,8 +704,9 @@ class AdminConsole:
                 onboard.delete_doctor(self._sf, self._cid, doc_id)
                 r = self._doctors_menu(lang, notice=at("doc_deleted", lang))
             except ValueError as e:
+                log.warning("удаление врача %s отклонено: %s", doc_id_str, e)
                 r = self._doctor_card(doc_id_str, lang,
-                                      notice=f"⚠️ {_esc(str(e))}")
+                                      notice=at(_failure_key(e, "doc"), lang))
             self._edit_or_send(chat_id, message_id, r)
         else:
             r = self._doctor_card(doc_id_str, lang)
@@ -832,21 +885,21 @@ class AdminConsole:
             doc_id_str = parts[1]
             # выбор дней начинаем с чистого листа: незавершённый выбор для
             # другого врача иначе протёк бы в этот график (C1)
-            self._set_sched_days(chat_id, set())
+            self._set_sched_days(chat_id, doc_id_str, set())
             self._sched_custom_days(chat_id, doc_id_str, message_id, selected=set())
         elif action == "day" and len(parts) >= 3:
             doc_id_str = parts[1]
             day = parts[2]
-            selected = self._get_sched_days(chat_id)
+            selected = self._get_sched_days(chat_id, doc_id_str)
             if day in selected:
                 selected.discard(day)
             else:
                 selected.add(day)
-            self._set_sched_days(chat_id, selected)
+            self._set_sched_days(chat_id, doc_id_str, selected)
             self._sched_custom_days(chat_id, doc_id_str, message_id, selected)
         elif action == "next" and len(parts) >= 2:
             doc_id_str = parts[1]
-            selected = self._get_sched_days(chat_id)
+            selected = self._get_sched_days(chat_id, doc_id_str)
             if not selected:
                 r = Reply(
                     at("sched_pick_day", lang),
@@ -871,7 +924,7 @@ class AdminConsole:
         """Выбранные дни — выходные. Пара к слиянию: без неё день, однажды
         ставший рабочим, уже нельзя было бы освободить."""
         lang = self._lang(chat_id)
-        selected = self._get_sched_days(chat_id)
+        selected = self._get_sched_days(chat_id, doc_id_str)
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
@@ -937,7 +990,7 @@ class AdminConsole:
             return Reply(
                 at("sched_shifts_invalid", lang),
                 button_rows=((Button(at("btn_cancel", lang), "adm:cancel"),),))
-        selected = self._get_sched_days(chat_id)
+        selected = self._get_sched_days(chat_id, doc_id_str)
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
@@ -1051,15 +1104,23 @@ class AdminConsole:
 
     # -- extras: sched days ---------------------------------------------------
 
-    def _get_sched_days(self, chat_id: int) -> set:
-        with tenant_transaction(self._sf, self._cid) as session:
-            conv = load_conversation(session, chat_id)
-        return set(conv.context.extras.get("adm_sch_days", []))
+    def _get_sched_days(self, chat_id: int, doc_id_str: str) -> set:
+        """Дни, отмеченные ДЛЯ ЭТОГО врача.
 
-    def _set_sched_days(self, chat_id: int, days: set) -> None:
+        Врач в ключе обязателен: сообщения консоли живут в чате долго, и тап
+        по «Далее» в старом сообщении другого врача применял бы чужой выбор."""
         with tenant_transaction(self._sf, self._cid) as session:
             conv = load_conversation(session, chat_id)
-            conv.context.extras["adm_sch_days"] = sorted(days)
+        picked = conv.context.extras.get("adm_sch_days") or {}
+        if not isinstance(picked, dict) or picked.get("doctor") != doc_id_str:
+            return set()
+        return set(picked.get("days", ()))
+
+    def _set_sched_days(self, chat_id: int, doc_id_str: str, days: set) -> None:
+        with tenant_transaction(self._sf, self._cid) as session:
+            conv = load_conversation(session, chat_id)
+            conv.context.extras["adm_sch_days"] = {"doctor": doc_id_str,
+                                                   "days": sorted(days)}
             save_conversation(session, conv)
 
     def _clear_sched_days(self, chat_id: int) -> None:

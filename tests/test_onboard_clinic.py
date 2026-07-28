@@ -168,3 +168,8 @@ def test_validate_intervals_rejects_malformed():
         _validate_intervals({"mon": [["25:00", "26:00"]]})  # некорректное время
     with pytest.raises(ValueError):
         _validate_intervals({"mon": [["09:00"]]})  # не пара
+    # день без смен — законный выходной, но неделя целиком из таких — не
+    # график: врач остался бы без рабочих часов незаметно (ревью волны C)
+    assert _validate_intervals({"mon": [["09:00", "18:00"]], "sun": []})
+    with pytest.raises(ValueError):
+        _validate_intervals({"mon": [], "tue": []})

@@ -64,6 +64,17 @@ SERVICES = {  # (длительность мин, цена сум|None)
 }
 
 
+class EntityActive(ValueError):
+    """Сущность ещё доступна пациентам — сначала скрыть.
+
+    Отдельный тип, а не текст: консоль показывает причину на языке
+    владельца и не должна разбирать русское сообщение (ревью волны C)."""
+
+
+class EntityInUse(ValueError):
+    """На сущность ссылаются записи — физическое удаление запрещено."""
+
+
 def _parse_hhmm(s: str) -> tuple[int, int]:
     h, _, m = str(s).partition(":")
     hh, mm = int(h), int(m)
@@ -86,6 +97,10 @@ def _validate_intervals(intervals: dict) -> dict:
                 raise ValueError(f"{day}: интервал должен быть [начало, конец], не {span}")
             if _parse_hhmm(span[0]) >= _parse_hhmm(span[1]):
                 raise ValueError(f"{day}: начало {span[0]} не раньше конца {span[1]}")
+    # пустой список смен = выходной, но неделя целиком из выходных — не
+    # график: врача убирают из записи кнопкой «Скрыть», а не пустым графиком
+    if not any(spans for spans in intervals.values()):
+        raise ValueError("в графике нет ни одного рабочего дня")
     return intervals
 
 
@@ -335,13 +350,13 @@ def delete_doctor(session_factory, clinic_id: uuid.UUID,
             {"d": doctor_id},
         ).scalar_one_or_none()
         if active:
-            raise ValueError("врач доступен пациентам — сначала скройте его")
+            raise EntityActive("врач доступен пациентам — сначала скройте его")
         refs = session.execute(
             text("SELECT count(*) FROM appointment WHERE doctor_id = :d"),
             {"d": doctor_id},
         ).scalar_one()
         if refs:
-            raise ValueError(
+            raise EntityInUse(
                 f"у врача есть записи ({refs}) — удалить нельзя, деактивируйте")
         # условие в самом DELETE, а не только в прочитанном выше SELECT:
         # активация параллельной транзакцией между чтением и удалением иначе
@@ -352,7 +367,7 @@ def delete_doctor(session_factory, clinic_id: uuid.UUID,
             {"d": doctor_id},
         ).scalar_one_or_none()
     if deleted is None:
-        raise ValueError(f"врач {doctor_id} не найден или доступен пациентам")
+        raise EntityActive(f"врач {doctor_id} не найден или доступен пациентам")
 
 
 def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
@@ -371,14 +386,14 @@ def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
         if sid is None:
             raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
         if row.is_active:
-            raise ValueError("услуга доступна пациентам — сначала скройте её")
+            raise EntityActive("услуга доступна пациентам — сначала скройте её")
         refs = session.execute(
             text("SELECT (SELECT count(*) FROM appointment WHERE service_id = :s) "
                  "+ (SELECT count(*) FROM waitlist WHERE service_id = :s)"),
             {"s": sid},
         ).scalar_one()
         if refs:
-            raise ValueError(
+            raise EntityInUse(
                 f"на услугу есть записи ({refs}) — удалить нельзя, деактивируйте")
         # см. delete_doctor: активность проверяется атомарно с удалением
         deleted = session.execute(
@@ -387,7 +402,7 @@ def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
             {"s": sid},
         ).scalar_one_or_none()
         if deleted is None:
-            raise ValueError("услуга доступна пациентам — сначала скройте её")
+            raise EntityActive("услуга доступна пациентам — сначала скройте её")
 
 
 def add_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:

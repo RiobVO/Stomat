@@ -199,6 +199,27 @@ def test_dayoff_ignores_bookings_of_other_days(app_session_factory, admin_engine
     assert "запис" not in admin_text(api).lower()
 
 
+def test_dayoff_warning_caps_the_list_but_keeps_the_count(app_session_factory,
+                                                          admin_engine, clinic_a,
+                                                          doctor_a,
+                                                          service_cleaning):
+    """Плотный день не должен раздувать сообщение: времена показываем
+    первые пять, но общее число обязано быть честным."""
+    target = future_workday(7)
+    for hour in range(9, 16):  # 7 записей
+        _book_at(admin_engine, clinic_a, doctor_a, service_cleaning, target,
+                 f"{hour:02d}:00")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, f"/dayoff {target:%d.%m}")
+
+    out = admin_text(api)
+    assert "7" in out, f"нет общего числа записей: {out}"
+    assert "09:00" in out and "13:00" in out, out
+    assert "15:00" not in out, "список должен быть обрезан"
+    assert "ещё 2" in out, f"не сказано, сколько скрыто: {out}"
+
+
 def test_dayoff_button_warns_about_existing_bookings(app_session_factory,
                                                      admin_engine, clinic_a,
                                                      doctor_a, service_cleaning):
