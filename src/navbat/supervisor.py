@@ -31,7 +31,7 @@ from navbat.nlu.wrappers import (
 from navbat.onboard import DEMO_CLINIC_ID, DEV_ENC_KEY
 from navbat.reminders import ReminderService
 from navbat.telegram.api import TelegramAPI, TelegramAPIError
-from navbat.telegram.app import build_extractor, load_clinic_credentials
+from navbat.telegram.app import build_dialog_extractor, load_clinic_credentials
 from navbat.telegram.escalation import TelegramEscalation
 from navbat.telegram.transport import PollingTransport
 from navbat.telegram.worker import UpdateWorker
@@ -191,11 +191,8 @@ def main() -> int:
     notifier = TelegramEscalation(tg_api, credentials.admin_chat_id)
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
-    if args.real:
-        extractor = build_real_extractor(session_factory, args.clinic, notifier)
-        log.warning("NLU: gpt-4o-mini — каждое сообщение стоит денег")
-    else:
-        extractor = build_extractor(use_real=False)
+    extractor = build_dialog_extractor(args.real, session_factory,
+                                       args.clinic, notifier)
 
     # календарь: sync-цикл + freeBusy-guard перед confirm
     slot_guard = None
