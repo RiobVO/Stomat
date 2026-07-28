@@ -17,7 +17,7 @@ import httpx
 from pydantic import ValidationError
 
 from navbat.nlu.extractor import ExtractionError, ProviderDownError
-from navbat.nlu.schema import Extraction
+from navbat.nlu.schema import Extraction, SERVICE_KEYS
 
 log = logging.getLogger("navbat.nlu")
 
@@ -36,8 +36,7 @@ _RESPONSE_SCHEMA = {
         "intent": {"type": "STRING",
                    "enum": ["book", "reschedule", "cancel", "question", "other"]},
         "service": {"type": "STRING", "nullable": True,
-                    "enum": ["cleaning", "filling", "extraction", "implant",
-                             "crown", "whitening", "braces", "checkup", "xray"]},
+                    "enum": list(SERVICE_KEYS)},
         "doctor": {"type": "STRING", "nullable": True},
         "date_ref": {"type": "STRING", "nullable": True},
         "time_ref": {"type": "STRING", "nullable": True},
