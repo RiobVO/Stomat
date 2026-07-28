@@ -106,3 +106,24 @@ def test_every_template_renders_with_samples(key, lang):
     ловит кривые скобки и опечатки в именах подстановок."""
     rendered = t(key, lang, **SAMPLE_VALUES)
     assert "{" not in rendered and "}" not in rendered
+
+
+# ── Пакет для вычитки носителем (карта готовности, №20) ───────────────────
+
+def _review_doc() -> str:
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    return (root / "docs" / "UZ_STRINGS.md").read_text(encoding="utf-8")
+
+
+def test_review_package_covers_every_uzbek_string():
+    """Носителю отдают docs/UZ_STRINGS.md. Пакет уже успел отстать от кода
+    на 28 пациентских строк и всю админ-консоль — новая строка не должна
+    появляться в боте, минуя вычитку."""
+    from navbat.telegram.admin_texts import TEMPLATES as ADMIN_TEMPLATES
+
+    doc = _review_doc()
+    missing = [key for key in list(TEMPLATES) + list(ADMIN_TEMPLATES)
+               if f"`{key}`" not in doc]
+    assert not missing, ("строки мимо пакета для носителя: "
+                         + ", ".join(sorted(missing)))
