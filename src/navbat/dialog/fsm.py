@@ -24,13 +24,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import Conversation, load_conversation, save_conversation
 from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
-from navbat.dialog import services_repo
+from navbat.dialog import clinic_repo, doctors_repo, services_repo
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -415,11 +414,8 @@ class DialogEngine:
     def _closed_now(self, session: Session) -> bool:
         """Клиника вне рабочего окна прямо сейчас (выходной/праздник — тоже)."""
         today = self._today(session)
-        schedules = session.execute(
-            text("SELECT working_intervals FROM doctor")).scalars().all()
-        holidays = set(session.execute(
-            text("SELECT date FROM holiday WHERE date = :day"), {"day": today}
-        ).scalars())
+        schedules = doctors_repo.working_intervals(session)
+        holidays = clinic_repo.holidays_on(session, today)
         bounds = open_bounds(schedules, today, self._clinic_tz(session), holidays)
         if bounds is None:
             return True
@@ -782,17 +778,11 @@ class DialogEngine:
                 if k not in _PII_CONTEXT_KEYS}
 
     def _clinic_name(self, session: Session) -> str:
-        return session.execute(
-            text("SELECT name FROM clinic "
-                 "WHERE id = current_setting('app.clinic_id')::uuid")
-        ).scalar_one()
+        return clinic_repo.clinic_name(session)
 
     def _clinic_tz(self, session: Session) -> ZoneInfo:
         if self._tz is None:
-            self._tz = ZoneInfo(session.execute(
-                text("SELECT timezone FROM clinic "
-                     "WHERE id = current_setting('app.clinic_id')::uuid")
-            ).scalar_one())
+            self._tz = ZoneInfo(clinic_repo.clinic_timezone(session))
         return self._tz
 
     def _today(self, session: Session) -> date:
@@ -840,13 +830,7 @@ class DialogEngine:
 
     def _doctors(self, session: Session,
                  only_id: str | None = None) -> list[tuple[uuid.UUID, str | None]]:
-        rows = session.execute(
-            text("SELECT id, name_encrypted FROM doctor ORDER BY id")
-        ).all()
-        doctors = [
-            (row.id, decrypt_text(row.name_encrypted) if row.name_encrypted else None)
-            for row in rows
-        ]
+        doctors = doctors_repo.doctor_list(session)
         if only_id:
             doctors = [d for d in doctors if str(d[0]) == only_id]
         return doctors
