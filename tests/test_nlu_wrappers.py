@@ -105,3 +105,37 @@ def test_plain_name_does_not_hit_nlu(app_session_factory, admin_engine, clinic_a
 
     engine.handle_text(CHAT, "Алишер")
     assert fsm_state(admin_engine) == "awaiting_phone", "имя принято без NLU"
+
+
+class _RecordingScript:
+    """FakeExtractor + журнал полученных текстов — чтобы доказать, что
+    PII (имя) не дошёл до LLM, а не только что состояние верное."""
+
+    def __init__(self, script):
+        self._script = list(script)
+        self.texts: list[str] = []
+
+    def extract(self, message: str):
+        self.texts.append(message)
+        if self._script:
+            item = self._script.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        raise ExtractionError(f"скрипт исчерпан: {message!r}")
+
+
+def test_long_name_does_not_hit_nlu(app_session_factory, admin_engine, clinic_a,
+                                    doctor_a, service_cleaning):
+    # длинное ФИО (>30 символов) без «?» — НЕ вопрос; раньше эвристика
+    # длины гнала его в LLM (утечка PII)
+    rec = _RecordingScript([extr(service="cleaning",
+                                 date_ref=explicit(next_monday()))])
+    engine = DialogEngine(app_session_factory, clinic_a, extractor=rec)
+    offer = engine.handle_text(CHAT, "чистку в понедельник")
+    engine.handle_action(CHAT, slot_buttons(offer)[0].action)
+
+    long_name = "Абдурахмонов Жасурбек Шухратович"  # 32 символа, без «?»
+    engine.handle_text(CHAT, long_name)
+    assert long_name not in rec.texts, "имя ушло в LLM (утечка PII)"
+    assert fsm_state(admin_engine) == "awaiting_phone", "имя принято без NLU"
