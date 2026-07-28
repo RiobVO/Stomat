@@ -12,3 +12,6 @@ spike_nlu/data/ft_*.jsonl
 spike_nlu/.harvest_login.json
 live_poke/
 photo_*.jpg
+
+# служебный каталог Claude Code (worktrees и локальные настройки)
+.claude/
