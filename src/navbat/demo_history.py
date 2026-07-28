@@ -196,15 +196,24 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
                       created: int, doctors, services, cursors, shifts,
                       after_hours: bool, not_after: datetime | None = None) -> int:
     """Одна запись: приём внутри смены врача, оформление — раньше приёма."""
-    doctor = _pick_doctor(doctors, created)
-    doctor_id = doctor.id
-    if not shifts.get(doctor_id) or cursors.get(doctor_id) is None:
-        return 0  # у этого врача сегодня выходной
     service = _pick_service(services, created)
-    start = _fit_into_shift(cursors[doctor_id], service.duration_min,
-                            shifts[doctor_id])
+    # выбор врача не продвигается счётчиком созданных записей: если у него
+    # кончилась смена, все следующие итерации дня выбирали бы его же и день
+    # обрывался на середине — пробуем остальных по тому же порядку
+    doctor = start = None
+    for shift in range(len(doctors)):
+        candidate = _pick_doctor(doctors, created + shift)
+        if (not shifts.get(candidate.id)
+                or cursors.get(candidate.id) is None):
+            continue  # у этого врача сегодня выходной
+        at_time = _fit_into_shift(cursors[candidate.id], service.duration_min,
+                                  shifts[candidate.id])
+        if at_time is not None:
+            doctor, start = candidate, at_time
+            break
     if start is None:
-        return 0  # смены врача на сегодня исчерпаны
+        return 0  # смены всех врачей на сегодня исчерпаны
+    doctor_id = doctor.id
     finish = start + timedelta(minutes=service.duration_min)
     if not_after is not None and finish > not_after:
         return 0  # сегодняшний день наполняем только прошедшими часами
