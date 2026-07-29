@@ -24,7 +24,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
-from navbat.dialog.conversation import Conversation, load_conversation, save_conversation
+from navbat.dialog.conversation import (
+    Conversation, DialogContext, load_conversation, save_conversation)
 from navbat.dialog.dates import exact_time_ref, matches_time_ref, resolve_date_ref
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import create_patient, find_patient_by_chat, normalize_phone
@@ -59,15 +60,6 @@ def _looks_like_question(message: str) -> bool:
 MAX_NLU_FAILURES = 2     # подряд; дальше — эскалация
 SLOTS_PER_REPLY = 4      # кнопок со временем в одном ответе
 NEAREST_DAY_SCAN = 14    # дней вперёд при поиске свободного дня
-
-# ключи контекста, относящиеся к текущему сценарию (чистятся по завершении)
-_BOOKING_KEYS = ("service", "date", "time_ref", "doctor_id", "doctor_miss",
-                 "appointment_id", "slot_start", "slot_doctor", "pending_name",
-                 "resched_id", "resched_doctor", "cancel_id", "cancel_when",
-                 "cancel_via")
-
-# ключи контекста с PII пациента — НЕ выносить в эскалацию админу (m1)
-_PII_CONTEXT_KEYS = ("pending_name",)
 
 _MENU_KEYS = ("btn_menu_book", "btn_menu_resched", "btn_menu_cancel",
               "btn_menu_prices", "btn_menu_lang")
@@ -111,11 +103,11 @@ class DialogEngine:
             conv = load_conversation(session, chat_id)
             reply = self._handle_command_or_menu(session, conv, message)
             if reply is None:
-                first_contact = "greeting_shown" not in conv.context
+                first_contact = not conv.context.greeting_shown
                 reply = self._process_text(session, conv, message)
                 if first_contact:
                     # P0 BRIEF: дисклеймер при первом контакте
-                    conv.context["greeting_shown"] = True
+                    conv.context.greeting_shown = True
                     greeting = t("greeting", self._lang(conv),
                                  clinic=self._clinic_name(session))
                     reply = Reply(f"{greeting}\n\n{reply.text}", reply.buttons)
@@ -160,8 +152,8 @@ class DialogEngine:
         self._abort_pending(conv)
         # выход из заморозки = чистый счёт: иначе унаследованный счётчик ≥2
         # эскалировал бы повторно с первого же сбоя NLU
-        conv.context["nlu_failures"] = 0
-        if "lang" not in conv.context:
+        conv.context.nlu_failures = 0
+        if conv.context.lang is None:
             return self._lang_screen(conv)
         return self._greeting_with_menu(session, conv)
 
@@ -172,7 +164,7 @@ class DialogEngine:
 
     def _greeting_with_menu(self, session: Session, conv: Conversation) -> Reply:
         lang = self._lang(conv)
-        conv.context["greeting_shown"] = True
+        conv.context.greeting_shown = True
         greeting = t("greeting", lang, clinic=self._clinic_name(session))
         return Reply(f"{greeting}\n\n{t('menu_hint', lang)}", menu=menu_rows(lang))
 
@@ -184,7 +176,7 @@ class DialogEngine:
         (протухший/уже отменённый — нет: цель и так была достигнута).
         """
         cancelled = False
-        appt = conv.context.get("appointment_id")
+        appt = conv.context.appointment_id
         if appt:
             with suppress(AppointmentNotFoundError):
                 self._sched.cancel(uuid.UUID(appt))
@@ -236,9 +228,9 @@ class DialogEngine:
             extraction = self._extractor.extract(message)
         except ExtractionError:
             return self._on_nlu_failure(conv)
-        conv.context["nlu_failures"] = 0
+        conv.context.nlu_failures = 0
         lang = "ru" if extraction.language == "mixed" else extraction.language
-        conv.context["lang"] = lang
+        conv.context.lang = lang
 
         reply = self._route_intent(session, conv, extraction)
         return self._with_medical_disclaimer(conv, extraction, reply)
@@ -257,10 +249,10 @@ class DialogEngine:
             return self._offer_resched_slots(session, conv)
         if booking_like:
             if extraction.intent == "question" and not extraction.service \
-                    and not conv.context.get("service") \
+                    and not conv.context.service \
                     and self._service_id(session, "checkup") is not None:
                 # наличие спрашивают без услуги — сетку считаем по осмотру
-                conv.context["service"] = "checkup"
+                conv.context.service = "checkup"
             return self._continue_booking(session, conv, extraction)
         if extraction.intent == "question":
             answer = self._answer_question(session, conv, extraction)
@@ -273,8 +265,8 @@ class DialogEngine:
 
     def _on_nlu_failure(self, conv: Conversation) -> Reply:
         lang = self._lang(conv)
-        failures = conv.context.get("nlu_failures", 0) + 1
-        conv.context["nlu_failures"] = failures
+        failures = conv.context.nlu_failures + 1
+        conv.context.nlu_failures = failures
         if failures >= MAX_NLU_FAILURES:
             self._notifier.notify(conv.chat_id, "2 кривых ответа NLU подряд",
                                   self._escalation_context(conv))
@@ -284,8 +276,8 @@ class DialogEngine:
 
     def _with_medical_disclaimer(self, conv: Conversation, extraction: Extraction,
                                  reply: Reply) -> Reply:
-        if extraction.is_medical and not conv.context.get("medical_shown"):
-            conv.context["medical_shown"] = True
+        if extraction.is_medical and not conv.context.medical_shown:
+            conv.context.medical_shown = True
             disclaimer = MEDICAL_DISCLAIMER[self._lang(conv)]
             return Reply(f"{disclaimer}\n\n{reply.text}", reply.buttons)
         return reply
@@ -297,29 +289,30 @@ class DialogEngine:
         ctx = conv.context
         if conv.state == "cancel_confirm":
             # пациент передумал отменять и начал новую запись
-            ctx.pop("cancel_id", None)
-            ctx.pop("cancel_when", None)
+            ctx.cancel_id = None
+            ctx.cancel_when = None
         if extraction.service:
-            ctx["service"] = extraction.service
+            ctx.service = extraction.service
         self._merge_when(session, ctx, extraction)
         if extraction.doctor:
             self._resolve_doctor(session, ctx, extraction.doctor)
         return self._advance_booking(session, conv)
 
-    def _merge_when(self, session: Session, ctx: dict, extraction: Extraction) -> None:
+    def _merge_when(self, session: Session, ctx: DialogContext,
+                    extraction: Extraction) -> None:
         if extraction.date_ref:
             resolved = resolve_date_ref(extraction.date_ref, self._today(session))
-            ctx["date"] = resolved.isoformat()
+            ctx.date = resolved.isoformat()
         if extraction.time_ref:
-            ctx["time_ref"] = extraction.time_ref
+            ctx.time_ref = extraction.time_ref
 
     def _advance_booking(self, session: Session, conv: Conversation) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
-        if not ctx.get("service"):
+        if not ctx.service:
             conv.state = "booking_collect"
             return Reply(t("ask_service", lang), self._service_buttons(session, lang))
-        if not ctx.get("date"):
+        if not ctx.date:
             conv.state = "booking_collect"
             return Reply(t("ask_date", lang), self._date_buttons(session, lang))
         return self._offer_slots(session, conv)
@@ -328,18 +321,18 @@ class DialogEngine:
                      note: str | None = None) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
-        service_id = self._service_id(session, ctx["service"])
+        service_id = self._service_id(session, ctx.service)
         if service_id is None:
             # клиника не оказывает услугу из NLU — спрашиваем из своего каталога
-            ctx.pop("service", None)
+            ctx.service = None
             conv.state = "booking_collect"
             return Reply(t("ask_service", lang), self._service_buttons(session, lang))
 
-        doctors = self._doctors(session, ctx.get("doctor_id"))
+        doctors = self._doctors(session, ctx.doctor_id)
         tz = self._clinic_tz(session)
-        asked = date.fromisoformat(ctx["date"])
+        asked = date.fromisoformat(ctx.date)
         day, slots = self._collect_slots(session, doctors, service_id, asked,
-                                         ctx.get("time_ref"))
+                                         ctx.time_ref)
         if not slots:
             self._notifier.notify(conv.chat_id, "нет слотов на 2 недели вперёд",
                                   self._escalation_context(conv))
@@ -356,11 +349,12 @@ class DialogEngine:
         buttons.append(Button(t("btn_other_time", lang), "ask_date"))
 
         prefix = ""
-        if ctx.pop("doctor_miss", None):
+        if ctx.doctor_miss:
+            ctx.doctor_miss = False
             prefix = t("doctor_not_found", lang) + "\n"
         if note:
             prefix = t(note, lang) + "\n" + prefix
-        ctx["date"] = day.isoformat()
+        ctx.date = day.isoformat()
         conv.state = "booking_offer_slots"
         return Reply(prefix + self._offer_body(session, lang, asked, day),
                      tuple(buttons))
@@ -429,8 +423,8 @@ class DialogEngine:
             return Reply(t("escalated", lang))
         kind, _, rest = action.partition(":")
         if kind == "lang":
-            conv.context["lang"] = rest
-            if not conv.context.get("greeting_shown"):
+            conv.context.lang = rest
+            if not conv.context.greeting_shown:
                 return self._greeting_with_menu(session, conv)
             # посреди сценария _with_reprompt отдаёт inline-кнопки шага, и menu
             # из note теряется — reply_markup в Telegram один. Reply-клавиатура
@@ -438,15 +432,15 @@ class DialogEngine:
             note = Reply(t("lang_changed", rest), menu=menu_rows(rest))
             return self._with_reprompt(session, conv, note)
         if kind == "service":
-            conv.context["service"] = rest
+            conv.context.service = rest
             return self._advance_booking(session, conv)
         if kind == "date":
-            conv.context["date"] = rest
-            if conv.context.get("resched_id"):
+            conv.context.date = rest
+            if conv.context.resched_id:
                 return self._offer_resched_slots(session, conv)
             return self._advance_booking(session, conv)
         if kind == "ask_date":
-            if not conv.context.get("resched_id"):
+            if not conv.context.resched_id:
                 conv.state = "booking_collect"
             return Reply(t("ask_date", lang), self._date_buttons(session, lang))
         if kind == "slot":
@@ -474,7 +468,7 @@ class DialogEngine:
                         doctor_id: str, start_iso: str) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
-        service_id = self._service_id(session, ctx["service"])
+        service_id = self._service_id(session, ctx.service)
         start = datetime.fromisoformat(start_iso)
         patient = find_patient_by_chat(session, conv.chat_id)
         try:
@@ -486,10 +480,10 @@ class DialogEngine:
         except (SlotTakenError, InvalidSlotError):
             return self._offer_slots(session, conv, note="slot_taken")
 
-        ctx["slot_start"] = start_iso
-        ctx["slot_doctor"] = dict(self._doctors(session)).get(uuid.UUID(doctor_id))
+        ctx.slot_start = start_iso
+        ctx.slot_doctor = dict(self._doctors(session)).get(uuid.UUID(doctor_id))
         if patient is None:
-            ctx["appointment_id"] = str(appointment_id)
+            ctx.appointment_id = str(appointment_id)
             conv.state = "awaiting_name"
             return Reply(t("ask_name", lang))
         return self._confirm_and_finish(session, conv, appointment_id)
@@ -504,7 +498,7 @@ class DialogEngine:
             if extraction is not None and extraction.intent == "question":
                 answer = self._answer_question(session, conv, extraction)
                 return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
-        conv.context["pending_name"] = message.strip()
+        conv.context.pending_name = message.strip()
         conv.state = "awaiting_phone"
         lang = self._lang(conv)
         return Reply(t("ask_phone", lang),
@@ -548,9 +542,9 @@ class DialogEngine:
             return Reply(t("escalated", lang))
 
         patient_id = create_patient(session, conv.chat_id,
-                                    conv.context["pending_name"], phone)
+                                    conv.context.pending_name, phone)
         conv.patient_id = str(patient_id)
-        appointment_id = uuid.UUID(conv.context["appointment_id"])
+        appointment_id = uuid.UUID(conv.context.appointment_id)
         reply = self._confirm_and_finish(session, conv, appointment_id)
         if conv.state == "idle":
             # привязка пациента к записи — после confirm: его транзакция
@@ -568,16 +562,16 @@ class DialogEngine:
                                                                    appointment_id):
             # календарь уже занят (sync ещё не довёз) — слот не наш
             self._sched.cancel(appointment_id)
-            ctx.pop("appointment_id", None)
+            ctx.appointment_id = None
             return self._offer_slots(session, conv, note="slot_taken")
         try:
             self._sched.confirm(appointment_id)
         except HoldExpiredError:
-            ctx.pop("appointment_id", None)
+            ctx.appointment_id = None
             return self._offer_slots(session, conv, note="hold_expired")
-        local = datetime.fromisoformat(ctx["slot_start"]).astimezone(self._clinic_tz(session))
-        doctor = f", {ctx['slot_doctor']}" if ctx.get("slot_doctor") else ""
-        reply = Reply(t("booked", lang, service=service_label(ctx["service"], lang),
+        local = datetime.fromisoformat(ctx.slot_start).astimezone(self._clinic_tz(session))
+        doctor = f", {ctx.slot_doctor}" if ctx.slot_doctor else ""
+        reply = Reply(t("booked", lang, service=service_label(ctx.service, lang),
                         when=f"{local:%d.%m %H:%M}", doctor=doctor))
         self._clear_booking(conv)
         conv.state = "idle"
@@ -594,14 +588,14 @@ class DialogEngine:
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("resched_none", lang))
-        ctx["resched_id"] = str(appointment.id)
-        ctx["resched_doctor"] = str(appointment.doctor_id)
+        ctx.resched_id = str(appointment.id)
+        ctx.resched_doctor = str(appointment.doctor_id)
         # услугу не переспрашиваем — переносим ту же; перенос остаётся
         # у того же врача (engine.reschedule врача не меняет)
-        ctx["service"] = self._service_name(session, appointment.service_id) or "checkup"
+        ctx.service = self._service_name(session, appointment.service_id) or "checkup"
         self._merge_when(session, ctx, extraction)
         conv.state = "resched_offer_slots"
-        if not ctx.get("date"):
+        if not ctx.date:
             return Reply(t("ask_date", lang), self._date_buttons(session, lang))
         return self._offer_resched_slots(session, conv)
 
@@ -609,12 +603,12 @@ class DialogEngine:
                              note: str | None = None) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
-        service_id = self._service_id(session, ctx["service"])
-        doctors = self._doctors(session, ctx["resched_doctor"])
+        service_id = self._service_id(session, ctx.service)
+        doctors = self._doctors(session, ctx.resched_doctor)
         tz = self._clinic_tz(session)
-        asked = date.fromisoformat(ctx["date"])
+        asked = date.fromisoformat(ctx.date)
         day, slots = self._collect_slots(session, doctors, service_id, asked,
-                                         ctx.get("time_ref"))
+                                         ctx.time_ref)
         if not slots:
             self._notifier.notify(conv.chat_id,
                                   "перенос: нет слотов на 2 недели вперёд",
@@ -629,7 +623,7 @@ class DialogEngine:
         ]
         buttons.append(Button(t("btn_other_time", lang), "ask_date"))
         prefix = t(note, lang) + "\n" if note else ""
-        ctx["date"] = day.isoformat()
+        ctx.date = day.isoformat()
         conv.state = "resched_offer_slots"
         return Reply(prefix + self._offer_body(session, lang, asked, day),
                      tuple(buttons))
@@ -638,7 +632,7 @@ class DialogEngine:
         ctx = conv.context
         lang = self._lang(conv)
         try:
-            self._sched.reschedule(uuid.UUID(ctx["resched_id"]),
+            self._sched.reschedule(uuid.UUID(ctx.resched_id),
                                    datetime.fromisoformat(start_iso))
         except (SlotTakenError, InvalidSlotError):
             return self._offer_resched_slots(session, conv, note="slot_taken")
@@ -662,9 +656,9 @@ class DialogEngine:
         """Кнопка «Отменить» из напоминания: запись известна по id."""
         appointment = appointments_repo.active_by_id(session, appointment_id)
         reply = self._begin_cancel(session, conv, appointment)
-        if conv.context.get("cancel_id"):
+        if conv.context.cancel_id:
             # источник отмены — напоминание: метрика предотвращённых неявок
-            conv.context["cancel_via"] = "reminder"
+            conv.context.cancel_via = "reminder"
         return reply
 
     def _begin_cancel(self, session: Session, conv: Conversation,
@@ -676,23 +670,23 @@ class DialogEngine:
             conv.state = "idle"
             return Reply(t("cancel_none", lang))
         local = appointment.start.astimezone(self._clinic_tz(session))
-        ctx["cancel_id"] = str(appointment.id)
-        ctx["cancel_when"] = f"{local:%d.%m %H:%M}"
+        ctx.cancel_id = str(appointment.id)
+        ctx.cancel_when = f"{local:%d.%m %H:%M}"
         conv.state = "cancel_confirm"
         return self._cancel_prompt(conv)
 
     def _cancel_prompt(self, conv: Conversation) -> Reply:
         lang = self._lang(conv)
         return Reply(
-            t("cancel_confirm_q", lang, when=conv.context["cancel_when"]),
+            t("cancel_confirm_q", lang, when=conv.context.cancel_when),
             (Button(t("btn_yes", lang), "cancel_yes"),
              Button(t("btn_no", lang), "cancel_no")),
         )
 
     def _on_cancel_confirmed(self, session: Session, conv: Conversation) -> Reply:
         lang = self._lang(conv)
-        cancel_id = conv.context.get("cancel_id")
-        cancel_via = conv.context.get("cancel_via")  # до _clear_booking
+        cancel_id = conv.context.cancel_id
+        cancel_via = conv.context.cancel_via  # до _clear_booking
         self._clear_booking(conv)
         conv.state = "idle"
         try:
@@ -757,17 +751,15 @@ class DialogEngine:
             return None
 
     def _lang(self, conv: Conversation) -> str:
-        return conv.context.get("lang", "ru")
+        return conv.context.lang or "ru"
 
     def _clear_booking(self, conv: Conversation) -> None:
-        for key in _BOOKING_KEYS:
-            conv.context.pop(key, None)
+        conv.context.clear_booking()
 
     def _escalation_context(self, conv: Conversation) -> dict:
         """Контекст для эскалации без PII пациента (имя) — он уходит
         в админ-чат и логи (m1)."""
-        return {k: v for k, v in conv.context.items()
-                if k not in _PII_CONTEXT_KEYS}
+        return conv.context.escalation_dict()
 
     def _clinic_name(self, session: Session) -> str:
         return clinic_repo.clinic_name(session)
@@ -816,14 +808,15 @@ class DialogEngine:
             doctors = [d for d in doctors if str(d[0]) == only_id]
         return doctors
 
-    def _resolve_doctor(self, session: Session, ctx: dict, name: str) -> None:
+    def _resolve_doctor(self, session: Session, ctx: DialogContext,
+                        name: str) -> None:
         target = name.casefold()
         for doctor_id, doctor_name in self._doctors(session):
             if doctor_name and (target in doctor_name.casefold()
                                 or doctor_name.casefold() in target):
-                ctx["doctor_id"] = str(doctor_id)
+                ctx.doctor_id = str(doctor_id)
                 return
-        ctx["doctor_miss"] = True
+        ctx.doctor_miss = True
 
     def _slot_label(self, start: datetime, doctor_name: str | None,
                     tz: ZoneInfo, multi_doctor: bool) -> str:

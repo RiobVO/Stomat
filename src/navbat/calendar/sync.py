@@ -320,11 +320,12 @@ class CalendarSync:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
                 conversation = load_conversation(session, victim.tg_chat_id)
                 conversation.state = "resched_offer_slots"
-                conversation.context.update({
-                    "resched_id": str(new_id), "resched_doctor": str(doctor_id),
-                    "service": victim.service, "date": str(new_start.astimezone(tz).date()),
-                    "lang": lang,
-                })
+                ctx = conversation.context
+                ctx.resched_id = str(new_id)
+                ctx.resched_doctor = str(doctor_id)
+                ctx.service = victim.service
+                ctx.date = str(new_start.astimezone(tz).date())
+                ctx.lang = lang
                 save_conversation(session, conversation)
             buttons = tuple(
                 Button(f"{alt.astimezone(tz):%d.%m %H:%M}", f"reslot:{alt.isoformat()}")
