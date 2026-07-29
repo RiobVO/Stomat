@@ -26,6 +26,10 @@ class _RecordingPrimary:
 def test_real_path_masks_phone_before_llm(app_session_factory, clinic_a,
                                           monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # без каскада — один primary
+    # OpenAIExtractor подменён ниже — реальный ключ не нужен; ставим dummy,
+    # чтобы guard --real не звал sys.exit (иначе тест зелён лишь там, где
+    # ключ есть в окружении — CI без ключа падал, C1-регрессия не при чём)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     primary = _RecordingPrimary()
     monkeypatch.setattr(openai_mod, "OpenAIExtractor", lambda **kw: primary)
 
