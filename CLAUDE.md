@@ -18,14 +18,16 @@
 - P3 РЕФАКТОРИНГ ЯДРА В РАБОТЕ (решение пользователя «весь P3 по порядку»,
   порядок по риску R3→R1→R2→R4): R3 единый каталог услуг ГОТОВ (857608d);
   R1a service-repo ГОТОВ (92e6781); R1b clinic_repo+doctors_repo ГОТОВ
-  (88e314b — clinic name/tz/holidays_on + doctor working_intervals/list).
-  Тестов 515, всё в origin/master.
-- СЛЕДУЮЩИЙ ШАГ: продолжить P3 — R1c (appointments_repo, 4 SQL в fsm.py:
-  _guard_allows lookup, _find_active_appointment, time_range/lower-start
-  по записи, patient_id UPDATE при привязке), затем R2 (типизированное
-  состояние вместо conv.context dict + _BOOKING_KEYS), R4 (разбить
-  god-object DialogEngine). Каждый кусок — юнит-тесты репозитория +
-  серия ×8, коммит. Карта SQL и план — docs/PILOT_HARDENING.md разд. P3.
+  (88e314b); R1c appointments_repo ГОТОВ (5c1b1f7 — active_by_chat/by_id,
+  slot_bounds, set_patient). R1 закрыт целиком: fsm.py больше не держит
+  сырого SQL (импорт text убран). Тестов 519, всё в origin/master.
+- СЛЕДУЮЩИЙ ШАГ: продолжить P3 — R2 (типизированное состояние диалога:
+  conv.context dict + ручной _BOOKING_KEYS → dataclass, забытый ключ ловит
+  тип-чекер), затем R4 (разбить god-object DialogEngine ~849 строк по
+  сценариям booking/reschedule/cancel за общим роутером). R2 — поведение
+  то же, страховка существующими тестами + серия ×8. План — разд. P3
+  docs/PILOT_HARDENING.md. Каждый кусок: правка → сьют → серия ×8 → демо
+  восстановить → коммит.
 - Группа C, пилот Ф2, платные прогоны — строго по явной команде.
 - Эту секцию ОБНОВЛЯТЬ в конце каждой сессии: где остановились + следующий
   шаг. Это якорь преемственности между чатами.
