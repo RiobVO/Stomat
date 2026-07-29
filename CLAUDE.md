@@ -17,13 +17,15 @@
   демо восстановлено, --check [OK].
 - P3 РЕФАКТОРИНГ ЯДРА В РАБОТЕ (решение пользователя «весь P3 по порядку»,
   порядок по риску R3→R1→R2→R4): R3 единый каталог услуг ГОТОВ (857608d);
-  R1a service-repo ГОТОВ (92e6781). Тестов 511, всё в origin/master.
-- СЛЕДУЮЩИЙ ШАГ: продолжить P3 — R1b (clinic_repo+doctors_repo: clinic
-  name/tz, doctor list/working_intervals, holiday — 5 SQL в fsm.py),
-  затем R1c (appointments_repo, 4 SQL), R2 (типизированное состояние
-  вместо conv.context dict + _BOOKING_KEYS), R4 (разбить god-object
-  DialogEngine). Каждый кусок — TDD/характеризующий тест, серия ×8,
-  коммит. Карта SQL и план — docs/PILOT_HARDENING.md разд. P3.
+  R1a service-repo ГОТОВ (92e6781); R1b clinic_repo+doctors_repo ГОТОВ
+  (88e314b — clinic name/tz/holidays_on + doctor working_intervals/list).
+  Тестов 515, всё в origin/master.
+- СЛЕДУЮЩИЙ ШАГ: продолжить P3 — R1c (appointments_repo, 4 SQL в fsm.py:
+  _guard_allows lookup, _find_active_appointment, time_range/lower-start
+  по записи, patient_id UPDATE при привязке), затем R2 (типизированное
+  состояние вместо conv.context dict + _BOOKING_KEYS), R4 (разбить
+  god-object DialogEngine). Каждый кусок — юнит-тесты репозитория +
+  серия ×8, коммит. Карта SQL и план — docs/PILOT_HARDENING.md разд. P3.
 - Группа C, пилот Ф2, платные прогоны — строго по явной команде.
 - Эту секцию ОБНОВЛЯТЬ в конце каждой сессии: где остановились + следующий
   шаг. Это якорь преемственности между чатами.
