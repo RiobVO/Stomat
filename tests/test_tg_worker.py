@@ -127,7 +127,7 @@ def test_message_reply_uses_short_callback_data(app_session_factory, admin_engin
         assert len(button.action.encode()) <= 64, "лимит callback_data Telegram"
         assert button.action.startswith("a:")
     actions_map = context_of(admin_engine)["tg_actions"]
-    assert actions_map["1"].startswith("slot:")
+    assert actions_map["1"].startswith("time:")
     assert queue_statuses(admin_engine) == ["done"]
 
 

@@ -516,6 +516,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if kind == "slot":
             doctor_id, _, start_iso = rest.partition(":")
             return self._on_slot_chosen(session, conv, doctor_id, start_iso)
+        if kind == "time":
+            # кнопка времени: врач определяется после, чтобы временна́я ось
+            # не множилась на число врачей (сетка дня была вдвое длиннее)
+            return self._on_time_chosen(session, conv, rest)
+        if kind == "d":
+            return self._on_doctor_chosen(session, conv, rest)
         if kind == "reslot":
             return self._on_reslot(session, conv, rest)
         if kind == "wl":

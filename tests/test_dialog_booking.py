@@ -51,11 +51,14 @@ def make_engine(app_session_factory, clinic_id, script) -> DialogEngine:
 
 
 def slot_buttons(reply):
-    return [b for b in reply.buttons if b.action.startswith("slot:")]
+    """Кнопки выбора ВРЕМЕНИ. Врач в них больше не участвует: он определяется
+    следующим шагом и только когда свободны несколько (иначе временна́я ось
+    множилась на число врачей)."""
+    return [b for b in reply.buttons if b.action.startswith("time:")]
 
 
 def slot_start(button) -> datetime:
-    return datetime.fromisoformat(button.action.split(":", 2)[2])
+    return datetime.fromisoformat(button.action.split(":", 1)[1])
 
 
 def fsm_state(admin_engine, chat_id=CHAT) -> str:
@@ -252,8 +255,14 @@ def test_named_doctor_filters_slots(app_session_factory, admin_engine, clinic_a,
     reply = engine.handle_text(CHAT, "к Akmal aka на чистку в понедельник")
     slots = slot_buttons(reply)
     assert slots
-    for b in slots:
-        assert b.action.split(":", 2)[1] == str(akmal)
+    # врача из кнопки не видно (её ключ — время), поэтому проверяем по делу:
+    # тап обязан взять hold именно у названного врача, без вопроса «к кому»
+    engine.handle_action(CHAT, slots[0].action)
+    with admin_engine.begin() as conn:
+        booked = conn.execute(text(
+            "SELECT doctor_id FROM appointment "
+            "WHERE status IN ('hold', 'booked')")).scalar_one()
+    assert booked == akmal, "выбор врача, названного пациентом, потерян"
 
 
 def test_one_letter_doctor_does_not_pick_a_doctor(app_session_factory,

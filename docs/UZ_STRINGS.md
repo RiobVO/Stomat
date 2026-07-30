@@ -342,6 +342,8 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_tomorrow` | выбор дня | Завтра | **Ertaga** | |
 | `btn_after_tomorrow` | выбор дня | Послезавтра | **Indinga** | |
 | `btn_other_time` | выбор слота | Другое время | **Boshqa vaqt** | |
+| `ask_doctor` | выбор врача | 👨‍⚕️ Кто вам удобнее на {when}? | **👨‍⚕️ {when} ga kim qulay?** | шаг появляется, только если на это время свободны несколько врачей |
+| `btn_any_doctor` | выбор врача | Любой | **Farqi yo'q** | «без разницы, к кому» |
 | `btn_share_contact` | шаг телефона | 📱 Отправить мой номер | **📱 Raqamimni yuborish** | |
 | `btn_yes` | подтверждение отмены | Да, отменить | **Ha, bekor qilish** | |
 | `btn_no` | подтверждение отмены | Нет, оставить | **Yo'q, qoldirish** | |
