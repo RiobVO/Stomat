@@ -606,3 +606,23 @@ def test_clear_removes_everything_it_created(app_session_factory, admin_engine,
             "   (SELECT 1 FROM appointment a WHERE a.id = aa.appointment_id))"
         )).scalar_one()
     assert left == 0, "не должно остаться ни записей, ни осиротевшего аудита"
+
+
+def test_no_synthetic_patient_books_twice_in_a_row(app_session_factory,
+                                                   admin_engine, priced_clinic):
+    """Витрина не должна показывать «нового пациента», который записался
+    дважды подряд.
+
+    Формула чата брала остаток счётчика, и соседние записи 3k+1 и 3k+2
+    получали ОДИН чат: треть визитов оказывалась повтором вплотную к
+    оригиналу, а разных лиц — и, значит, «новых» в сводке — заметно меньше
+    задуманного."""
+    seed_demo_history(app_session_factory, priced_clinic, days=14)
+    with admin_engine.begin() as conn:
+        chats = conn.execute(text(
+            "SELECT tg_chat_id FROM appointment WHERE source = 'demo_history' "
+            "ORDER BY lower(time_range), id")).scalars().all()
+    glued = [i for i in range(1, len(chats)) if chats[i] == chats[i - 1]]
+
+    assert len(chats) > 20, "сидер вообще ничего не налил"
+    assert not glued, f"подряд идущие визиты одного лица: {len(glued)}"
