@@ -21,7 +21,8 @@ class _CancelFlowMixin:
     def _start_cancel_by_id(self, session: Session, conv: Conversation,
                             appointment_id: str) -> Reply:
         """Кнопка «Отменить» из напоминания: запись известна по id."""
-        appointment = appointments_repo.active_by_id(session, appointment_id)
+        appointment = appointments_repo.active_by_id(session, appointment_id,
+                                                     conv.chat_id)
         reply = self._begin_cancel(session, conv, appointment)
         if conv.context.cancel_id:
             # источник отмены — напоминание: метрика предотвращённых неявок

@@ -25,13 +25,22 @@ def active_by_chat(session: Session, chat_id: int) -> Row | None:
     ).one_or_none()
 
 
-def active_by_id(session: Session, appointment_id: str) -> Row | None:
-    """Активная (hold/booked) запись по id — (id, start); для отмены из
-    напоминания, где запись известна по id."""
+def active_by_id(session: Session, appointment_id: str,
+                 chat_id: int) -> Row | None:
+    """Активная (hold/booked) БУДУЩАЯ запись чата по id — (id, start); для
+    отмены из напоминания, где запись известна по id.
+
+    Условия те же, что у active_by_chat, и по тем же причинам: id приходит
+    из callback_data, то есть от клиента, — чужой id внутри клиники отменял
+    бы чужую запись (RLS изолирует клиники, но не пациентов). Начавшийся
+    приём отменять нечего: слот в прошлом никому не достанется, а отмена из
+    напоминания идёт в сводку владельца как предотвращённая неявка с суммой.
+    """
     return session.execute(
         text("SELECT id, lower(time_range) AS start FROM appointment "
-             "WHERE id = CAST(:id AS uuid) AND status IN ('hold', 'booked')"),
-        {"id": appointment_id},
+             "WHERE id = CAST(:id AS uuid) AND tg_chat_id = :chat "
+             "AND status IN ('hold', 'booked') AND lower(time_range) > now()"),
+        {"id": appointment_id, "chat": chat_id},
     ).one_or_none()
 
 

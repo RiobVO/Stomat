@@ -33,11 +33,20 @@ def test_active_by_id_only_active(app_session_factory, clinic_a, doctor_a,
                                   service_cleaning):
     appt = _hold(app_session_factory, clinic_a, doctor_a, service_cleaning)
     with tenant_transaction(app_session_factory, clinic_a) as s:
-        assert appointments_repo.active_by_id(s, str(appt)).id == appt
+        assert appointments_repo.active_by_id(s, str(appt), CHAT).id == appt
     # отменённая запись больше не активна
     SchedulingEngine(app_session_factory, clinic_a).cancel(appt)
     with tenant_transaction(app_session_factory, clinic_a) as s:
-        assert appointments_repo.active_by_id(s, str(appt)) is None
+        assert appointments_repo.active_by_id(s, str(appt), CHAT) is None
+
+
+def test_active_by_id_belongs_to_the_chat(app_session_factory, clinic_a,
+                                          doctor_a, service_cleaning):
+    """id приходит из callback_data, то есть от клиента: чужая запись той же
+    клиники по нему находиться не должна."""
+    appt = _hold(app_session_factory, clinic_a, doctor_a, service_cleaning)
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        assert appointments_repo.active_by_id(s, str(appt), CHAT + 1) is None
 
 
 def test_slot_bounds(app_session_factory, clinic_a, doctor_a, service_cleaning):
