@@ -213,6 +213,46 @@ def test_alert_frame_uses_admin_chat_language(app_session_factory, admin_engine,
     assert "Системный алерт" not in api.sent[-1][1], api.sent[-1][1]
 
 
+def test_reason_speaks_the_language_of_each_admin_chat(app_session_factory,
+                                                      clinic_a):
+    """Причина ВНУТРИ алерта — тоже текст для владельца.
+
+    Каркас перевели волной C, а причину служебные пути отдавали готовой русской
+    строкой: узбекский админ-чат получал половину экрана на своём языке, а
+    вторую — на чужом (остаток по №16). Разные админ-чаты одной клиники могут
+    держать разные языки, поэтому переводить можно только при отправке."""
+    from navbat.dialog.conversation import load_conversation, save_conversation
+    from navbat.db.base import tenant_transaction
+    from navbat.telegram.admin_texts import Reason
+
+    ru_chat, uz_chat = 4242, 4343
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = load_conversation(session, uz_chat)
+        conv.context.extras["adm_lang"] = "uz"
+        save_conversation(session, conv)
+
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(
+        api, admin_chat_id=[ru_chat, uz_chat],
+        lang_of=lambda chat: _admin_lang(app_session_factory, clinic_a, chat))
+
+    escalation.notify_ops(Reason("reason_sync_restored"), {})
+    sent = {chat: text for chat, text, _ in api.sent}
+    assert "восстановлена" in sent[ru_chat], sent[ru_chat]
+    assert "tiklandi" in sent[uz_chat], sent[uz_chat]
+
+    # с подстановками и на другом канале: FYI о пустом горизонте
+    escalation.notify_fyi(555, Reason("reason_reminder_failed", chat=555,
+                                      attempts=3), {})
+    sent = {chat: text for chat, text, _ in api.sent[-2:]}
+    assert "не доставлено" in sent[ru_chat], sent[ru_chat]
+    assert "yetib bormadi" in sent[uz_chat], sent[uz_chat]
+
+    # системные причины остаются строкой: их читает тот, кто чинит
+    escalation.notify_system("бэкапы БД не снимаются", {})
+    assert "бэкапы БД не снимаются" in api.sent[-1][1]
+
+
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:
     from navbat.db.base import tenant_transaction
     from navbat.dialog.conversation import load_conversation

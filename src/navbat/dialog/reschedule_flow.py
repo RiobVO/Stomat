@@ -12,6 +12,7 @@ from navbat.dialog.conversation import Conversation
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY
 from navbat.dialog.replies import Button, Reply, t
 from navbat.nlu.schema import Extraction
+from navbat.telegram.admin_texts import Reason
 from navbat.scheduling.errors import (
     AppointmentNotFoundError,
     InvalidSlotError,
@@ -55,7 +56,7 @@ class _RescheduleFlowMixin:
         if not slots:
             # П-5: календарь вместо «передаю администратору» (FYI раз в день)
             return self._no_slots_calendar(session, conv,
-                                           "перенос: нет слотов на 2 недели вперёд")
+                                           Reason("reason_no_slots_reschedule"))
         buttons = [
             Button(self._slot_label(start, doctor_name, tz, multi_doctor=False),
                    f"reslot:{start.isoformat()}")

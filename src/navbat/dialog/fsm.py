@@ -54,6 +54,7 @@ from navbat.dialog.dialog_common import (
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import normalize_phone, phone_to_hash
+from navbat.telegram.admin_texts import Reason
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -428,7 +429,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
         notify ДО _abort_pending — контекст сценария должен доехать до
         админа целым; висящий hold отпускаем, бронь просьбу не переживает."""
-        self._notifier.notify(conv.chat_id, "пациент просит администратора",
+        self._notifier.notify(conv.chat_id, Reason("reason_wants_human"),
                               self._escalation_context(conv))
         self._abort_pending(conv)
         conv.state = "escalated"

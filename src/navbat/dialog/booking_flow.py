@@ -18,6 +18,7 @@ from navbat.dialog.patients import create_patient_with_hash, find_patient_by_cha
 from navbat.dialog.replies import Button, Reply, menu_rows, service_label, t
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.errors import HoldExpiredError, InvalidSlotError, SlotTakenError
+from navbat.telegram.admin_texts import Reason
 
 
 class _BookingFlowMixin:
@@ -74,7 +75,7 @@ class _BookingFlowMixin:
             # П-5: пациент сам листает календарь (до 3 месяцев), владельцу —
             # FYI раз в день; диалог НЕ сбрасывается и никого не дёргает
             return self._no_slots_calendar(session, conv,
-                                           "нет слотов на 2 недели вперёд")
+                                           Reason("reason_no_slots"))
 
         multi_doctor = len(doctors) > 1
         buttons = [
@@ -210,7 +211,7 @@ class _BookingFlowMixin:
                 self._sched.cancel(appointment_id)
             ctx.appointment_id = None
             if failures >= 2:
-                self._notifier.notify(conv.chat_id, "сбой подтверждения записи",
+                self._notifier.notify(conv.chat_id, Reason("reason_confirm_failed"),
                                       self._escalation_context(conv))
                 conv.state = "escalated"
                 return self._escalated_reply(conv)

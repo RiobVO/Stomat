@@ -558,6 +558,91 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "ru": "⚠ Системный алерт\n{reason}",
         "uz": "⚠ Tizim ogohlantirishi\n{reason}",
     },
+    # причины ВНУТРИ алертов: их формируют служебные пути (календарь, синк,
+    # напоминания, воркер, диалог), а читает владелец на своём языке. Каркас
+    # перевели волной C, причины оставались русскими — остаток по №16
+    "reason_wants_human": {
+        "ru": "пациент просит администратора",
+        "uz": "bemor administrator bilan gaplashmoqchi",
+    },
+    "reason_confirm_failed": {
+        "ru": "сбой подтверждения записи",
+        "uz": "yozuvni tasdiqlashda xatolik",
+    },
+    "reason_no_slots": {
+        "ru": "нет слотов на 2 недели вперёд",
+        "uz": "2 hafta oldinga bo'sh vaqt yo'q",
+    },
+    "reason_no_slots_reschedule": {
+        "ru": "перенос: нет слотов на 2 недели вперёд",
+        "uz": "ko'chirish: 2 hafta oldinga bo'sh vaqt yo'q",
+    },
+    "reason_event_restored": {
+        "ru": "событие записи удалили в календаре — восстановил; "
+              "правки записей — через бота",
+        "uz": "kalendarda yozuv hodisasi o'chirilgan — tikladim; "
+              "yozuvlarni bot orqali o'zgartiring",
+    },
+    "reason_event_moved_back": {
+        "ru": "событие записи сдвинули в календаре — вернул; "
+              "переносы — через бота",
+        "uz": "kalendarda yozuv vaqti ko'chirilgan — qaytardim; "
+              "ko'chirishni bot orqali qiling",
+    },
+    "reason_relocated": {
+        "ru": "запись {old} вытеснена ручным событием — перенесена на {new}",
+        "uz": "{old} yozuvi qo'lda kiritilgan hodisa tufayli {new} ga ko'chirildi",
+    },
+    "reason_unrelocatable": {
+        "ru": "запись {old} вытеснена ручным событием, перенести некуда — отменена",
+        "uz": "{old} yozuvi qo'lda kiritilgan hodisa tufayli bekor qilindi: "
+              "ko'chirish uchun bo'sh vaqt yo'q",
+    },
+    "reason_double_booking": {
+        "ru": "в календаре два приёма на одно время ({when}) — бот учитывает "
+              "только первый, второй в записи не виден",
+        "uz": "kalendarda bir vaqtga ikkita qabul ({when}) — bot faqat "
+              "birinchisini hisobga oladi, ikkinchisi yozuvlarda ko'rinmaydi",
+    },
+    "reason_gcal_auth_dead": {
+        "ru": "Google OAuth-токен мёртв — синхронизация календаря остановилась "
+              "и сама не починится. Нужна переавторизация: "
+              "python -m navbat.calendar.auth",
+        "uz": "Google OAuth tokeni ishlamaydi — kalendar sinxronizatsiyasi "
+              "to'xtadi va o'zi tuzalmaydi. Qayta ruxsat kerak: "
+              "python -m navbat.calendar.auth",
+    },
+    "reason_sync_stuck": {
+        "ru": "синхронизация Google Calendar не работает {cycles} циклов "
+              "подряд — проверьте доступ Google (возможно, протух токен). Пока "
+              "синк стоит, бот может записать пациента на занятое врачом время.",
+        "uz": "Google Calendar sinxronizatsiyasi {cycles} tsikl ketma-ket "
+              "ishlamadi — Google ruxsatini tekshiring (token muddati o'tgan "
+              "bo'lishi mumkin). Sinxronizatsiya to'xtaganda bot bemorni "
+              "shifokor band qilgan vaqtga yozib qo'yishi mumkin.",
+    },
+    "reason_sync_restored": {
+        "ru": "синхронизация Google Calendar восстановлена.",
+        "uz": "Google Calendar sinxronizatsiyasi tiklandi.",
+    },
+    "reason_llm_cap": {
+        "ru": "дневной лимит LLM-токенов ({cap}) исчерпан — бот эскалирует "
+              "диалоги до конца дня",
+        "uz": "kunlik LLM token limiti ({cap}) tugadi — bot kun oxirigacha "
+              "suhbatlarni administratorga uzatadi",
+    },
+    "reason_reminder_failed": {
+        "ru": "напоминание пациенту (чат {chat}) не доставлено после "
+              "{attempts} попыток — свяжитесь с ним сами",
+        "uz": "bemorga eslatma ({chat} chat) {attempts} urinishdan keyin yetib "
+              "bormadi — u bilan o'zingiz bog'laning",
+    },
+    "reason_update_failed": {
+        "ru": "сообщение пациента (чат {chat}) не удалось обработать — "
+              "свяжитесь с ним сами",
+        "uz": "bemor xabarini ({chat} chat) qayta ishlab bo'lmadi — "
+              "u bilan o'zingiz bog'laning",
+    },
     "release_usage": {
         "ru": "Формат: /release <chat_id> (число из алерта эскалации)",
         "uz": "Format: /release <chat_id> (murojaat xabaridagi raqam)",
@@ -608,6 +693,24 @@ def plain(key: str, lang: str, **kwargs) -> str:
     без parse_mode, и html.escape превратил бы «&» в «&amp;»."""
     template = TEMPLATES[key].get(lang) or TEMPLATES[key][DEFAULT_LANG]
     return template.format(**kwargs) if kwargs else template
+
+
+class Reason(str):
+    """Причина алерта: готовая русская строка ПЛЮС ключ и подстановки к ней.
+
+    Служебные пути (календарь, синк, напоминания, воркер, диалог) знают причину,
+    но не знают языка получателя: у каждого админ-чата клиники он свой, и решить
+    можно только при отправке. Поэтому причина остаётся обычной строкой — логи,
+    фейковые нотификаторы и `in`-проверки работают как раньше, — а
+    TelegramEscalation достаёт из неё ключ и рендерит на язык чата."""
+
+    key: str
+    params: dict
+
+    def __new__(cls, key: str, **params):
+        reason = super().__new__(cls, plain(key, DEFAULT_LANG, **params))
+        reason.key, reason.params = key, params
+        return reason
 
 
 def admin_lang_resolver(session_factory, clinic_id):

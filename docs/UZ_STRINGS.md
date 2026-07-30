@@ -647,6 +647,42 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ---
 
+## 16. Причины внутри алертов владельцу
+
+Текст, который бот подставляет в шапку алерта: почему он позвал человека, что
+случилось с календарём, чего не смог. Каркас («Murojaat», «Sababi») уже был
+переведён, а причина приходила по-русски — владелец видел половину экрана на
+своём языке. Тон: короткое деловое сообщение администратору, без паники и без
+технических деталей — их бот отправляет отдельно тому, кто чинит систему.
+
+Системные причины (TLS-сертификат, бэкапы, webhook, дрейф модели) в этот
+список НЕ входят осознанно: они уходят не клинике, а тому, кто обслуживает
+систему, и переводить их некому.
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `reason_wants_human` | пациент просит администратора | **bemor administrator bilan gaplashmoqchi** | |
+| `reason_confirm_failed` | сбой подтверждения записи | **yozuvni tasdiqlashda xatolik** | |
+| `reason_no_slots` | нет слотов на 2 недели вперёд | **2 hafta oldinga bo'sh vaqt yo'q** | |
+| `reason_no_slots_reschedule` | перенос: нет слотов на 2 недели вперёд | **ko'chirish: 2 hafta oldinga bo'sh vaqt yo'q** | |
+| `reason_event_restored` | событие записи удалили в календаре — восстановил; правки записей — через бота | **kalendarda yozuv hodisasi o'chirilgan — tikladim; yozuvlarni bot orqali o'zgartiring** | |
+| `reason_event_moved_back` | событие записи сдвинули в календаре — вернул; переносы — через бота | **kalendarda yozuv vaqti ko'chirilgan — qaytardim; ko'chirishni bot orqali qiling** | |
+| `reason_relocated` | запись {old} вытеснена ручным событием — перенесена на {new} | **{old} yozuvi qo'lda kiritilgan hodisa tufayli {new} ga ko'chirildi** | |
+| `reason_unrelocatable` | запись {old} вытеснена ручным событием, перенести некуда — отменена | **{old} yozuvi qo'lda kiritilgan hodisa tufayli bekor qilindi: ko'chirish uchun bo'sh vaqt yo'q** | |
+| `reason_double_booking` | в календаре два приёма на одно время ({when}) — бот учитывает только первый, второй в записи не виден | **kalendarda bir vaqtga ikkita qabul ({when}) — bot faqat birinchisini hisobga oladi, ikkinchisi yozuvlarda ko'rinmaydi** | |
+| `reason_gcal_auth_dead` | Google OAuth-токен мёртв — синхронизация календаря остановилась и сама не починится | **Google OAuth tokeni ishlamaydi — kalendar sinxronizatsiyasi to'xtadi va o'zi tuzalmaydi** | |
+| `reason_sync_stuck` | синхронизация Google Calendar не работает {cycles} циклов подряд — проверьте доступ Google | **Google Calendar sinxronizatsiyasi {cycles} tsikl ketma-ket ishlamadi — Google ruxsatini tekshiring** | |
+| `reason_sync_restored` | синхронизация Google Calendar восстановлена. | **Google Calendar sinxronizatsiyasi tiklandi.** | |
+| `reason_llm_cap` | дневной лимит LLM-токенов ({cap}) исчерпан — бот эскалирует диалоги до конца дня | **kunlik LLM token limiti ({cap}) tugadi — bot kun oxirigacha suhbatlarni administratorga uzatadi** | |
+| `reason_reminder_failed` | напоминание пациенту (чат {chat}) не доставлено после {attempts} попыток — свяжитесь с ним сами | **bemorga eslatma ({chat} chat) {attempts} urinishdan keyin yetib bormadi — u bilan o'zingiz bog'laning** | |
+| `reason_update_failed` | сообщение пациента (чат {chat}) не удалось обработать — свяжитесь с ним сами | **bemor xabarini ({chat} chat) qayta ishlab bo'lmadi — u bilan o'zingiz bog'laning** | |
+
+Строки `reason_gcal_auth_dead` и `reason_sync_stuck` в коде длиннее: за
+приведённой фразой идёт техническая подсказка (команда переавторизации и
+предупреждение, что пока синк стоит, бот может записать пациента на занятое
+врачом время). Их тоже нужно вычитать — полный текст в
+`src/navbat/telegram/admin_texts.py`.
+
 ## 13. Отдельные вопросы носителю
 
 1. **Апостроф**: ASCII `'` или окина `ʻ` (см. шапку) — что привычнее?

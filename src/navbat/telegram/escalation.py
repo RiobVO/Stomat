@@ -10,7 +10,7 @@ import os
 from datetime import date, datetime
 
 from navbat.dialog.replies import service_label
-from navbat.telegram.admin_texts import DEFAULT_LANG, plain
+from navbat.telegram.admin_texts import DEFAULT_LANG, Reason, plain
 from navbat.telegram.api import TelegramAPIError
 
 log = logging.getLogger("navbat.escalation")
@@ -61,6 +61,17 @@ def summarize_context(context: dict) -> str:
     return "; ".join(parts) if parts else "пациент ещё ничего не выбрал"
 
 
+def _reason_in(reason, lang: str) -> str:
+    """Причина на языке получателя.
+
+    Служебный путь мог отдать Reason (ключ + подстановки) — тогда переводим;
+    обычная строка уходит как есть: системные алерты про cert, бэкапы и webhook
+    читает тот, кто чинит, и переводить их некому (остаток по №16)."""
+    if isinstance(reason, Reason):
+        return plain(reason.key, lang, **reason.params)
+    return str(reason)
+
+
 class TelegramEscalation:
     """Шлёт алерт ВСЕМ админ-чатам клиники (M4). Веер скрыт здесь — вызыватели
     просто зовут notify(), не зная про список."""
@@ -82,8 +93,9 @@ class TelegramEscalation:
                         chat_id, reason, context)
             return
         for admin_chat in self._admin_chat_ids:
-            message = plain("alert_escalation", self._lang_of(admin_chat),
-                            chat=chat_id, reason=reason,
+            lang = self._lang_of(admin_chat)
+            message = plain("alert_escalation", lang,
+                            chat=chat_id, reason=_reason_in(reason, lang),
                             context=summarize_context(context))
             try:
                 self._api.send_message(admin_chat, message)
@@ -101,8 +113,10 @@ class TelegramEscalation:
                      chat_id, reason, context)
             return
         for admin_chat in self._admin_chat_ids:
-            message = plain("alert_fyi", self._lang_of(admin_chat),
-                            reason=reason, context=summarize_context(context))
+            lang = self._lang_of(admin_chat)
+            message = plain("alert_fyi", lang,
+                            reason=_reason_in(reason, lang),
+                            context=summarize_context(context))
             try:
                 self._api.send_message(admin_chat, message)
             except TelegramAPIError as e:
@@ -123,15 +137,18 @@ class TelegramEscalation:
             # аккаунте) — ему техническая часть нужна, остальным нет
             lang = self._lang_of(chat)
             if chat == self._owner_chat:
-                text = plain("alert_system", lang, reason=reason)
+                text = plain("alert_system", lang,
+                             reason=_reason_in(reason, lang))
                 if detail:
                     text += f"\n{detail}"
             else:
-                text = plain("alert_ops", lang, reason=reason)
+                text = plain("alert_ops", lang,
+                             reason=_reason_in(reason, lang))
             self._send_alert(chat, text, reason)
         if self._owner_chat and self._owner_chat not in targets:
-            owner_text = plain("alert_system", self._lang_of(self._owner_chat),
-                               reason=reason)
+            owner_lang = self._lang_of(self._owner_chat)
+            owner_text = plain("alert_system", owner_lang,
+                               reason=_reason_in(reason, owner_lang))
             if detail:
                 owner_text += f"\n{detail}"
             self._send_alert(self._owner_chat, owner_text, reason)
@@ -160,7 +177,9 @@ class TelegramEscalation:
                         reason, context)
             return
         for chat in targets:
-            message = plain("alert_system", self._lang_of(chat), reason=reason)
+            lang = self._lang_of(chat)
+            message = plain("alert_system", lang,
+                            reason=_reason_in(reason, lang))
             try:
                 self._api.send_message(chat, message)
             except TelegramAPIError as e:
