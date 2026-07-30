@@ -117,16 +117,90 @@ def test_send_due_sends_only_ripe_with_buttons(app_session_factory, admin_engine
     assert chat_id == CHAT
     assert "09:00" in message_text
     assert len(buttons) == 2
+    # кнопки напоминания несут запись сами (сырой callback) и номер в карте не
+    # занимают — сообщение висит до приёма и переживает любую следующую отправку
+    assert buttons[0].action.startswith("attend:")
+    assert buttons[1].action.startswith("remind_cancel:")
     with admin_engine.begin() as conn:
         actions = conn.execute(text(
             "SELECT context -> 'tg_actions' FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).scalar_one()
-    assert actions["1"].startswith("attend:")
-    assert actions["2"].startswith("remind_cancel:")
+    assert not actions, "напоминание не должно перетирать карту кнопок чата"
 
     assert service.send_due() == 0, "sent не переотправляются"
     statuses = {r.status for r in reminder_rows(admin_engine)}
     assert statuses == {"sent"}
+
+
+def test_reminder_buttons_belong_to_their_own_appointment(app_session_factory,
+                                                          admin_engine, clinic_a,
+                                                          doctor_a,
+                                                          service_cleaning):
+    """Напоминание висит в чате часами, а карта кнопок одна на чат.
+
+    Пронумерованная кнопка (a:N) относится к ПОСЛЕДНЕЙ отправке: следующий
+    фоновой пуш (напоминание о другой записи, предложение из листа ожидания,
+    любой список слотов) перетирает map, и «Отменить запись» под старым
+    сообщением начинает указывать на чужую запись. Кнопки напоминания обязаны
+    нести свою запись сами — сырым callback'ом, как cal:/wl:/unfreeze."""
+    day = far_monday()
+    first_id, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                       day, "09:00", chat_id=CHAT)
+    second_id, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                        day, "11:00", chat_id=CHAT)
+    service, api, _ = make_service_obj(app_session_factory, clinic_a,
+                                       offsets=(timedelta(hours=2),))
+    service.reconcile()
+    ripen_all(admin_engine)
+    assert service.send_due() == 2, "по напоминанию на каждую запись"
+
+    early_text, early_buttons = api.sent[0][1], api.sent[0][2]
+    assert "09:00" in early_text, "первым уходит напоминание о ранней записи"
+    actions = {b.action for b in early_buttons}
+    assert actions == {f"attend:{first_id}", f"remind_cancel:{first_id}"}, \
+        "кнопки раннего напоминания указывают на чужую запись"
+
+
+def test_tap_on_early_reminder_cancels_that_appointment(app_session_factory,
+                                                        admin_engine, clinic_a,
+                                                        doctor_a,
+                                                        service_cleaning):
+    """Сквозь адаптер: пациент возвращается к раннему напоминанию и отменяет.
+
+    Отменена обязана быть та запись, о которой сообщение, а не последняя,
+    занявшая номер в карте кнопок."""
+    from test_tg_worker import make_worker, put_callback
+
+    day = far_monday()
+    first_id, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                       day, "09:00", chat_id=CHAT)
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         day, "11:00", chat_id=CHAT)
+    service, api, _ = make_service_obj(app_session_factory, clinic_a,
+                                       offsets=(timedelta(hours=2),))
+    service.reconcile()
+    ripen_all(admin_engine)
+    assert service.send_due() == 2
+
+    # ровно то, что Telegram пришлёт обратно при тапе под ранним сообщением
+    early_cancel = api.sent[0][2][1].action
+    worker, _, _ = make_worker(app_session_factory, clinic_a, [], api=api)
+    put_callback(app_session_factory, clinic_a, early_cancel)
+    assert worker.process_one()
+
+    with admin_engine.begin() as conn:
+        actions = conn.execute(text(
+            "SELECT context -> 'tg_actions' FROM conversation "
+            "WHERE tg_chat_id = :c"), {"c": CHAT}).scalar_one() or {}
+    yes = next(f"a:{i}" for i, action in actions.items() if action == "cancel_yes")
+    put_callback(app_session_factory, clinic_a, yes)
+    assert worker.process_one()
+
+    with admin_engine.begin() as conn:
+        cancelled = conn.execute(text(
+            "SELECT id FROM appointment WHERE status = 'cancelled'")).scalars().all()
+    assert cancelled == [first_id], \
+        "отменена не та запись, о которой было напоминание"
 
 
 def test_send_failures_go_to_dead_letter_with_alert(app_session_factory,
