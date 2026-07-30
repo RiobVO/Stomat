@@ -27,8 +27,7 @@ from navbat.db.base import make_app_engine, make_session_factory, tenant_transac
 from navbat.dialog.fsm import DialogEngine
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import TelegramAPI
-from navbat.telegram.admin_texts import admin_lang_resolver
-from navbat.telegram.escalation import TelegramEscalation
+from navbat.telegram.escalation import build_escalation
 from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_webhook
 from navbat.telegram.worker import UpdateWorker
 
@@ -110,9 +109,8 @@ def main() -> int:
     me = api.get_me()
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
-    lang_of = admin_lang_resolver(session_factory, args.clinic)
-    notifier = TelegramEscalation(api, credentials.admin_chat_ids,
-                                  lang_of=lang_of)
+    notifier = build_escalation(api, session_factory, args.clinic,
+                                credentials.admin_chat_ids)
     dialog = DialogEngine(
         session_factory, args.clinic,
         extractor=build_dialog_extractor(args.real, session_factory,
@@ -123,8 +121,9 @@ def main() -> int:
     stop = threading.Event()
     workers = [
         UpdateWorker(session_factory, args.clinic, dialog=dialog, api=api,
-                     notifier=TelegramEscalation(
-                         api, credentials.admin_chat_ids, lang_of=lang_of))
+                     notifier=build_escalation(
+                         api, session_factory, args.clinic,
+                         credentials.admin_chat_ids))
         for _ in range(args.workers)
     ]
     threads = [threading.Thread(target=w.run, args=(stop,), name=f"worker-{i}")

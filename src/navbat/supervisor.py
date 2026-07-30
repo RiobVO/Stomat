@@ -40,8 +40,7 @@ from navbat.onboard import DEMO_CLINIC_ID, DEV_ENC_KEY
 from navbat.reminders import ReminderService
 from navbat.telegram.api import TelegramAPI, TelegramAPIError
 from navbat.telegram.app import build_dialog_extractor, load_clinic_credentials
-from navbat.telegram.admin_texts import admin_lang_resolver
-from navbat.telegram.escalation import TelegramEscalation
+from navbat.telegram.escalation import build_escalation
 from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_webhook
 from navbat.telegram.worker import UpdateWorker
 
@@ -316,9 +315,8 @@ def main() -> int:
     credentials = load_clinic_credentials(session_factory, args.clinic)
     tg_api = TelegramAPI(credentials.token)
     me = tg_api.get_me()
-    notifier = TelegramEscalation(
-        tg_api, credentials.admin_chat_ids,
-        lang_of=admin_lang_resolver(session_factory, args.clinic))
+    notifier = build_escalation(tg_api, session_factory, args.clinic,
+                                credentials.admin_chat_ids)
     log.info("бот @%s, клиника %s", me.get("username"), args.clinic)
 
     extractor = build_dialog_extractor(args.real, session_factory,

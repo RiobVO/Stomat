@@ -10,7 +10,9 @@ import os
 from datetime import date, datetime
 
 from navbat.dialog.replies import service_label
-from navbat.telegram.admin_texts import DEFAULT_LANG, Reason, plain, render_reason
+from navbat.telegram.admin_texts import (DEFAULT_LANG, Reason,
+                                         admin_lang_resolver, plain,
+                                         render_reason)
 from navbat.telegram.api import TelegramAPIError
 
 log = logging.getLogger("navbat.escalation")
@@ -186,3 +188,16 @@ class TelegramEscalation:
             except TelegramAPIError as e:
                 log.error("системный алерт не доставлен в %s: %s | %s",
                           chat, e, reason)
+
+
+def build_escalation(tg_api, session_factory, clinic_id,
+                     admin_chat_ids) -> TelegramEscalation:
+    """Нотификатор, который ЗНАЕТ язык каждого админ-чата клиники.
+
+    Единственная сборка для прода: резолвер легко забыть — standalone-синк
+    (`python -m navbat.calendar`) собирал нотификатор сам и рассылал причины
+    по-русски даже узбекскому владельцу (ревью). Тесты и CLI без БД создают
+    TelegramEscalation напрямую и получают русский по умолчанию."""
+    return TelegramEscalation(tg_api, admin_chat_ids,
+                              lang_of=admin_lang_resolver(session_factory,
+                                                          clinic_id))
