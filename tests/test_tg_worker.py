@@ -382,6 +382,52 @@ def test_three_rapid_messages_keep_fsm_consistent(app_session_factory, admin_eng
     assert state == "booking_offer_slots"
 
 
+def test_worker_loop_survives_transient_db_error(app_session_factory, admin_engine,
+                                                 clinic_a, doctor_a,
+                                                 service_cleaning, monkeypatch):
+    """Перезапуск Postgres не должен убивать поток воркера навсегда.
+
+    Клейм и ack стоят вне try внутри process_one, а сам цикл run не ловил
+    ничего: любая OperationalError (рестарт БД, обрыв соединения) уносила
+    поток. Процесс при этом жив, транспорт продолжает копить апдейты в
+    очередь, и пациенты не получают ни одного ответа — молча, до ручного
+    перезапуска. У цикла напоминаний такая защита есть, у воркера не было."""
+    import navbat.telegram.worker as worker_mod
+    from sqlalchemy.exc import OperationalError
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a,
+                                 [extr(service="cleaning")])
+    put_message(app_session_factory, clinic_a, "хочу чистку")
+
+    calls = {"n": 0}
+    real_claim = worker_mod.claim_next
+
+    def flaky_claim(session_factory, clinic_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError(
+                "SELECT 1", {},
+                Exception("server closed the connection unexpectedly"))
+        return real_claim(session_factory, clinic_id)
+
+    monkeypatch.setattr(worker_mod, "claim_next", flaky_claim)
+    monkeypatch.setattr(worker_mod, "ERROR_BACKOFF", 0.01, raising=False)
+
+    stop = threading.Event()
+    thread = threading.Thread(target=worker.run, args=(stop,))
+    thread.start()
+    for _ in range(300):
+        if api.sent:
+            break
+        threading.Event().wait(0.02)
+    stop.set()
+    thread.join(timeout=5)
+
+    assert calls["n"] >= 2, "поток воркера умер на первом же сбое БД"
+    assert api.sent, "после обрыва соединения очередь так и не разобралась"
+    assert queue_statuses(admin_engine) == ["done"]
+
+
 # ── /stats v2 (полировка-2, В): stats:-callback'и админ-чата ─────────────────
 
 ADMIN_CHAT = 777

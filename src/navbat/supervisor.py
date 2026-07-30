@@ -27,6 +27,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
+from navbat.dialog.escalation import system_alert
 from navbat.dialog.fsm import DialogEngine
 from navbat.envfile import load_env_file
 from navbat.health import HealthChecker, HealthServer
@@ -96,6 +97,33 @@ def parse_offsets(raw: str) -> tuple[timedelta, ...]:
 def install_sigterm_handler(stop: threading.Event) -> None:
     """docker stop шлёт SIGTERM — гасим теми же рельсами, что Ctrl+C."""
     signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
+
+
+def supervise_threads(threads, stop: threading.Event, notifier=None,
+                      interval: float = 5.0) -> list[str]:
+    """Надзор за фоновыми потоками; возвращает имена умерших.
+
+    Вся работа системы, кроме транспорта, живёт потоками одного процесса.
+    Умерший поток процесс не гасит: главный поток продолжает крутить polling
+    или ждать SIGTERM, docker-healthcheck ходит в light-ветку /health и
+    остаётся зелёным, а очередь никто не разбирает — бот молчит, и об этом
+    не узнаёт никто. Поэтому смерть потока = сигнал владельцу системы и
+    остановка процесса: контейнер поднимется заново (restart-политика
+    compose), а не будет изображать живого.
+    """
+    while not stop.wait(interval):
+        dead = [thread.name for thread in threads if not thread.is_alive()]
+        if dead:
+            names = ", ".join(dead)
+            log.error("фоновый поток умер: %s — останавливаю процесс", names)
+            if notifier is not None:
+                system_alert(
+                    notifier,
+                    f"фоновый поток умер: {names} — процесс остановлен, "
+                    f"контейнер должен подняться заново", {})
+            stop.set()
+            return dead
+    return []
 
 
 def validate_real_env() -> list[str]:
@@ -382,7 +410,13 @@ def main() -> int:
                         watch_manager.ensure_channels()
                     except Exception:
                         log.exception("watch-каналы: ensure_channels упал")
-                sync_loop.run_once()
+                try:
+                    # run_once открывает транзакцию за списком врачей вне
+                    # собственных except: обрыв соединения с БД уносил бы
+                    # календарный поток целиком и навсегда
+                    sync_loop.run_once()
+                except Exception:
+                    log.exception("календарный цикл упал — продолжаю")
                 sync_wake.wait(args.sync_interval)
                 sync_wake.clear()
 
@@ -392,6 +426,15 @@ def main() -> int:
         thread.start()
     log.info("система поднята: %d воркера, напоминания %s",
              args.workers, args.reminder_offsets)
+
+    # надзор: умерший поток гасит процесс, иначе бот молчит, а контейнер
+    # выглядит здоровым (light-ветка /health смотрит только на БД)
+    died: list[str] = []
+    watchdog = threading.Thread(
+        target=lambda: died.extend(
+            supervise_threads(threads, stop, notifier=notifier)),
+        name="watchdog", daemon=True)
+    watchdog.start()
 
     health = HealthServer(
         HealthChecker(session_factory, args.clinic,
@@ -432,4 +475,6 @@ def main() -> int:
         health.stop()
         for thread in threads:
             thread.join(timeout=10)
-    return 0
+    # ненулевой код: остановка из-за умершего потока — это авария, а не
+    # штатное завершение, и в логе контейнера она должна читаться как авария
+    return 1 if died else 0

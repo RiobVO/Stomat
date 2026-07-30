@@ -83,3 +83,64 @@ def test_validate_real_env_accepts_prod_config(monkeypatch):
     monkeypatch.setenv("NAVBAT_ENC_KEY", _fresh_key())
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     assert validate_real_env() == []
+
+
+# ── Надзор за потоками: смерть фоновой работы обязана быть замеченной ───────
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.system: list[str] = []
+
+    def notify(self, chat_id, reason, context):
+        self.system.append(reason)
+
+    def notify_system(self, reason, context):
+        self.system.append(reason)
+
+
+def test_dead_thread_stops_the_process_with_alert():
+    """Умерший поток = процесс больше не делает свою работу, но выглядит живым.
+
+    Воркеры, календарь и напоминания живут потоками одного процесса. Если
+    поток умрёт, главный поток продолжит крутить polling, docker-healthcheck
+    (light-ветка /health) останется зелёным, а очередь никто не разберёт.
+    Надзор обязан это заметить: сигнал владельцу системы и остановка процесса,
+    чтобы контейнер поднялся заново."""
+    import threading
+
+    from navbat.supervisor import supervise_threads
+
+    dead = threading.Thread(target=lambda: None, name="worker-0")
+    dead.start()
+    dead.join()
+    alive = threading.Thread(target=lambda: threading.Event().wait(5),
+                             name="reminders", daemon=True)
+    alive.start()
+
+    stop = threading.Event()
+    notifier = _RecordingNotifier()
+    died = supervise_threads([dead, alive], stop, notifier=notifier,
+                             interval=0.01)
+
+    assert died == ["worker-0"]
+    assert stop.is_set(), "процесс не остановлен — бот молчит, но контейнер жив"
+    assert notifier.system and "worker-0" in notifier.system[0]
+    stop.set()
+
+
+def test_supervisor_watch_is_quiet_until_shutdown():
+    """Штатная остановка (Ctrl+C, SIGTERM) — не смерть потока: без алертов."""
+    import threading
+
+    from navbat.supervisor import supervise_threads
+
+    alive = threading.Thread(target=lambda: threading.Event().wait(5),
+                             name="worker-0", daemon=True)
+    alive.start()
+    stop = threading.Event()
+    notifier = _RecordingNotifier()
+
+    threading.Timer(0.05, stop.set).start()
+    assert supervise_threads([alive], stop, notifier=notifier,
+                             interval=0.01) == []
+    assert notifier.system == []
