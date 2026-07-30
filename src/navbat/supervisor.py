@@ -233,17 +233,14 @@ def main() -> int:
         threads.append(threading.Thread(target=worker.run, args=(stop,),
                                         name=f"worker-{index}"))
     if calendar_sync is not None:
+        from navbat.calendar.sync_loop import CalendarSyncLoop
+
+        sync_loop = CalendarSyncLoop(session_factory, args.clinic, calendar_sync,
+                                     notifier, credentials.admin_chat_id)
+
         def calendar_loop() -> None:
             while not stop.is_set():
-                with tenant_transaction(session_factory, args.clinic) as session:
-                    doctor_ids = list(session.execute(text(
-                        "SELECT id FROM doctor WHERE gcal_calendar_id IS NOT NULL"
-                    )).scalars())
-                for doctor_id in doctor_ids:
-                    try:
-                        calendar_sync.sync_doctor(doctor_id)
-                    except Exception:
-                        log.exception("sync врача %s упал", doctor_id)
+                sync_loop.run_once()
                 stop.wait(args.sync_interval)
 
         threads.append(threading.Thread(target=calendar_loop, name="calendar"))
