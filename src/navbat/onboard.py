@@ -657,7 +657,8 @@ def main() -> int:
         print(f"[OK] промпт загружен: версия {version}")
         return 0
     if args.demo_history or args.demo_history_clear:
-        from navbat.demo_history import clear_demo_history, seed_demo_history
+        from navbat.demo_history import (clear_demo_history, count_demo_history,
+                                         seed_demo_history)
 
         clinic = args.clinic or DEMO_CLINIC_ID
         if clinic != DEMO_CLINIC_ID:
@@ -670,9 +671,20 @@ def main() -> int:
             print(f"[OK] демо-история удалена: записей — {removed}")
             return 0
         created = seed_demo_history(session_factory, clinic, args.days)
-        print(f"[OK] демо-история: создано записей — {created}"
-              if created else "[OK] демо-история уже есть")
-        return 0
+        if created:
+            print(f"[OK] демо-история: создано записей — {created}")
+            return 0
+        # ноль созданных — ещё не «всё на месте»: демо-клиники может не быть
+        # вовсе, врачи и услуги — скрыты, слоты — заняты чужими событиями.
+        # Молчаливое «уже есть» отправляло владельца на показ с пустой
+        # витриной (ре-ревью сидера)
+        existing = count_demo_history(session_factory, clinic, args.days)
+        if existing:
+            print(f"[OK] демо-история уже есть: записей — {existing}")
+            return 0
+        sys.exit("[FAIL] демо-историю наливать некуда: нет демо-клиники, "
+                 "активных врачей или услуг, либо все слоты заняты — "
+                 "проверьте python -m navbat --check")
     if args.demo:
         if args.prompt_pin:  # staging: пин новой версии на демо-клинику
             pin_prompt(session_factory, DEMO_CLINIC_ID, args.prompt_pin)

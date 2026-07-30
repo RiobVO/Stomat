@@ -85,9 +85,15 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
     `now` инжектируется тестами (конвенция проекта — время тестируемо):
     сколько истории попадёт в сегодняшний день, зависит от часа прогона."""
     with tenant_transaction(session_factory, clinic_id) as session:
-        tz = ZoneInfo(session.execute(text(
+        zone = session.execute(text(
             "SELECT timezone FROM clinic "
-            "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one())
+            "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one_or_none()
+        if zone is None:
+            # сеять историю до `--demo` — типовой промах порядка команд; ответ
+            # даёт CLI, здесь важно не отдать сырой NoResultFound
+            log.warning("демо-история: демо-клиники нет в базе")
+            return 0
+        tz = ZoneInfo(zone)
         doctors = session.execute(text(
             "SELECT id, buffer_min, working_intervals FROM doctor "
             "WHERE is_active ORDER BY id")).all()
@@ -307,6 +313,19 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
              "action, at) VALUES (current_setting('app.clinic_id')::uuid, "
              ":appt, :actor, :action, :at)"),
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
+
+
+def count_demo_history(session_factory, clinic_id: uuid.UUID,
+                       days: int = 14) -> int:
+    """Сколько демо-записей стоит в окне последних `days` дней.
+
+    Нужно CLI, чтобы отличить «окно уже наполнено» от «наливать некуда»: ноль
+    созданных записей сам по себе не говорит, что витрина не пуста (ре-ревью)."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        return session.execute(
+            text("SELECT count(*) FROM appointment WHERE source = :src "
+                 "AND lower(time_range) >= now() - :days * interval '1 day'"),
+            {"src": DEMO_SOURCE, "days": days}).scalar_one()
 
 
 def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:
