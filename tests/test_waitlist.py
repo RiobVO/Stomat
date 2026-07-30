@@ -182,8 +182,12 @@ def test_match_notifies_with_leave_button_and_marks_notified(
     service, api, _ = _matcher(app_session_factory, clinic_a)
     assert service.match_waitlist() == 1
     actions = [b.action for row in api.row_keyboards[-1] for b in row]
-    assert any(a.startswith("wl:leave:") for a in actions), "кнопка выхода (сырая)"
-    assert any(a.startswith("a:") for a in actions), "slot:-кнопка (нумерована)"
+    assert any(a.startswith("wl:leave:") for a in actions), "кнопка выхода"
+    # обе кнопки сырые: предложение висит часами и обязано пережить любую
+    # следующую отправку кнопок в этот чат
+    assert any(a.startswith("wl:take:") for a in actions), "кнопка слота"
+    assert all(not a.startswith("a:") for a in actions)
+    assert all(len(a.encode()) <= 64 for a in actions), "лимит callback_data"
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "notified")]
 
 
@@ -220,17 +224,10 @@ def test_match_no_free_slot_keeps_waiting(app_session_factory, admin_engine,
 
 # ── К-5: снятие / fulfillment / гонки ────────────────────────────────────────
 
-def _slot_action(admin_engine, clinic_id):
-    """Достать slot:-action из tg_actions-map conversation (после пуша)."""
-    import json
-    with admin_engine.begin() as conn:
-        ctx = conn.execute(
-            text("SELECT context FROM waitlist w JOIN conversation c "
-                 "ON c.tg_chat_id = w.tg_chat_id WHERE w.clinic_id = :cid "
-                 "LIMIT 1"), {"cid": clinic_id}).scalar_one()
-    actions = (ctx.get("tg_actions") or {}) if isinstance(ctx, dict) \
-        else json.loads(ctx).get("tg_actions", {})
-    return next(a for a in actions.values() if a.startswith("slot:"))
+def _slot_action(api):
+    """Кнопка предложенного слота из последнего пуша (сырой wl:take:)."""
+    return next(b.action for row in api.row_keyboards[-1] for b in row
+                if b.action.startswith("wl:take:"))
 
 
 def test_slot_tap_from_offer_books_and_fulfills(app_session_factory, admin_engine,
@@ -245,7 +242,7 @@ def test_slot_tap_from_offer_books_and_fulfills(app_session_factory, admin_engin
         wl.add(s, service_cleaning, CHAT, None, "ru")
     service, api, _ = _matcher(app_session_factory, clinic_a)
     assert service.match_waitlist() == 1
-    slot = _slot_action(admin_engine, clinic_a)
+    slot = _slot_action(api)
 
     engine = DialogEngine(app_session_factory, clinic_a,
                           extractor=FakeExtractor(script=[]))
@@ -258,6 +255,75 @@ def test_slot_tap_from_offer_books_and_fulfills(app_session_factory, admin_engin
     # следующий цикл матчера снимает с очереди (записался)
     service.match_waitlist()
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "fulfilled")]
+
+
+def test_matcher_does_not_touch_a_live_dialog(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a,
+                                              service_cleaning):
+    """Фоновый матчер писал услугу прямо в диалог пациента.
+
+    Пациент стоит в очереди на чистку и параллельно оформляет имплант. Пуш
+    очереди перезаписывал ctx.service целиком прочитанным диалогом: тап по
+    СВОЕМУ слоту импланта записывал на чистку — другая длительность и другая
+    цена, — а заодно терялось всё, что пациент успел выбрать."""
+    from navbat.dialog.conversation import load_conversation, save_conversation
+
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+        conv = load_conversation(s, CHAT)
+        conv.context.service = "implant"
+        conv.state = "booking_offer_slots"
+        save_conversation(s, conv)
+
+    service, _, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        conv = load_conversation(s, CHAT)
+    assert conv.context.service == "implant", \
+        "матчер переписал услугу живого диалога"
+    assert conv.state == "booking_offer_slots"
+
+
+def test_offer_button_survives_later_buttons(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a,
+                                             service_cleaning):
+    """Предложение очереди висит часами, а карта кнопок одна на чат.
+
+    Пронумерованная кнопка слота указывала бы на действие из последней
+    отправки — тап записывал бы на чужое время или отвечал невпопад.
+    Кнопка предложения обязана нести слот сама (сырой wl:), как кнопка
+    выхода из очереди рядом с ней."""
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.dialog.patients import create_patient
+    from navbat.dialog.replies import Button, Reply
+    from navbat.nlu.extractor import FakeExtractor
+    from navbat.telegram.worker import send_reply
+
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        create_patient(s, CHAT, "Пациент", "998901112233")
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    offered = [b.action for row in api.row_keyboards[-1] for b in row
+               if not b.action.startswith("wl:leave:")]
+    assert len(offered) == 1
+    action = offered[0]
+
+    # что-то ещё прислало кнопки в этот чат — карта перезаписана
+    send_reply(api, app_session_factory, clinic_a, CHAT,
+               Reply("прайс", (Button("Имплант", "service:implant"),)))
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    reply = engine.handle_action(CHAT, action)
+
+    with admin_engine.begin() as conn:
+        booked = conn.execute(text(
+            "SELECT s.name FROM appointment a JOIN service s ON s.id = a.service_id "
+            "WHERE a.status = 'booked'")).scalars().all()
+    assert booked == ["cleaning"], \
+        f"тап по предложению очереди не записал на её услугу: {reply.text[:80]}"
 
 
 def test_auto_fulfilled_if_booked_elsewhere(app_session_factory, admin_engine,

@@ -122,10 +122,11 @@ def test_send_due_sends_only_ripe_with_buttons(app_session_factory, admin_engine
     assert buttons[0].action.startswith("attend:")
     assert buttons[1].action.startswith("remind_cancel:")
     with admin_engine.begin() as conn:
-        actions = conn.execute(text(
-            "SELECT context -> 'tg_actions' FROM conversation WHERE tg_chat_id = :c"),
+        dialogs = conn.execute(text(
+            "SELECT count(*) FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).scalar_one()
-    assert not actions, "напоминание не должно перетирать карту кнопок чата"
+    assert dialogs == 0, \
+        "напоминание перезаписывает диалог пациента из фонового потока"
 
     assert service.send_due() == 0, "sent не переотправляются"
     statuses = {r.status for r in reminder_rows(admin_engine)}

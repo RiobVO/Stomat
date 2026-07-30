@@ -86,13 +86,16 @@ class _SharedHelpersMixin:
 
     def _on_waitlist(self, session: Session, conv: Conversation,
                      rest: str) -> Reply:
-        """Лист ожидания: wl:join:<service_key> | wl:leave:<id>."""
+        """Лист ожидания: wl:join:<service_key> | wl:leave:<id> |
+        wl:take:<id>:<минуты эпохи> (тап по предложенному слоту)."""
         lang = self._lang(conv)
         op, _, arg = rest.partition(":")
         if op == "leave":
             if arg.isdigit():
                 waitlist_repo.mark_cancelled(session, int(arg))
             return Reply(t("waitlist_left", lang))
+        if op == "take":
+            return self._take_waitlist_slot(session, conv, arg)
         # join: услуга из action, иначе из контекста, иначе осмотр (бэкстоп)
         service_id = self._service_id(session, arg or conv.context.service
                                       or "checkup")
@@ -105,6 +108,44 @@ class _SharedHelpersMixin:
         conv.state = "idle"
         return Reply(t("waitlist_already" if wid is None else "waitlist_joined",
                        lang))
+
+    def _take_waitlist_slot(self, session: Session, conv: Conversation,
+                            arg: str) -> Reply:
+        """Тап по слоту из предложения очереди: wl:take:<id>:<минуты эпохи>.
+
+        Услуга берётся из строки очереди — она источник истины, а не диалог
+        (пациент мог за это время начать оформлять другую запись). Врач
+        подбирается здесь же: очередь обещает «любой ближайший слот по
+        услуге», а в callback_data места на uuid врача нет.
+        """
+        lang = self._lang(conv)
+        wid_raw, _, minutes_raw = arg.partition(":")
+        if not wid_raw.isdigit() or not minutes_raw.isdigit():
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        row = waitlist_repo.active_by_id(session, int(wid_raw))
+        if row is None or row.tg_chat_id != conv.chat_id:
+            # очередь уже закрыта (записался, отписался, истекла) либо чужая
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        start = datetime.fromtimestamp(int(minutes_raw) * 60,
+                                       tz=self._clinic_tz(session))
+        conv.context.service = self._service_name(session, row.service_id) \
+            or "checkup"
+        doctor_id = self._free_doctor_at(session, row.service_id, start)
+        if doctor_id is None:  # слот заняли, пока предложение висело
+            return self._offer_slots(session, conv, note="slot_taken")
+        return self._on_slot_chosen(session, conv, str(doctor_id),
+                                    start.isoformat())
+
+    def _free_doctor_at(self, session: Session, service_id,
+                        start: datetime) -> uuid.UUID | None:
+        day = start.astimezone(self._clinic_tz(session)).date()
+        for doctor_id, _ in self._doctors(session):
+            for slot in self._sched.find_free_slots(doctor_id, service_id, day):
+                if slot.start == start:
+                    return doctor_id
+        return None
 
     def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
         names = services_repo.service_keys(session)
