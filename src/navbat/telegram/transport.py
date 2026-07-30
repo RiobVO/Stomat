@@ -75,6 +75,11 @@ class WebhookServer:
                  host: str = "0.0.0.0", port: int = 8443,
                  path: str | None = None,
                  gcal_wake: threading.Event | None = None) -> None:
+        if not secret:
+            # пустой секрет превращает проверку подлинности в тождество:
+            # заголовка нет → сравнивается "" с "" → апдейт принят. Точки
+            # входа это ловят, но конструктор обязан быть fail-closed сам
+            raise ValueError("webhook secret обязателен: пустой пускает всех")
         self.path = path or f"/webhook/{clinic_id}"
         outer = self
 

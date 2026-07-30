@@ -94,3 +94,45 @@ def test_cleanup_keeps_dialog_of_a_patient_with_a_future_appointment(
     with tenant_transaction(app_session_factory, clinic_a) as session:
         assert get_chat_lang(session, chat) == "uz", \
             "язык пациента с предстоящим приёмом потерян вместе с диалогом"
+
+
+def test_cleanup_strips_the_kept_dialog_down_to_its_language(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Диалог с предстоящим приёмом переживает чистку РАДИ ЯЗЫКА — и только.
+
+    PRIVACY.md обещает, что неактивный контекст не живёт дольше 90 дней;
+    исключение ради одного поля не даёт права хранить всё остальное —
+    брошенный сценарий с услугой и именем обязан уйти."""
+    from datetime import timedelta
+
+    from conftest import at_tashkent, next_monday
+    from navbat.dialog.conversation import get_chat_lang
+    from navbat.scheduling.engine import SchedulingEngine
+
+    chat = 903
+    far_future = next_monday() + timedelta(days=120)
+    sched = SchedulingEngine(app_session_factory, clinic_a)
+    appointment = sched.hold(doctor_a, service_cleaning,
+                             at_tashkent(far_future, "09:00"), tg_chat_id=chat)
+    sched.confirm(appointment)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = Conversation(chat_id=chat, state="awaiting_name")
+        conv.context.lang = "uz"
+        conv.context.service = "implant"
+        conv.context.pending_name = "Азиз Рахимов"
+        save_conversation(session, conv)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE conversation SET updated_at = now() - interval '100 days' "
+            "WHERE tg_chat_id = :c"), {"c": chat})
+
+    cleanup_old_data(app_session_factory, clinic_a)
+
+    with admin_engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT fsm_state, context, patient_id FROM conversation "
+            "WHERE tg_chat_id = :c"), {"c": chat}).one()
+    assert row.context == {"lang": "uz"}, "от диалога осталось больше языка"
+    assert row.fsm_state == "idle" and row.patient_id is None
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        assert get_chat_lang(session, chat) == "uz"

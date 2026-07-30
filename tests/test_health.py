@@ -243,3 +243,18 @@ def test_health_nlu_share_is_read_for_the_clinic_day(app_session_factory,
     _ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
     assert checks["llm"]["nlu_today"] == "1/7 сбоев", \
         "показаны сутки UTC, а не сутки клиники"
+
+
+def test_health_nlu_share_counts_messages_like_the_drift_alert(
+        app_session_factory, admin_engine, clinic_a):
+    """Знаменатель тот же, что у дрифт-алерта: repair — вторая попытка по
+    ТОМУ ЖЕ сообщению, и в доле сбоев он её разбавляет. Две цифры про одно
+    и то же не должны расходиться вдвое."""
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO llm_usage (clinic_id, day, requests, repairs, failures) "
+            "VALUES (:c, (now() AT TIME ZONE (SELECT timezone FROM clinic "
+            "                                 WHERE id = :c))::date, 40, 20, 5)"),
+            {"c": clinic_a})
+    _ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
+    assert checks["llm"]["nlu_today"] == "5/20 сбоев"

@@ -52,6 +52,26 @@ def _redact_contact_phone(session: Session, payload: dict) -> None:
     contact["phone_encrypted"] = encrypt_text(normalize_phone(raw))
 
 
+def redact_message_text(session: Session, tg_chat_id: int, body: str) -> int:
+    """Стереть конкретный текст из payload'ов чата (PII-граница очереди).
+
+    Ответ на шаге «как вас зовут» — чистый PII: сообщение ЦЕЛИКОМ является
+    именем. В постоянную таблицу оно уходит под AES-256-GCM, а в durable-
+    очереди лежало открытым до ретеншена (≤90 дней) и уезжало в корпус.
+    Сверять на выходе поздно: пациент может бросить сценарий до контакта,
+    и тогда имени нет ни в patient, ни в pending_name. Стираем там, где
+    диалог его распознал. Текст обнуляется, а не удаляется целиком: строка
+    очереди остаётся маршрутизируемой, если апдейт придётся переобработать.
+    """
+    return session.execute(
+        text("UPDATE message_queue "
+             "SET payload = jsonb_set(payload, '{message,text}', '\"\"') "
+             "WHERE tg_chat_id = :chat "
+             "  AND payload -> 'message' ->> 'text' = :body"),
+        {"chat": tg_chat_id, "body": body},
+    ).rowcount
+
+
 @dataclass(frozen=True)
 class QueuedUpdate:
     id: int

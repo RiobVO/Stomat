@@ -149,3 +149,31 @@ def test_export_drops_the_name_of_an_unfinished_booking(app_session_factory,
     records, counts = export_corpus(app_session_factory, clinic_a)
     assert texts_of(records) == []
     assert counts["name"] == 1
+
+
+def test_name_step_answer_is_wiped_from_the_queue(app_session_factory,
+                                                  admin_engine, clinic_a):
+    """Ответ на «как вас зовут» стирается в ИСТОЧНИКЕ, а не только на выходе.
+
+    Пациент может отказаться от сценария до контакта (/start): pending_name
+    очищен, пациента нет — и сверять в экспорте не с чем, а чистый PII лежал
+    бы в очереди 90 дней."""
+    from navbat.dialog.conversation import Conversation, save_conversation
+    from test_tg_worker import make_worker
+
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = Conversation(chat_id=CHAT, state="awaiting_name")
+        conv.context.lang = "ru"
+        save_conversation(session, conv)
+    worker, _api, _notifier = make_worker(app_session_factory, clinic_a, script=[])
+    put_message(app_session_factory, clinic_a, "Азиз Рахимов")
+    worker.process_one()
+
+    with admin_engine.begin() as conn:
+        bodies = conn.execute(text(
+            "SELECT payload->'message'->>'text' FROM message_queue")).scalars().all()
+    assert "Азиз Рахимов" not in bodies, "имя осталось в очереди на 90 дней"
+
+    finish_queue(admin_engine, clinic_a)
+    records, _counts = export_corpus(app_session_factory, clinic_a)
+    assert texts_of(records) == []
