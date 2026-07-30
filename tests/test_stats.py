@@ -401,3 +401,80 @@ def test_evening_digest_sent_once(app_session_factory, admin_engine, clinic_a,
     with admin_engine.begin() as conn:
         last = conn.execute(text("SELECT last_digest_date FROM clinic")).scalar_one()
     assert last == evening.date()
+
+
+class PartlyDeadAPI(FakeTelegramAPI):
+    """Один из админ-чатов недоступен: бота удалили из группы регистратуры."""
+
+    def __init__(self, dead: int) -> None:
+        super().__init__()
+        self._dead = dead
+
+    def send_message(self, chat_id, *args, **kwargs):
+        if chat_id == self._dead:
+            from navbat.telegram.api import ChatUnavailableError
+
+            raise ChatUnavailableError("Bad Request: chat not found")
+        return super().send_message(chat_id, *args, **kwargs)
+
+
+def test_dead_admin_chat_does_not_repeat_digest_to_the_others(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Веер сводки изолирован по чатам, как веер алертов.
+
+    Цикл напоминаний зовёт maybe_send_digest каждые 30 с и повторяет её, пока
+    день не отмечен. Раньше сбой доставки в один чат прерывал весь веер и не
+    давал поставить отметку: живой админ получал сводку каждые полминуты
+    до полуночи."""
+    seed_activity(app_session_factory, admin_engine, clinic_a, doctor_a,
+                  service_cleaning)
+    dead = ADMIN_CHAT + 1
+    api = PartlyDeadAPI(dead)
+    service = ReminderService(app_session_factory, clinic_a, tg_api=api,
+                              digest_chat_id=(ADMIN_CHAT, dead))
+    evening = datetime.now(TASHKENT).replace(hour=21, minute=30)
+
+    service.maybe_send_digest(now_local=evening)
+    service.maybe_send_digest(now_local=evening)  # следующий такт цикла
+
+    assert [c for c, _, _ in api.sent].count(ADMIN_CHAT) == 1, \
+        "живой админ получил сводку повторно из-за мёртвого соседа"
+    with admin_engine.begin() as conn:
+        last = conn.execute(text("SELECT last_digest_date FROM clinic")).scalar_one()
+    assert last == evening.date(), "день не отмечен — сводка пойдёт по кругу"
+
+
+def test_dead_first_admin_chat_does_not_eat_the_digest(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Зеркальный случай: недоступный чат стоит первым.
+
+    Раньше он обрывал веер до живых получателей — сводку не видел никто,
+    и так каждый вечер, только warning в логе."""
+    seed_activity(app_session_factory, admin_engine, clinic_a, doctor_a,
+                  service_cleaning)
+    dead = ADMIN_CHAT + 1
+    api = PartlyDeadAPI(dead)
+    service = ReminderService(app_session_factory, clinic_a, tg_api=api,
+                              digest_chat_id=(dead, ADMIN_CHAT))
+    evening = datetime.now(TASHKENT).replace(hour=21, minute=30)
+
+    service.maybe_send_digest(now_local=evening)
+    assert any(c == ADMIN_CHAT for c, _, _ in api.sent), \
+        "мёртвый чат съел сводку у живого администратора"
+
+
+def test_digest_day_stays_unmarked_when_nobody_got_it(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Все чаты недоступны — отметку ставить нельзя: сводку не получил никто,
+    и следующая попытка должна состояться."""
+    seed_activity(app_session_factory, admin_engine, clinic_a, doctor_a,
+                  service_cleaning)
+    api = PartlyDeadAPI(ADMIN_CHAT)
+    service = ReminderService(app_session_factory, clinic_a, tg_api=api,
+                              digest_chat_id=(ADMIN_CHAT,))
+    evening = datetime.now(TASHKENT).replace(hour=21, minute=30)
+
+    assert service.maybe_send_digest(now_local=evening) is False
+    with admin_engine.begin() as conn:
+        last = conn.execute(text("SELECT last_digest_date FROM clinic")).scalar_one()
+    assert last is None
