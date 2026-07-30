@@ -10,14 +10,16 @@ ADMIN_CHAT = 777
 def test_notify_sends_context_to_admin_chat():
     api = FakeTelegramAPI()
     escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
-    escalation.notify(100, "2 кривых ответа NLU подряд", {"lang": "uz"})
+    escalation.notify(100, "2 кривых ответа NLU подряд",
+                      {"service": "cleaning", "lang": "uz"})
 
     assert len(api.sent) == 1
     chat_id, message_text, _ = api.sent[0]
     assert chat_id == ADMIN_CHAT
     assert "100" in message_text
     assert "2 кривых ответа NLU подряд" in message_text
-    assert "uz" in message_text
+    # M3: бронь-контекст читаемо (услуга по-русски), а не сырой JSON c 'uz'
+    assert "Чистка" in message_text
 
 
 def test_alert_contains_release_hint():
