@@ -384,6 +384,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_join_waitlist` | 🔔 Сообщить, когда освободится | **🔔 Bo'shaganda xabar bering** | |
 | `waitlist_joined` | 🔔 Вы в очереди — пришлю первое освободившееся время. | **🔔 Siz navbatdasiz — bo'shagan birinchi vaqtni yuboraman.** | |
 | `waitlist_already` | 🔔 Вы уже в очереди — как только освободится, сразу напишу. | **🔔 Siz allaqachon navbatdasiz — bo'shashi bilan yozaman.** | |
+| `waitlist_taken_already` | ✅ Вы уже записаны на «{service}» — второй записи не нужно. | **✅ Siz «{service}» uchun allaqachon yozilgansiz — ikkinchisi shart emas.** | |
 | `waitlist_left` | Хорошо, убрал вас из очереди ожидания. | **Mayli, sizni kutish navbatidan chiqardim.** | |
 | `waitlist_slot_offer` | 🔔 Освободилось время на «{service}»: {when}. Записать вас? | **🔔 «{service}» uchun vaqt bo'shadi: {when}. Yozib qo'yaymi?** | |
 | `btn_waitlist_leave` | Я больше не жду | **Endi kutmayman** | |

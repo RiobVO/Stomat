@@ -326,6 +326,40 @@ def test_offer_button_survives_later_buttons(app_session_factory, admin_engine,
         f"тап по предложению очереди не записал на её услугу: {reply.text[:80]}"
 
 
+def test_double_tap_on_offer_does_not_book_twice(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """Пациент жмёт кнопку предложения дважды (сообщение никуда не делось).
+
+    Врач подбирается при тапе, поэтому второй тап нашёл бы ДРУГОГО свободного
+    врача на то же время: у пациента две записи на один час, у клиники —
+    призрак двойной брони. Снимает с очереди только следующий цикл матчера,
+    так что окно реальное."""
+    from conftest import make_doctor
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.dialog.patients import create_patient
+    from navbat.nlu.extractor import FakeExtractor
+
+    make_doctor(admin_engine, clinic_a)  # второй врач: то же время свободно
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        create_patient(s, CHAT, "Пациент", "998901112233")
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    action = _slot_action(api)
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    engine.handle_action(CHAT, action)
+    engine.handle_action(CHAT, action)  # тот же тап ещё раз
+
+    with admin_engine.begin() as conn:
+        booked = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE status IN ('hold','booked')"
+        )).scalar_one()
+    assert booked == 1, "повторный тап записал пациента второй раз"
+
+
 def test_auto_fulfilled_if_booked_elsewhere(app_session_factory, admin_engine,
                                             clinic_a, doctor_a, service_cleaning):
     from conftest import next_monday

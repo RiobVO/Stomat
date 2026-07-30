@@ -99,3 +99,15 @@ def has_future_booked(session: Session, tg_chat_id: int,
              "AND status = 'booked' AND lower(time_range) > now())"),
         {"chat": tg_chat_id, "sid": service_id},
     ).scalar_one())
+
+
+def has_future_active(session: Session, tg_chat_id: int,
+                      service_id: uuid.UUID) -> bool:
+    """То же, но считая незавершённое оформление (hold): повторный тап по
+    предложению не должен заводить вторую запись, пока пациент вводит имя."""
+    return bool(session.execute(
+        text("SELECT EXISTS (SELECT 1 FROM appointment "
+             "WHERE tg_chat_id = :chat AND service_id = :sid "
+             "AND status IN ('hold', 'booked') AND lower(time_range) > now())"),
+        {"chat": tg_chat_id, "sid": service_id},
+    ).scalar_one())

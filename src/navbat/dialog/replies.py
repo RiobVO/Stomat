@@ -115,6 +115,11 @@ TEMPLATES = {
         "ru": "🔔 Вы уже в очереди — как только освободится, сразу напишу.",
         "uz": "🔔 Siz allaqachon navbatdasiz — bo'shashi bilan yozaman.",
     },
+    "waitlist_taken_already": {
+        "ru": "✅ Вы уже записаны на «{service}» — второй записи не нужно.",
+        "uz": "✅ Siz «{service}» uchun allaqachon yozilgansiz — ikkinchisi "
+              "shart emas.",
+    },
     "waitlist_left": {
         "ru": "Хорошо, убрал вас из очереди ожидания.",
         "uz": "Mayli, sizni kutish navbatidan chiqardim.",
