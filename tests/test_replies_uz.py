@@ -108,6 +108,29 @@ def test_every_template_renders_with_samples(key, lang):
     assert "{" not in rendered and "}" not in rendered
 
 
+def test_translations_keep_the_same_placeholders():
+    """Узбекский вариант обязан нести ТЕ ЖЕ подстановки, что русский.
+
+    Потерянная подстановка молча уносит данные из сообщения (владелец читает
+    «синк не работает циклов подряд» без числа), а лишняя роняет отправку
+    KeyError — причём уже в проде, потому что рендер идёт в момент алерта."""
+    import re
+
+    from navbat.telegram.admin_texts import TEMPLATES as ADMIN_TEMPLATES
+
+    def holes(text: str) -> set[str]:
+        return set(re.findall(r"\{(\w+)", text))
+
+    broken = []
+    for name, table in (("пациент", TEMPLATES), ("админ", ADMIN_TEMPLATES)):
+        for key, langs in table.items():
+            expected = holes(langs["ru"])
+            for lang, text in langs.items():
+                if lang != "ru" and holes(text) != expected:
+                    broken.append(f"{name}.{key} [{lang}]")
+    assert not broken, "подстановки разошлись с русским: " + ", ".join(broken)
+
+
 # ── Пакет для вычитки носителем (карта готовности, №20) ───────────────────
 
 def _review_doc() -> str:
