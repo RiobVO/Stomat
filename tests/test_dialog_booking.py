@@ -256,6 +256,27 @@ def test_named_doctor_filters_slots(app_session_factory, admin_engine, clinic_a,
         assert b.action.split(":", 2)[1] == str(akmal)
 
 
+def test_one_letter_doctor_does_not_pick_a_doctor(app_session_factory,
+                                                  admin_engine, clinic_a,
+                                                  doctor_a, service_cleaning):
+    """Имя врача из NLU сверялось подстрокой в обе стороны.
+
+    Огрызок в один-два символа («а») входит почти в любое имя, и пациента
+    молча привязывало к первому подходящему врачу — записывали не к тому,
+    к кому просили. Такой обрывок — не имя: честнее сказать «врач не найден»
+    и показать слоты всех."""
+    from conftest import make_doctor
+
+    make_doctor(admin_engine, clinic_a, name="Akmal aka")
+    day = next_monday()
+    engine = make_engine(app_session_factory, clinic_a, [
+        extr(service="cleaning", date_ref=explicit(day), doctor="a"),
+    ])
+    reply = engine.handle_text(CHAT, "чистку в понедельник")
+    doctors = {b.action.split(":", 2)[1] for b in slot_buttons(reply)}
+    assert len(doctors) > 1, "огрызок имени сузил выбор до одного врача"
+
+
 # ── Срывы брони ──────────────────────────────────────────────────────────────
 
 def test_hold_expired_during_collection_reoffers(app_session_factory, admin_engine,
