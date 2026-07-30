@@ -11,8 +11,10 @@
 Telegram-метаданные (from.id/first_name/username, chat.id) в экспорт не
 попадают by construction; телефоны → [phone] (общий redact_phones),
 @упоминания → [user], ссылки → [link]; админ-чаты исключены; контакты
-(кнопка «Поделиться») не выбираются. Имена в свободном тексте остаются —
-то же ограничение, что у LLM-границы и копилки unanswered_question.
+(кнопка «Поделиться») не выбираются; ответ на шаге «как вас зовут»
+отбрасывается сверкой с именами клиники. Имена, названные посреди
+свободного текста, остаются — то же ограничение, что у копилки
+unanswered_question.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from navbat.crypto import decrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.dialog.replies import TEMPLATES
 from navbat.envfile import load_env_file
@@ -56,6 +59,35 @@ _SELECT_TEXTS = text("""
 """)
 
 
+def _known_names(session) -> set[str]:
+    """Имена, которые пациенты вводили на шаге «как вас зовут».
+
+    Этот шаг — детерминированный производитель чистого PII: сообщение
+    целиком является именем. В БД оно лежит зашифрованным (AES-256-GCM),
+    а выгрузка — обычный jsonl вне периметра и вне ретеншена, поэтому
+    граница у корпуса обязана быть не слабее, чем у LLM (текст шага имени
+    в NLU не уходит). Сверка точная, не эвристика: это ровно тот же текст,
+    который стал именем — в patient (сценарий дошёл до телефона) или в
+    pending_name незакрытого диалога.
+
+    Остаток: имя брошенного сценария, у которого уже нет ни пациента, ни
+    pending_name (диалог перезапущен), отсюда не видно.
+    """
+    names = {
+        _normalize(decrypt_text(token))
+        for token in session.execute(
+            text("SELECT name_encrypted FROM patient "
+                 "WHERE name_encrypted IS NOT NULL")).scalars()
+    }
+    names |= {
+        _normalize(pending)
+        for pending in session.execute(
+            text("SELECT context ->> 'pending_name' FROM conversation "
+                 "WHERE context ->> 'pending_name' IS NOT NULL")).scalars()
+    }
+    return {name for name in names if name}
+
+
 def anonymize(body: str) -> str:
     """Телефоны/упоминания/ссылки → плейсхолдеры (граница приватности)."""
     body = redact_phones(body)
@@ -73,8 +105,9 @@ def export_corpus(session_factory, clinic_id: uuid.UUID, *,
     """Записи корпуса (gold=null — inbox для разметки) + счётчики отбраковки."""
     with tenant_transaction(session_factory, clinic_id) as session:
         rows = session.execute(_SELECT_TEXTS).scalars().all()
+        names = _known_names(session)
     counts = {"fetched": len(rows), "command": 0, "menu_label": 0,
-              "short": 0, "duplicate": 0, "exported": 0}
+              "name": 0, "short": 0, "duplicate": 0, "exported": 0}
     seen: set[str] = set()
     records: list[dict] = []
     for body in rows:
@@ -89,6 +122,9 @@ def export_corpus(session_factory, clinic_id: uuid.UUID, *,
             counts["short"] += 1
             continue
         key = _normalize(stripped)
+        if key in names:
+            counts["name"] += 1
+            continue
         if key in seen:
             counts["duplicate"] += 1
             continue
@@ -136,7 +172,8 @@ def main() -> int:
     write_jsonl(records, args.out)
     print(f"[OK] всего строк очереди: {counts['fetched']}; отброшено — "
           f"команд: {counts['command']}, кнопок меню: {counts['menu_label']}, "
-          f"коротких: {counts['short']}, дублей: {counts['duplicate']}")
+          f"имён: {counts['name']}, коротких: {counts['short']}, "
+          f"дублей: {counts['duplicate']}")
     print(f"[OK] экспортировано {counts['exported']} → {args.out}")
     return 0
 
