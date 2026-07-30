@@ -64,6 +64,39 @@ def test_forget_anonymizes_patient_and_wipes_dialog(app_session_factory,
     assert "[OK]" in sent_to(api, ADMIN_CHAT)[-1][0]
 
 
+def test_forget_takes_patient_out_of_the_waitlist(app_session_factory,
+                                                  admin_engine, clinic_a,
+                                                  doctor_a, service_cleaning):
+    """Лист ожидания появился позже /forget и остался вне анонимизации.
+
+    Строка очереди хранит tg_chat_id, а матчер ходит по ней каждые 30 секунд:
+    «забытый» пациент продолжал получать предложения освободившихся слотов,
+    и под них заново создавалась строка диалога, только что удалённая."""
+    from navbat.dialog import waitlist_repo
+    from test_waitlist import _matcher, rows_in_db
+
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        waitlist_repo.add(session, service_cleaning, CHAT, None, "ru")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, f"/forget {CHAT}",
+                chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    assert rows_in_db(admin_engine, clinic_a) == [], \
+        "чат забытого пациента остался в очереди ожидания"
+
+    service, matcher_api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 0
+    assert not [chat for chat, _, _ in matcher_api.sent if chat == CHAT], \
+        "бот написал пациенту, данные которого просили удалить"
+    with admin_engine.begin() as conn:
+        conv = conn.execute(
+            text("SELECT count(*) FROM conversation WHERE tg_chat_id = :c"),
+            {"c": CHAT}).scalar_one()
+    assert conv == 0, "матчер заново создал диалог стёртого чата"
+
+
 def test_forget_bad_argument_shows_usage(app_session_factory, admin_engine,
                                          clinic_a, doctor_a, service_cleaning):
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],

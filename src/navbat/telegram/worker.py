@@ -48,6 +48,7 @@ log = logging.getLogger("navbat.telegram")
 
 IDLE_WAIT = 0.3        # сек между опросами пустой очереди
 RECLAIM_EVERY = 60.0   # сек между реклеймами зависших processing
+ERROR_BACKOFF = 2.0    # сек паузы после сбоя цикла — не долбить мёртвую БД
 RATE_MAX = 5           # сообщений на чат за окно — дальше NLU не дёргаем
 RATE_WINDOW_SECONDS = 10
 
@@ -116,17 +117,29 @@ class UpdateWorker:
         return True
 
     def run(self, stop: threading.Event) -> None:
-        """Цикл воркера до сигнала остановки."""
+        """Цикл воркера до сигнала остановки.
+
+        Клейм, ack и реклейм ходят в БД вне защиты process_one, поэтому
+        обрыв соединения (перезапуск Postgres, OOM) уносил бы весь поток:
+        процесс остался бы жив, транспорт продолжал бы копить апдейты, а
+        пациенты не получали бы ответов молча. Цикл переживает сбой и ждёт
+        восстановления — как цикл напоминаний.
+        """
         last_reclaim = time.monotonic()
         while not stop.is_set():
-            if time.monotonic() - last_reclaim >= RECLAIM_EVERY:
-                with tenant_transaction(self._session_factory, self._clinic_id) as session:
-                    reclaimed = reclaim_stale(session)
-                if reclaimed:
-                    log.warning("возвращено зависших апдейтов: %d", reclaimed)
-                last_reclaim = time.monotonic()
-            if not self.process_one():
-                stop.wait(IDLE_WAIT)
+            try:
+                if time.monotonic() - last_reclaim >= RECLAIM_EVERY:
+                    with tenant_transaction(self._session_factory,
+                                            self._clinic_id) as session:
+                        reclaimed = reclaim_stale(session)
+                    if reclaimed:
+                        log.warning("возвращено зависших апдейтов: %d", reclaimed)
+                    last_reclaim = time.monotonic()
+                if not self.process_one():
+                    stop.wait(IDLE_WAIT)
+            except Exception:
+                log.exception("цикл воркера упал — продолжаю")
+                stop.wait(ERROR_BACKOFF)
 
     # ── Разбор апдейта ───────────────────────────────────────────────────
 
@@ -360,7 +373,9 @@ class UpdateWorker:
         Имя/контакт стираются, диалог и сырые сообщения удаляются; история
         приёмов остаётся обезличенной (appointment.tg_chat_id → NULL).
         Будущие записи НЕ отменяются: запрос на удаление данных — не отмена
-        приёма; pending-напоминания гасятся, чтобы не слать в стёртый чат.
+        приёма; pending-напоминания гасятся, чтобы не слать в стёртый чат,
+        по той же причине снимается очередь ожидания (её строка хранит
+        tg_chat_id, а матчер пишет в чат каждые 30 секунд).
         """
         parts = command.split()
         if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
@@ -386,7 +401,11 @@ class UpdateWorker:
             messages = session.execute(
                 text("DELETE FROM message_queue WHERE tg_chat_id = :chat"),
                 {"chat": target}).rowcount
-        if not any((reminders, patients, appointments, dialogs, messages)):
+            waiting = session.execute(
+                text("DELETE FROM waitlist WHERE tg_chat_id = :chat"),
+                {"chat": target}).rowcount
+        if not any((reminders, patients, appointments, dialogs, messages,
+                    waiting)):
             return Reply(at("forget_not_found", lang, chat=target))
         return Reply(at("forget_ok", lang, chat=target))
 
