@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from navbat.db.base import tenant_transaction
+from navbat.stats import collect_stats
 
 log = logging.getLogger("navbat.demo_history")
 
@@ -320,17 +321,16 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
 
 
-def count_demo_history(session_factory, clinic_id: uuid.UUID, days: int = 14,
-                       now: datetime | None = None) -> int:
-    """Сколько демо-истории ВИДИТ СВОДКА в окне последних `days` дней.
+def summary_bookings(session_factory, clinic_id: uuid.UUID, days: int = 14,
+                     now: datetime | None = None) -> int:
+    """Сколько записей ВИДИТ сводка владельца в окне последних `days` дней.
 
-    Нужно CLI, чтобы отличить «окно уже наполнено» от «наливать некуда»: ноль
-    созданных записей сам по себе не говорит, что витрина не пуста (ре-ревью).
-
-    Считаем то же, что считает витрина, — confirm-аудиты (stats.py), а не сами
-    приёмы: оформление прошлых приёмов сид датирует НАКАНУНЕ, поэтому приёмы
-    самого старого дня окна сводке не видны. Счёт по приёмам отвечал «уже
-    есть» над сводкой из нулей — ровно та ложь, от которой заведён [FAIL].
+    Нужно CLI: цель сидера — чтобы `/stats` не была пустой, и судить об этом
+    должен тот же код, который сводку рисует. Своя копия условий дважды
+    расходилась с витриной (ревью): оформление прошлых приёмов датируется
+    НАКАНУНЕ, поэтому приёмы самого старого дня окна сводке не видны, а живые
+    записи показа витрина считает наравне с синтетикой — счёт «только своего»
+    объявил бы «наливать некуда» над непустой сводкой.
 
     Окно мерим локальными ДАТАМИ, как ведёт его сид. Абсолютное «now() минус N
     суток» отрезало бы утро самого старого дня: при `days=0` не видно ни одной
@@ -341,13 +341,7 @@ def count_demo_history(session_factory, clinic_id: uuid.UUID, days: int = 14,
         if tz is None:
             return 0
         today = (now.astimezone(tz) if now is not None else datetime.now(tz)).date()
-        return session.execute(
-            text("SELECT count(*) FROM appointment_audit aa "
-                 "JOIN appointment a ON a.id = aa.appointment_id "
-                 "WHERE a.source = :src AND aa.action = 'confirm' "
-                 "AND (aa.at AT TIME ZONE :tz)::date >= :first"),
-            {"src": DEMO_SOURCE, "tz": tz.key,
-             "first": today - timedelta(days=days)}).scalar_one()
+        return collect_stats(session, today - timedelta(days=days), today, tz).booked
 
 
 def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:

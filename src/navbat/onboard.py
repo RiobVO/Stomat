@@ -658,10 +658,10 @@ def main() -> int:
         print(f"[OK] промпт загружен: версия {version}")
         return 0
     if args.demo_history or args.demo_history_clear:
-        from navbat.demo_history import (clear_demo_history, count_demo_history,
-                                         seed_demo_history)
+        from navbat.demo_history import (clear_demo_history, seed_demo_history,
+                                         summary_bookings)
 
-        if args.days < 0:
+        if args.demo_history and args.days < 0:  # откат окном не пользуется
             sys.exit("[FAIL] --days не может быть отрицательным: окно истории "
                      "отсчитывается назад от сегодняшнего дня")
         clinic = args.clinic or DEMO_CLINIC_ID
@@ -678,17 +678,22 @@ def main() -> int:
         # полночь, и окно счётчика съедет относительно наполненного
         now = datetime.now(UTC)
         created = seed_demo_history(session_factory, clinic, args.days, now=now)
+        # судим по тому, что ВИДИТ сводка, а не по факту создания: цель команды
+        # — непустая витрина. Ни «создано N» (аудиты могли не попасть в окно),
+        # ни «уже есть» (записи могли лежать вне окна) сами по себе этого не
+        # доказывают — оба сообщения врали владельцу перед показом (ревью)
+        visible = summary_bookings(session_factory, clinic, args.days, now=now)
+        if visible and created:
+            print(f"[OK] демо-история: создано записей — {created}, "
+                  f"сводка окна показывает {visible}")
+            return 0
+        if visible:
+            print(f"[OK] демо-история уже есть: сводка окна показывает {visible}")
+            return 0
         if created:
-            print(f"[OK] демо-история: создано записей — {created}")
-            return 0
-        # ноль созданных — ещё не «всё на месте»: демо-клиники может не быть
-        # вовсе, врачи и услуги — скрыты, слоты — заняты чужими событиями.
-        # Молчаливое «уже есть» отправляло владельца на показ с пустой
-        # витриной (ре-ревью сидера)
-        existing = count_demo_history(session_factory, clinic, args.days, now=now)
-        if existing:
-            print(f"[OK] демо-история уже есть: записей — {existing}")
-            return 0
+            sys.exit(f"[FAIL] создано {created} записей, но сводка окна пуста: "
+                     "оформление прошлых приёмов датируется накануне, и в окно "
+                     "оно не попало — откройте закрытые дни или увеличьте --days")
         sys.exit("[FAIL] демо-историю наливать некуда: нет демо-клиники, "
                  "активных врачей или услуг, либо все слоты заняты — "
                  "проверьте python -m navbat --check")
