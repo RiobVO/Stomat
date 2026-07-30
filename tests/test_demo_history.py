@@ -222,14 +222,60 @@ def test_count_window_is_measured_in_local_days(app_session_factory, admin_engin
     now = datetime.now(TZ).replace(hour=12, minute=0, second=0, microsecond=0)
     start = now.replace(hour=0, minute=30)  # приём в начале сегодняшних суток
     with admin_engine.begin() as conn:
-        conn.execute(
+        appointment_id = conn.execute(
             text("INSERT INTO appointment (clinic_id, doctor_id, time_range, "
                  "buffer_min, status, source) VALUES (:c, :d, "
-                 "tstzrange(:lo, :hi, '[)'), 10, 'booked', 'demo_history')"),
+                 "tstzrange(:lo, :hi, '[)'), 10, 'booked', 'demo_history') "
+                 "RETURNING id"),
             {"c": clinic_a, "d": doctor_a, "lo": start,
-             "hi": start + timedelta(minutes=30)})
+             "hi": start + timedelta(minutes=30)}).scalar_one()
+        conn.execute(
+            text("INSERT INTO appointment_audit (clinic_id, appointment_id, actor, "
+                 "action, at) VALUES (:c, :a, 'bot', 'confirm', :at)"),
+            {"c": clinic_a, "a": appointment_id, "at": start.replace(minute=5)})
 
     assert count_demo_history(app_session_factory, clinic_a, days=0, now=now) == 1
+
+
+def test_count_agrees_with_the_summary(app_session_factory, admin_engine,
+                                       priced_clinic):
+    """Счётчик обязан считать ТО ЖЕ, что показывает витрина — confirm-аудиты
+    в окне, а не сами приёмы.
+
+    Сид датирует оформление прошлых приёмов НАКАНУНЕ (сводка считает работу
+    бота, не время приёма), поэтому приёмы самого старого дня окна витрине не
+    видны. Счётчик по приёмам отвечал «демо-история уже есть» над сводкой из
+    нулей — ровно та ложь, от которой заводился [FAIL] (ревью, блокер)."""
+    from navbat.demo_history import count_demo_history
+
+    clinic_a = priced_clinic
+    today = datetime.now(TZ).date()
+    oldest = today - timedelta(days=14)
+    with admin_engine.begin() as conn:  # рабочим остаётся только старейший день
+        for shift in range(14):
+            conn.execute(
+                text("INSERT INTO holiday (clinic_id, date, reason) "
+                     "VALUES (:c, :d, 'Праздник')"),
+                {"c": clinic_a, "d": today - timedelta(days=shift)})
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, oldest, today, TZ)
+    assert stats.booked == 0, "предпосылка теста: сводка окна пуста"
+    assert count_demo_history(app_session_factory, clinic_a, days=14) == 0
+
+
+def test_cli_rejects_negative_window(monkeypatch):
+    """`--days -1` — не окно: цикл сида пуст, а счётчик искал бы записи с
+    завтрашнего дня, и исправная клиника получала «наливать некуда»."""
+    import sys as _sys
+
+    from navbat import onboard
+
+    monkeypatch.setattr(_sys, "argv", ["onboard", "--demo-history", "--days", "-1"])
+    with pytest.raises(SystemExit) as exc:
+        onboard.main()
+    assert "наливать некуда" not in str(exc.value), str(exc.value)
 
 
 def test_cli_says_when_there_is_nothing_to_seed(monkeypatch, admin_engine):

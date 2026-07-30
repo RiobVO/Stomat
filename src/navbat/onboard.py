@@ -34,6 +34,7 @@ import os
 import secrets
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import text
@@ -660,6 +661,9 @@ def main() -> int:
         from navbat.demo_history import (clear_demo_history, count_demo_history,
                                          seed_demo_history)
 
+        if args.days < 0:
+            sys.exit("[FAIL] --days не может быть отрицательным: окно истории "
+                     "отсчитывается назад от сегодняшнего дня")
         clinic = args.clinic or DEMO_CLINIC_ID
         if clinic != DEMO_CLINIC_ID:
             # синтетика в базе живой клиники — порча её отчётности и денежных
@@ -670,7 +674,10 @@ def main() -> int:
             removed = clear_demo_history(session_factory, clinic)
             print(f"[OK] демо-история удалена: записей — {removed}")
             return 0
-        created = seed_demo_history(session_factory, clinic, args.days)
+        # один момент на сид и счётчик: между вызовами может наступить местная
+        # полночь, и окно счётчика съедет относительно наполненного
+        now = datetime.now(UTC)
+        created = seed_demo_history(session_factory, clinic, args.days, now=now)
         if created:
             print(f"[OK] демо-история: создано записей — {created}")
             return 0
@@ -678,7 +685,7 @@ def main() -> int:
         # вовсе, врачи и услуги — скрыты, слоты — заняты чужими событиями.
         # Молчаливое «уже есть» отправляло владельца на показ с пустой
         # витриной (ре-ревью сидера)
-        existing = count_demo_history(session_factory, clinic, args.days)
+        existing = count_demo_history(session_factory, clinic, args.days, now=now)
         if existing:
             print(f"[OK] демо-история уже есть: записей — {existing}")
             return 0
