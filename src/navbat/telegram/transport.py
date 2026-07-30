@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import threading
@@ -91,7 +92,14 @@ class WebhookServer:
                 if self.path != outer.path:
                     self._respond(404)
                     return
-                if self.headers.get(SECRET_HEADER) != secret:
+                # сравнение за постоянное время: обычное != выходит на первом
+                # несовпавшем символе и выдаёт длину общего префикса.
+                # Байты, а не строки: заголовок целиком под контролем
+                # отправителя, http.server отдаёт его декодированным как
+                # latin-1, а compare_digest на не-ASCII строке бросает
+                # TypeError — это был бы 500 и повтор доставки вместо отказа
+                got = self.headers.get(SECRET_HEADER) or ""
+                if not hmac.compare_digest(got.encode(), secret.encode()):
                     self._respond(403)
                     return
                 try:

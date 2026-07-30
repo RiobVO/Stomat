@@ -101,6 +101,11 @@ def test_webhook_rejects_bad_secret(app_session_factory, admin_engine, clinic_a)
     try:
         assert post(server, tg_message(10), secret="wrong").status_code == 403
         assert post(server, tg_message(10), secret=None).status_code == 403
+        # заголовок целиком под контролем отправителя, а http.server отдаёт
+        # его декодированным как latin-1: не-ASCII байт ронял сравнение
+        # (500 + повтор доставки от Telegram) вместо честного отказа
+        assert post(server, tg_message(10),
+                    secret=b"\xe9wrong").status_code == 403
         assert queue_update_ids(admin_engine) == []
     finally:
         server.stop()
