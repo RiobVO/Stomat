@@ -307,7 +307,7 @@ def test_notifier_factory_always_knows_the_language(app_session_factory,
     assert "tiklandi" in api.sent[-1][1], api.sent[-1][1]
 
 
-def test_broken_reason_template_does_not_swallow_the_alert():
+def test_broken_reason_template_does_not_swallow_the_alert(caplog):
     """Сигнал важнее перевода.
 
     Причина рендерится в момент отправки, поэтому опечатка в шаблоне (а
@@ -330,16 +330,23 @@ def test_broken_reason_template_does_not_swallow_the_alert():
     escalation.notify_ops(admin_texts.Reason("reason_sync_stuck"), {})
     assert "{cycles}" not in api.sent[-1][1], api.sent[-1][1]
 
-    # шаблон повреждён только в одном языке: русский обязан доехать
+    # шаблон повреждён (такое внесёт вычитка узбекского): сигнал обязан дойти,
+    # причём без сырых скобок в тексте и с ошибкой в логе — иначе поломка
+    # перевода останется незамеченной
     broken = dict(admin_texts.TEMPLATES["reason_sync_restored"])
     broken["ru"] = "{cycles[typo]}"
     original = admin_texts.TEMPLATES["reason_sync_restored"]
     admin_texts.TEMPLATES["reason_sync_restored"] = broken
-    try:
-        escalation.notify_ops(admin_texts.Reason("reason_sync_restored"), {})
-    finally:
-        admin_texts.TEMPLATES["reason_sync_restored"] = original
+    with caplog.at_level("ERROR", logger="navbat.admin_texts"):
+        try:
+            escalation.notify_ops(admin_texts.Reason("reason_sync_restored"), {})
+        finally:
+            admin_texts.TEMPLATES["reason_sync_restored"] = original
+
     assert len(api.sent) == 8, "повреждённый шаблон не должен гасить сигнал"
+    assert "{" not in api.sent[-1][1], api.sent[-1][1]
+    assert any("reason_sync_restored" in record.message
+               for record in caplog.records), caplog.records
 
 
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:
