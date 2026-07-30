@@ -11,8 +11,11 @@
 from __future__ import annotations
 
 import html
+import logging
 
 LANGS = ("ru", "uz")
+log = logging.getLogger("navbat.admin_texts")
+
 DEFAULT_LANG = "ru"
 
 # слова отмены ввода — распознаём на любом языке независимо от языка консоли:
@@ -710,6 +713,20 @@ def plain(key: str, lang: str, **kwargs) -> str:
     return template.format(**kwargs) if kwargs else template
 
 
+def render_reason(key: str, lang: str, params: dict) -> str:
+    """Причина алерта на языке получателя, которая не роняет доставку.
+
+    Сигнал важнее перевода: опечатка в ключе или в подстановке — в том числе
+    внесённая вычиткой узбекских строк — отменяла бы алерт целиком, и
+    администратор не узнал бы, что синк стоит. Поэтому сбой рендера уходит в
+    лог, а получатель видит ключ с подстановками: некрасиво, но доходит."""
+    try:
+        return plain(key, lang, **params)
+    except (KeyError, IndexError, ValueError, TypeError) as e:
+        log.error("причина %r не отрендерилась (%s): %r", key, lang, e)
+        return f"{key} {params}" if params else key
+
+
 class Reason(str):
     """Причина алерта: готовая русская строка ПЛЮС ключ и подстановки к ней.
 
@@ -723,7 +740,7 @@ class Reason(str):
     params: dict
 
     def __new__(cls, key: str, **params):
-        reason = super().__new__(cls, plain(key, DEFAULT_LANG, **params))
+        reason = super().__new__(cls, render_reason(key, DEFAULT_LANG, params))
         reason.key, reason.params = key, params
         return reason
 

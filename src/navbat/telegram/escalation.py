@@ -10,7 +10,7 @@ import os
 from datetime import date, datetime
 
 from navbat.dialog.replies import service_label
-from navbat.telegram.admin_texts import DEFAULT_LANG, Reason, plain
+from navbat.telegram.admin_texts import DEFAULT_LANG, Reason, plain, render_reason
 from navbat.telegram.api import TelegramAPIError
 
 log = logging.getLogger("navbat.escalation")
@@ -64,9 +64,12 @@ def _reason_in(reason, lang: str) -> str:
 
     Служебный путь мог отдать Reason (ключ + подстановки) — тогда переводим;
     обычная строка уходит как есть: системные алерты про cert, бэкапы и webhook
-    читает тот, кто чинит, и переводить их некому (остаток по №16)."""
+    читает тот, кто чинит, и переводить их некому (остаток по №16).
+
+    Рендер намеренно fail-open (render_reason): сломанный шаблон гасил рассылку
+    целиком — ни этот получатель, ни следующие не узнавали о сбое (ревью)."""
     if isinstance(reason, Reason):
-        return plain(reason.key, lang, **reason.params)
+        return render_reason(reason.key, lang, reason.params)
     return str(reason)
 
 
