@@ -451,3 +451,26 @@ def test_digest_and_stats_show_waitlist_count(app_session_factory, clinic_a,
     assert stats.waitlist_waiting == 2
     assert "очереди ожидания: 2" in render_digest_short(stats)
     assert "ждут слота: 2" in render_stats(stats, next_monday())
+
+
+def test_matcher_offers_a_distinct_slot_to_each_waiting_patient(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Один цикл матчера — своё время каждому подписчику.
+
+    Ближайший слот искался заново для каждой строки очереди, и все
+    подписчики услуги получали ОДНО И ТО ЖЕ время. Слот один, кнопка несёт
+    только минуту, врач подбирается при тапе — первый забирает, остальным
+    достаётся «время уже занято». Пуш, который заведомо не сработает."""
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+        wl.add(s, service_cleaning, CHAT + 1, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+
+    assert service.match_waitlist() == 2
+    offered = {}
+    for (chat, _text, _buttons), rows in zip(api.sent, api.row_keyboards):
+        offered[chat] = next(b.action for row in rows for b in row
+                             if b.action.startswith("wl:take:")).rsplit(":", 1)[1]
+    assert len(offered) == 2
+    assert len(set(offered.values())) == 2, \
+        "обоим предложено одно время — тап второго заведомо провалится"

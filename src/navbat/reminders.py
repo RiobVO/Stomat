@@ -224,38 +224,50 @@ class ReminderService:
         days = [now.date() + timedelta(days=i)
                 for i in range(WAITLIST_HORIZON_DAYS)]
         sent = 0
+        offered: set[datetime] = set()
         for row in rows:
-            if self._offer_waitlist_slot(row, doctor_ids, days, tz, now):
+            start = self._offer_waitlist_slot(row, doctor_ids, days, tz, now,
+                                              offered)
+            if start is not None:
+                offered.add(start)
                 sent += 1
         return sent
 
-    def _earliest_slot(self, service_id, doctor_ids, days, now):
-        """Ближайший свободный слот по услуге (любой врач) в горизонте."""
+    def _earliest_slot(self, service_id, doctor_ids, days, now, offered):
+        """Ближайший свободный слот по услуге (любой врач) в горизонте.
+
+        offered — время, уже разосланное в этом же цикле: слот один, кнопка
+        несёт только минуту, а врач подбирается при тапе, поэтому одно время
+        двум подписчикам = гарантированное «уже занято» для второго.
+        """
         for day in days:
             best = None
             for did in doctor_ids:
                 for slot in self._sched.find_free_slots(did, service_id, day):
-                    if slot.start > now:  # отсечь прошедшие часы сегодня
-                        if best is None or slot.start < best[0]:
-                            best = (slot.start, did)
-                        break  # find_free_slots отсортирован — первый = ближайший
+                    if slot.start <= now or slot.start in offered:
+                        continue  # прошедшие часы и уже разосланное время
+                    if best is None or slot.start < best[0]:
+                        best = (slot.start, did)
+                    break  # find_free_slots отсортирован — первый = ближайший
             if best:
                 return best  # дни по порядку → первый день с слотом = ближайший
         return None
 
-    def _offer_waitlist_slot(self, row, doctor_ids, days, tz, now) -> bool:
+    def _offer_waitlist_slot(self, row, doctor_ids, days, tz, now,
+                             offered) -> datetime | None:
+        """Разосланное время (для дедупа цикла) либо None, если пуша не было."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             if waitlist_repo.has_future_booked(session, row.tg_chat_id,
                                                row.service_id):
                 waitlist_repo.mark_fulfilled(session, row.id)
-                return False
+                return None
         # антиспам: пока тот же слот висит — не долбить уведомлённого
         if row.status == "notified" and row.notified_at and \
                 now - row.notified_at < timedelta(hours=WAITLIST_RENOTIFY_HOURS):
-            return False
-        found = self._earliest_slot(row.service_id, doctor_ids, days, now)
+            return None
+        found = self._earliest_slot(row.service_id, doctor_ids, days, now, offered)
         if found is None:
-            return False
+            return None
         start, doctor_id = found
         local = start.astimezone(tz)
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -288,13 +300,13 @@ class ReminderService:
             with tenant_transaction(self._session_factory,
                                     self._clinic_id) as session:
                 waitlist_repo.mark_cancelled(session, row.id)
-            return False
+            return None
         except Exception as e:
             log.warning("waitlist %s: пуш не удался: %s", row.id, e)
-            return False
+            return None
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             waitlist_repo.mark_notified(session, row.id)
-        return True
+        return start
 
     # ── Вечерняя сводка админу ───────────────────────────────────────────
 
