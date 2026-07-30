@@ -236,3 +236,11 @@ def test_menu_lang_switch_mid_booking_reprompts_in_new_lang(
     assert TEMPLATES["lang_changed"]["uz"] in reply.text
     assert TEMPLATES["ask_date"]["uz"] in reply.text, "повтор шага на новом языке"
     assert fsm_state(admin_engine) == "booking_collect"
+
+
+def test_other_intent_first_contact_keeps_menu(app_session_factory, clinic_a):
+    # off-topic на первом контакте: приветствие не должно стирать кнопки меню
+    # (M7 + фикс greeting-wrap, который раньше терял menu/contact_request)
+    engine, _ = counting_engine(app_session_factory, clinic_a, [extr(intent="other")])
+    reply = engine.handle_text(CHAT, "просто поболтать")
+    assert reply.menu == menu_rows("ru")
