@@ -96,9 +96,15 @@ def test_history_stays_in_the_past(app_session_factory, admin_engine,
     момент ВНУТРИ первого приёма смены — 09:15. Иначе регрессия «проверяю
     начало приёма вместо конца» не ловится вовсе: буфер врача и округление до
     получасовой сетки уносят следующий слот далеко за «сейчас», и тест
-    остаётся зелёным на сломанном коде (проверено откатом, ре-ревью)."""
+    остаётся зелёным на сломанном коде (проверено откатом, ре-ревью).
+
+    День берём рабочий: в воскресенье у фикстурных врачей смен нет, сегодняшний
+    день пропускается целиком и проверять было бы нечего."""
     clinic_a = priced_clinic
-    now = datetime.now(TZ).replace(hour=9, minute=15, second=0, microsecond=0)
+    day = datetime.now(TZ).date()
+    while day.weekday() == 6:
+        day -= timedelta(days=1)
+    now = datetime.combine(day, time(9, 15), TZ)
     seed_demo_history(app_session_factory, clinic_a, days=14, now=now)
 
     with admin_engine.begin() as conn:
@@ -199,6 +205,31 @@ def test_cli_refuses_non_demo_clinic(monkeypatch, capsys):
                          "--clinic", "11111111-1111-4111-8111-111111111111"])
     with pytest.raises(SystemExit):
         onboard.main()
+
+
+def test_count_window_is_measured_in_local_days(app_session_factory, admin_engine,
+                                                priced_clinic, doctor_a):
+    """Счётчик существующей истории обязан мерить окно теми же локальными
+    ДАТАМИ, что ведёт сид.
+
+    Абсолютное «now() минус N суток» отрезает утро самого старого дня окна: при
+    `--days 0` не видно ни одной прошедшей записи вовсе, а после наполнения в
+    субботу повтор в воскресенье вечером терял субботнее утро. CLI объявлял
+    исправную историю несуществующей и печатал [FAIL] перед показом."""
+    from navbat.demo_history import count_demo_history
+
+    clinic_a = priced_clinic
+    now = datetime.now(TZ).replace(hour=12, minute=0, second=0, microsecond=0)
+    start = now.replace(hour=0, minute=30)  # приём в начале сегодняшних суток
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO appointment (clinic_id, doctor_id, time_range, "
+                 "buffer_min, status, source) VALUES (:c, :d, "
+                 "tstzrange(:lo, :hi, '[)'), 10, 'booked', 'demo_history')"),
+            {"c": clinic_a, "d": doctor_a, "lo": start,
+             "hi": start + timedelta(minutes=30)})
+
+    assert count_demo_history(app_session_factory, clinic_a, days=0, now=now) == 1
 
 
 def test_cli_says_when_there_is_nothing_to_seed(monkeypatch, admin_engine):
