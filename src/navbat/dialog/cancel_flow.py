@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from navbat.dialog import appointments_repo
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.replies import Button, Reply, t
-from navbat.scheduling.errors import AppointmentNotFoundError
+from navbat.scheduling.errors import (
+    AppointmentChangedError,
+    AppointmentNotFoundError,
+)
 
 
 class _CancelFlowMixin:
@@ -21,6 +25,12 @@ class _CancelFlowMixin:
     def _start_cancel_by_id(self, session: Session, conv: Conversation,
                             appointment_id: str) -> Reply:
         """Кнопка «Отменить» из напоминания: запись известна по id."""
+        try:
+            # id приходит из callback_data, то есть от клиента: мусор не
+            # должен падать в приведении типа и уводить сообщение в dead letter
+            uuid.UUID(appointment_id)
+        except ValueError:
+            return self._begin_cancel(session, conv, None)
         appointment = appointments_repo.active_by_id(session, appointment_id,
                                                      conv.chat_id)
         reply = self._begin_cancel(session, conv, appointment)
@@ -40,6 +50,7 @@ class _CancelFlowMixin:
         local = appointment.start.astimezone(self._clinic_tz(session))
         ctx.cancel_id = str(appointment.id)
         ctx.cancel_when = f"{local:%d.%m %H:%M}"
+        ctx.cancel_start = appointment.start.isoformat()
         conv.state = "cancel_confirm"
         return self._cancel_prompt(conv)
 
@@ -55,10 +66,20 @@ class _CancelFlowMixin:
         lang = self._lang(conv)
         cancel_id = conv.context.cancel_id
         cancel_via = conv.context.cancel_via  # до _clear_booking
+        cancel_start = conv.context.cancel_start
         self._clear_booking(conv)
         conv.state = "idle"
         try:
-            self._sched.cancel(uuid.UUID(cancel_id), actor=cancel_via)
+            # отменяем ровно то время, которое показали в вопросе: пока
+            # пациент читал, запись могла переехать (ручная правка события в
+            # Google) — та же сверка, что у переноса вытесненной записи
+            self._sched.cancel(
+                uuid.UUID(cancel_id), actor=cancel_via,
+                expected_start=(datetime.fromisoformat(cancel_start)
+                                if cancel_start else None))
+        except AppointmentChangedError:
+            # запись уже не та, что он видел — показываем актуальную
+            return self._start_cancel(session, conv)
         except AppointmentNotFoundError:
             return Reply(t("cancel_none", lang))
         return Reply(t("cancel_done", lang))
