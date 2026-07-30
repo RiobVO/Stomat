@@ -27,8 +27,8 @@ def active_by_chat(session: Session, chat_id: int) -> Row | None:
 
 def active_by_id(session: Session, appointment_id: str,
                  chat_id: int) -> Row | None:
-    """Активная (hold/booked) БУДУЩАЯ запись чата по id — (id, start); для
-    отмены из напоминания, где запись известна по id.
+    """Активная (hold/booked) БУДУЩАЯ запись чата по id — для отмены из
+    напоминания и переноса по кнопке альтернативы, где запись известна по id.
 
     Условия те же, что у active_by_chat, и по тем же причинам: id приходит
     из callback_data, то есть от клиента, — чужой id внутри клиники отменял
@@ -37,7 +37,8 @@ def active_by_id(session: Session, appointment_id: str,
     напоминания идёт в сводку владельца как предотвращённая неявка с суммой.
     """
     return session.execute(
-        text("SELECT id, lower(time_range) AS start FROM appointment "
+        text("SELECT id, lower(time_range) AS start, doctor_id, service_id "
+             "FROM appointment "
              "WHERE id = CAST(:id AS uuid) AND tg_chat_id = :chat "
              "AND status IN ('hold', 'booked') AND lower(time_range) > now()"),
         {"id": appointment_id, "chat": chat_id},

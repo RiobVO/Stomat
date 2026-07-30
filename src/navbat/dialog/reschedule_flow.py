@@ -8,6 +8,7 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
+from navbat.dialog import appointments_repo
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY
 from navbat.dialog.replies import Button, Reply, t
@@ -18,6 +19,20 @@ from navbat.scheduling.errors import (
     InvalidSlotError,
     SlotTakenError,
 )
+
+
+def reslot_action(appointment_id, start: datetime) -> str:
+    """callback кнопки альтернативного слота: `reslot:<id записи>:<минуты эпохи>`.
+
+    Кнопка живёт в чате до самого приёма (её шлёт и календарный синк при
+    вытеснении записи), поэтому уходит сырой — мимо tg_actions-map. Раз так,
+    она обязана нести СВОЮ запись: контекст диалога один на чат и
+    перезаписывается следующим сценарием, а второе вытеснение в том же
+    проходе синка переставляло resched_id на другую запись того же пациента.
+    В callback_data 64 байта, поэтому время — минуты эпохи (как у wl:take):
+    7 + 36 + 1 + 8 = 52 байта.
+    """
+    return f"reslot:{appointment_id}:{int(start.timestamp()) // 60}"
 
 
 class _RescheduleFlowMixin:
@@ -59,7 +74,7 @@ class _RescheduleFlowMixin:
                                            Reason("reason_no_slots_reschedule"))
         buttons = [
             Button(self._slot_label(start, doctor_name, tz, multi_doctor=False),
-                   f"reslot:{start.isoformat()}")
+                   reslot_action(ctx.resched_id, start))
             for start, _doctor_id, doctor_name in slots[:SLOTS_PER_REPLY]
         ]
         buttons.append(Button(t("btn_other_time", lang), "ask_date"))
@@ -70,28 +85,59 @@ class _RescheduleFlowMixin:
                                                ctx.time_ref),
                      tuple(buttons))
 
-    def _on_reslot(self, session: Session, conv: Conversation, start_iso: str) -> Reply:
+    def _on_reslot(self, session: Session, conv: Conversation, rest: str) -> Reply:
+        """Тап по альтернативному слоту: `reslot:<id записи>:<минуты эпохи>`.
+
+        Всё, что пришло, — данные от клиента: и запись, и время. Запись
+        сверяется с чатом (чужой id внутри клиники двигал бы чужую запись),
+        время — с текущим моментом: движок сверяет старт только с рабочей
+        сеткой врача, поэтому валидное прошлое время на сетке уносило запись
+        в прошлое. Кнопка висит в чате до самого приёма — успевает и то и то.
+        """
         ctx = conv.context
         lang = self._lang(conv)
-        # кнопка альтернативы приходит сырой и живёт в чате до самого приёма
-        # (её шлёт календарный синк при вытеснении записи), а какую запись
-        # двигать — знает только диалог. Сценарий мог закрыться, время
-        # приходит от клиента: без снимка тап падал в dead letter
-        try:
-            appointment_id = uuid.UUID(ctx.resched_id)
-            new_start = datetime.fromisoformat(start_iso)
-        except (TypeError, ValueError):
+
+        def stale() -> Reply:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
+
+        appointment_raw, _, minutes_raw = rest.partition(":")
+        if not minutes_raw.isdigit():
+            return stale()
         try:
-            self._sched.reschedule(appointment_id, new_start)
+            uuid.UUID(appointment_raw)
+        except ValueError:
+            return stale()
+        appointment = appointments_repo.active_by_id(session, appointment_raw,
+                                                     conv.chat_id)
+        if appointment is None:
+            self._clear_booking(conv)
+            conv.state = "idle"
+            return Reply(t("resched_none", lang))
+        tz = self._clinic_tz(session)
+        try:
+            new_start = datetime.fromtimestamp(int(minutes_raw) * 60, tz=tz)
+        except (OverflowError, OSError, ValueError):
+            return stale()
+        if new_start <= datetime.now(tz):
+            return stale()
+        # контекст переезжает на ту запись, которую назвала кнопка: иначе
+        # переспрос «слот занят» предложит слоты под чужую запись
+        ctx.resched_id = str(appointment.id)
+        ctx.resched_doctor = str(appointment.doctor_id)
+        ctx.service = self._service_name(session, appointment.service_id) \
+            or ctx.service
+        ctx.date = new_start.date().isoformat()
+        conv.state = "resched_offer_slots"
+        try:
+            self._sched.reschedule(appointment.id, new_start)
         except (SlotTakenError, InvalidSlotError):
             return self._offer_resched_slots(session, conv, note="slot_taken")
         except AppointmentNotFoundError:
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("resched_none", lang))
-        local = new_start.astimezone(self._clinic_tz(session))
+        local = new_start.astimezone(tz)
         self._clear_booking(conv)
         conv.state = "idle"
         return Reply(t("resched_done", lang, when=f"{local:%d.%m %H:%M}"))

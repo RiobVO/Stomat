@@ -361,3 +361,53 @@ def test_alternative_button_survives_a_later_button_send(
             "WHERE id = :id"), {"id": appointment_id}).one()
     assert (row.status, row.start) == ("booked", offered_at), \
         "тап по альтернативе ушёл в чужое действие: карту кнопок перезаписали"
+
+
+def test_alternative_moves_the_appointment_its_message_was_about(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Ручное событие вытеснило ДВЕ записи одного чата за один проход.
+
+    Контекст диалога один на чат, и второе вытеснение перезаписывает
+    resched_id: кнопка из первого сообщения двигала бы вторую запись — тот
+    же класс, что уже случавшаяся отмена чужой записи. Кнопка обязана
+    нести саму запись, а не полагаться на состояние диалога."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    first, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                    day, "09:00", chat_id=CHAT)
+    second, _ = book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                     day, "10:00", chat_id=CHAT)
+    sync, api, _notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "10:30"))
+    sync.sync_doctor(doctor_a)
+
+    # два уведомления: сначала про 09:00, потом про 10:00
+    assert len(tg_api.sent) >= 2
+    first_offer = tg_api.sent[-2][2]
+    assert first_offer, "у первого сообщения должны быть кнопки альтернатив"
+    # последняя альтернатива первого сообщения заведомо свободна: ближайшую
+    # мог занять перенос второй жертвы этого же прохода
+    action = first_offer[-1].action
+    assert len(action.encode()) <= 64, "лимит callback_data"
+    offered_at = at_tashkent(day, first_offer[-1].label[-5:])
+    with admin_engine.begin() as conn:
+        before = conn.execute(text(
+            "SELECT lower(time_range) FROM appointment WHERE id = :id"),
+            {"id": second}).scalar_one()
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    engine.handle_action(CHAT, action)
+
+    with admin_engine.begin() as conn:
+        moved = conn.execute(text(
+            "SELECT lower(time_range) FROM appointment WHERE id = :id"),
+            {"id": first}).scalar_one()
+        untouched = conn.execute(text(
+            "SELECT lower(time_range) FROM appointment WHERE id = :id"),
+            {"id": second}).scalar_one()
+    assert moved == offered_at, "переехала не та запись, о которой было сообщение"
+    assert untouched == before, "тап задел другую запись того же пациента"

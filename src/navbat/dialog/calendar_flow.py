@@ -17,6 +17,7 @@ from navbat.dialog.calendar_view import HORIZON_DAYS, month_view
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.escalation import fyi_alert
 from navbat.dialog.replies import Button, Reply, t
+from navbat.dialog.reschedule_flow import reslot_action
 
 SLOTS_PER_DAY_ROW = 4      # сетка времени в day-view
 SLOTS_PER_DAY_ROW_MULTI = 2  # с именем врача ячейки шире
@@ -155,7 +156,7 @@ class _CalendarFlowMixin:
             label = f"{start.astimezone(tz):%H:%M}"
             if multi and doctor_name:
                 label += f" · {doctor_name}"
-            action = (f"reslot:{start.isoformat()}" if resched
+            action = (reslot_action(conv.context.resched_id, start) if resched
                       else f"slot:{doctor_id}:{start.isoformat()}")
             buttons.append(Button(label, action))
         per_row = SLOTS_PER_DAY_ROW_MULTI if multi else SLOTS_PER_DAY_ROW
