@@ -677,6 +677,21 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `reason_reminder_failed` | напоминание пациенту (чат {chat}) не доставлено после {attempts} попыток — свяжитесь с ним сами | **bemorga eslatma ({chat} chat) {attempts} urinishdan keyin yetib bormadi — u bilan o'zingiz bog'laning** | |
 | `reason_update_failed` | сообщение пациента (чат {chat}) не удалось обработать — свяжитесь с ним сами | **bemor xabarini ({chat} chat) qayta ishlab bo'lmadi — u bilan o'zingiz bog'laning** | |
 
+### Что хотел пациент (выжимка брони в том же алерте)
+
+Подписи полей: бот перечисляет, что пациент успел выбрать до того, как позвал
+человека. Формат — «подпись — значение», через точку с запятой.
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `ctx_service` | услуга — {value} | **xizmat — {value}** | |
+| `ctx_day` | день — {value} | **kun — {value}** | |
+| `ctx_time` | время — {value} | **vaqt — {value}** | |
+| `ctx_slot` | выбранный слот — {value} | **tanlangan vaqt — {value}** | |
+| `ctx_doctor` | врач — {value} | **shifokor — {value}** | |
+| `ctx_cancel` | отмена записи на — {value} | **yozuvni bekor qilish — {value}** | |
+| `ctx_empty` | пациент ещё ничего не выбрал | **bemor hali hech narsa tanlamagan** | |
+
 Строки `reason_gcal_auth_dead` и `reason_sync_stuck` в коде длиннее: за
 приведённой фразой идёт техническая подсказка (команда переавторизации и
 предупреждение, что пока синк стоит, бот может записать пациента на занятое

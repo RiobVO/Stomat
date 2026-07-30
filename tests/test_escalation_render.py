@@ -26,6 +26,19 @@ def test_summary_empty_when_nothing_chosen():
     assert summarize_context({"lang": "uz"}) == "пациент ещё ничего не выбрал"
 
 
+def test_summary_speaks_the_language_of_the_admin():
+    """«Что хотел пациент» — часть того же алерта, что и причина. Подписи полей
+    и метка услуги оставались русскими, поэтому узбекский владелец читал
+    «Bemor nima xohlagan: услуга — Чистка» (остаток по №16)."""
+    payload = {"service": "cleaning", "date": "2026-06-10", "slot_doctor": "Dilnoza"}
+
+    assert "услуга — Чистка" in summarize_context(payload, "ru")
+    uz = summarize_context(payload, "uz")
+    assert "xizmat — Tish tozalash" in uz, uz
+    assert "услуга" not in uz and "врач" not in uz, uz
+    assert summarize_context({}, "uz") == "bemor hali hech narsa tanlamagan"
+
+
 def test_notify_message_actionable_and_no_raw_json():
     api = _Api()
     TelegramEscalation(api, admin_chat_id=999).notify(

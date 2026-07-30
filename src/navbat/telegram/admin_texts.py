@@ -558,6 +558,21 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "ru": "⚠ Системный алерт\n{reason}",
         "uz": "⚠ Tizim ogohlantirishi\n{reason}",
     },
+    # «что хотел пациент» в алерте: подписи полей брони. Часть того же экрана,
+    # что причина, — значит и язык тот же (остаток по №16)
+    "ctx_service": {"ru": "услуга — {value}", "uz": "xizmat — {value}"},
+    "ctx_day": {"ru": "день — {value}", "uz": "kun — {value}"},
+    "ctx_time": {"ru": "время — {value}", "uz": "vaqt — {value}"},
+    "ctx_slot": {"ru": "выбранный слот — {value}", "uz": "tanlangan vaqt — {value}"},
+    "ctx_doctor": {"ru": "врач — {value}", "uz": "shifokor — {value}"},
+    "ctx_cancel": {
+        "ru": "отмена записи на — {value}",
+        "uz": "yozuvni bekor qilish — {value}",
+    },
+    "ctx_empty": {
+        "ru": "пациент ещё ничего не выбрал",
+        "uz": "bemor hali hech narsa tanlamagan",
+    },
     # причины ВНУТРИ алертов: их формируют служебные пути (календарь, синк,
     # напоминания, воркер, диалог), а читает владелец на своём языке. Каркас
     # перевели волной C, причины оставались русскими — остаток по №16

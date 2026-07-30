@@ -40,25 +40,23 @@ def _fmt_dt(iso: str) -> str:
         return str(iso)
 
 
-def summarize_context(context: dict) -> str:
+def summarize_context(context: dict, lang: str = DEFAULT_LANG) -> str:
     """Читаемая для админа выжимка брони из контекста эскалации (M3):
     что пациент успел выбрать. Внутренние флаги (lang, счётчики) и PII
-    (имя — уже вырезано m1) не показываем. Метки услуг — по-русски, админ
-    читает по-русски."""
-    parts: list[str] = []
-    if context.get("service"):
-        parts.append(f"услуга — {service_label(context['service'], 'ru')}")
-    if context.get("date"):
-        parts.append(f"день — {_fmt_date(context['date'])}")
-    if context.get("time_ref"):
-        parts.append(f"время — {context['time_ref']}")
-    if context.get("slot_start"):
-        parts.append(f"выбранный слот — {_fmt_dt(context['slot_start'])}")
-    if context.get("slot_doctor"):
-        parts.append(f"врач — {context['slot_doctor']}")
-    if context.get("cancel_when"):
-        parts.append(f"отмена записи на — {context['cancel_when']}")
-    return "; ".join(parts) if parts else "пациент ещё ничего не выбрал"
+    (имя — уже вырезано m1) не показываем.
+
+    Язык — админ-чата, а не пациента: выжимка стоит в том же сообщении, что
+    причина, и русские подписи полей рядом с узбекской шапкой выглядели
+    полупереводом (остаток по №16)."""
+    fields = (("service", "ctx_service", lambda v: service_label(v, lang)),
+              ("date", "ctx_day", _fmt_date),
+              ("time_ref", "ctx_time", str),
+              ("slot_start", "ctx_slot", _fmt_dt),
+              ("slot_doctor", "ctx_doctor", str),
+              ("cancel_when", "ctx_cancel", str))
+    parts = [plain(key, lang, value=fmt(context[field]))
+             for field, key, fmt in fields if context.get(field)]
+    return "; ".join(parts) if parts else plain("ctx_empty", lang)
 
 
 def _reason_in(reason, lang: str) -> str:
@@ -96,7 +94,7 @@ class TelegramEscalation:
             lang = self._lang_of(admin_chat)
             message = plain("alert_escalation", lang,
                             chat=chat_id, reason=_reason_in(reason, lang),
-                            context=summarize_context(context))
+                            context=summarize_context(context, lang))
             try:
                 self._api.send_message(admin_chat, message)
             except TelegramAPIError as e:
@@ -116,7 +114,7 @@ class TelegramEscalation:
             lang = self._lang_of(admin_chat)
             message = plain("alert_fyi", lang,
                             reason=_reason_in(reason, lang),
-                            context=summarize_context(context))
+                            context=summarize_context(context, lang))
             try:
                 self._api.send_message(admin_chat, message)
             except TelegramAPIError as e:
