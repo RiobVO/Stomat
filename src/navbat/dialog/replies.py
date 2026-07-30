@@ -43,7 +43,7 @@ SERVICE_LABELS = {
     "extraction": {"ru": "Удаление", "uz": "Tish oldirish"},
     "implant": {"ru": "Имплант", "uz": "Implant"},
     "crown": {"ru": "Коронка", "uz": "Koronka"},
-    "whitening": {"ru": "Отбеливание", "uz": "Oqartirish"},
+    "whitening": {"ru": "Отбеливание", "uz": "Tish oqartirish"},
     "braces": {"ru": "Брекеты", "uz": "Breket"},
     "checkup": {"ru": "Осмотр", "uz": "Ko'rik"},
     "xray": {"ru": "Снимок", "uz": "Rentgen"},
