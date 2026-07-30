@@ -31,7 +31,7 @@ log = logging.getLogger("navbat.nlu")
 
 DEFAULT_DAILY_TOKEN_CAP = 200_000  # ≈$0.1/день на gpt-4o-mini — потолок аномалии
 DEFAULT_DRIFT_THRESHOLD = 0.2  # доля сбоев за день, выше — алерт о дрифте
-DRIFT_MIN_REQUESTS = 20        # меньше запросов — статистики нет, не алертим
+DRIFT_MIN_MESSAGES = 20        # меньше сообщений — статистики нет, не алертим
 
 # телефоноподобное: 7+ цифр с разделителями; даты (20.06) и время (15:00)
 # короче и не задеваются
@@ -119,25 +119,30 @@ class UsageRecorder:
 
     def maybe_alert_drift(self) -> None:
         """Доля сбоев за день выше порога → алерт админу, раз в день."""
-        today = date.today()
-        if self._drift_alerted_on == today:
-            return
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             row = session.execute(
-                text(f"SELECT requests, failures FROM llm_usage "
-                     f"WHERE day = {_CLINIC_TODAY_SQL}")
+                text(f"SELECT requests, failures, repairs, "
+                     f"       {_CLINIC_TODAY_SQL} AS today "
+                     f"FROM llm_usage WHERE day = {_CLINIC_TODAY_SQL}")
             ).one_or_none()
-        if row is None or row.requests < DRIFT_MIN_REQUESTS:
+        if row is None or self._drift_alerted_on == row.today:
             return
-        share = row.failures / row.requests
+        # знаменатель — СООБЩЕНИЯ пациентов, а не вызовы API: requests растёт
+        # и на repair, и на запасном провайдере. Repair сам по себе признак
+        # деградации, и в знаменателе он её разбавлял — доля падала вдвое
+        # ровно тогда, когда модель начинает плыть
+        messages = row.requests - row.repairs
+        if messages < DRIFT_MIN_MESSAGES:
+            return
+        share = row.failures / messages
         if share <= self._drift_threshold:
             return
-        self._drift_alerted_on = today
+        self._drift_alerted_on = row.today
         system_alert(
             self._notifier,
-            f"NLU-дрифт: {row.failures} сбоев из {row.requests} запросов "
+            f"NLU-дрифт: {row.failures} сбоев из {messages} сообщений "
             f"за сегодня ({share:.0%}) — проверить промпт/модель",
-            {"failures": row.failures, "requests": row.requests})
+            {"failures": row.failures, "messages": messages})
 
     def cap_exceeded(self) -> bool:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -147,8 +152,19 @@ class UsageRecorder:
             ).scalar_one_or_none() or 0
         return total >= self._cap
 
+    def _clinic_today(self) -> date:
+        """Локальные сутки клиники — те же, в которых ведётся учёт.
+
+        date.today() процесса живёт в поясе хоста (в проде UTC) и расходится
+        с днём клиники на пять часов: «раз в день» переставало совпадать с
+        днём счётчиков.
+        """
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            return session.execute(
+                text(f"SELECT {_CLINIC_TODAY_SQL}")).scalar_one()
+
     def alert_once(self) -> None:
-        today = date.today()
+        today = self._clinic_today()
         if self._alerted_on == today:
             return
         self._alerted_on = today
