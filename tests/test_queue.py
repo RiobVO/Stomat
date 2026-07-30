@@ -5,9 +5,12 @@
 """
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import text
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.telegram.queue import (
     claim_next,
     complete,
@@ -130,3 +133,45 @@ def test_queue_is_tenant_isolated(app_session_factory, clinic_a, clinic_b):
     put(app_session_factory, clinic_a, 1)
     assert claim_next(app_session_factory, clinic_b) is None
     assert claim_next(app_session_factory, clinic_a) is not None
+
+
+# ── PII: телефон контакта не лежит в очереди открытым ─────────────────────────
+
+
+def put_contact_payload(app_session_factory, clinic_id, phone,
+                        update_id=900, chat_id=CHAT) -> None:
+    """Кладёт апдейт с кнопочным контактом (request_contact) в очередь."""
+    payload = {"update_id": update_id,
+               "message": {"chat": {"id": chat_id}, "from": {"id": chat_id},
+                           "contact": {"phone_number": phone, "user_id": chat_id}}}
+    with tenant_transaction(app_session_factory, clinic_id) as session:
+        enqueue(session, update_id, chat_id, payload)
+
+
+def stored_payload(admin_engine) -> dict:
+    with admin_engine.begin() as conn:
+        return conn.execute(text("SELECT payload FROM message_queue")).scalar_one()
+
+
+def test_enqueue_redacts_contact_phone(app_session_factory, admin_engine, clinic_a):
+    """Узбекский номер: в payload вместо открытого телефона — только хэш."""
+    put_contact_payload(app_session_factory, clinic_a, "998901234567")
+
+    payload = stored_payload(admin_engine)
+    contact = payload["message"]["contact"]
+    assert "phone_number" not in contact, "открытый номер не должен лежать в очереди"
+    assert "998901234567" not in json.dumps(payload), "номер не утёк ни в одно поле"
+    assert contact["phone_hash"] == contact_hash(
+        normalize_phone("998901234567"), "test-salt")
+
+
+def test_enqueue_marks_non_uz_contact_invalid(app_session_factory, admin_engine,
+                                               clinic_a):
+    """Не-узбекский номер: открытый номер вырезан, хэша нет (воркер эскалирует)."""
+    put_contact_payload(app_session_factory, clinic_a, "+79161234567")
+
+    payload = stored_payload(admin_engine)
+    contact = payload["message"]["contact"]
+    assert "phone_number" not in contact
+    assert "phone_hash" not in contact
+    assert "79161234567" not in json.dumps(payload)

@@ -36,6 +36,7 @@ from navbat.dialog.conversation import (
     Conversation, load_conversation, save_conversation)
 from navbat.dialog.dialog_common import MAX_NLU_FAILURES, SlotGuard
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.patients import phone_to_hash
 from navbat.dialog.replies import (
     MEDICAL_DISCLAIMER,
     TEMPLATES,
@@ -110,10 +111,25 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         return reply
 
     def handle_contact(self, chat_id: int, phone: str, own: bool) -> Reply:
-        """Контакт из кнопки «Поделиться»; own — собственный контакт отправителя."""
+        """Сырой номер (демо / прямой вызов): хэшируем и делегируем хэш-пути.
+
+        В боевом потоке телефон хэшируется на границе enqueue и открытым сюда
+        не попадает; этот вход остаётся для каналов без durable-очереди."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            try:
+                phone_hash: str | None = phone_to_hash(session, phone)
+            except ValueError:
+                phone_hash = None  # не-узбекский номер → лид администратору
+        return self.handle_contact_hashed(chat_id, phone_hash, own)
+
+    def handle_contact_hashed(self, chat_id: int, phone_hash: str | None,
+                              own: bool) -> Reply:
+        """Контакт из кнопки «Поделиться»: телефон уже хэширован (открытый номер
+        в очередь не попал). phone_hash=None — номер не приводится к 998;
+        own — собственный контакт отправителя."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
-            reply = self._process_contact(session, conv, phone, own)
+            reply = self._process_contact(session, conv, phone_hash, own)
             save_conversation(session, conv)
         return reply
 

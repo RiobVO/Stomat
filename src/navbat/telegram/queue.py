@@ -21,9 +21,31 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog.patients import phone_to_hash
 
 MAX_ATTEMPTS = 3
 STALE_AFTER = timedelta(minutes=5)
+
+
+def _redact_contact_phone(session: Session, payload: dict) -> None:
+    """PII-граница очереди: открытый номер из кнопки «Поделиться контактом»
+    в durable-payload не сохраняем. Телефон хэшируется здесь (соль доступна
+    в tenant-транзакции) — в постоянную таблицу пациента уходит тот же хэш.
+    Не-узбекский номер хэшем не представить: контакт остаётся без хэша,
+    воркер уводит лид администратору (как и при ручном вводе номера).
+    """
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return
+    contact = message.get("contact")
+    if not isinstance(contact, dict) or "phone_number" not in contact:
+        return
+    raw = contact.pop("phone_number")
+    try:
+        hashed = phone_to_hash(session, raw)
+    except ValueError:
+        return  # не-998: открытый номер уже вырезан, хэша нет → воркер эскалирует
+    contact["phone_hash"] = hashed
 
 
 @dataclass(frozen=True)
@@ -37,6 +59,7 @@ class QueuedUpdate:
 
 def enqueue(session: Session, update_id: int, tg_chat_id: int, payload: dict) -> bool:
     """Кладёт апдейт; False — уже есть (дубль)."""
+    _redact_contact_phone(session, payload)
     inserted = session.execute(
         text("""
             INSERT INTO message_queue (clinic_id, update_id, tg_chat_id, payload)

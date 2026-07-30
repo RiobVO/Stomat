@@ -114,11 +114,13 @@ class UpdateWorker:
             if "contact" in message:
                 # телефон кнопкой request_contact; принимаем только собственный
                 # контакт отправителя. Rate-limit не нужен: NLU не дёргается.
+                # Номер уже хэширован на enqueue (открытым в очередь не попал);
+                # phone_hash=None — не-узбекский номер, воркер эскалирует.
                 contact = message["contact"]
                 own = (contact.get("user_id") is not None
                        and contact["user_id"] == message.get("from", {}).get("id"))
-                reply = self._dialog.handle_contact(
-                    chat_id, contact.get("phone_number", ""), own)
+                reply = self._dialog.handle_contact_hashed(
+                    chat_id, contact.get("phone_hash"), own)
                 self._send(chat_id, reply)
                 return
             if "text" in message:
