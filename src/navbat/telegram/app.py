@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from navbat.crypto import decrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.envfile import load_env_file
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import TelegramAPI
 from navbat.telegram.escalation import build_escalation
@@ -90,6 +91,7 @@ def build_dialog_extractor(use_real: bool, session_factory, clinic_id, notifier)
 
 
 def main() -> int:
+    load_env_file()
     parser = argparse.ArgumentParser(description="Telegram-канал клиники Navbat")
     parser.add_argument("--clinic", required=True, type=uuid.UUID)
     parser.add_argument("--webhook-url", default=None,

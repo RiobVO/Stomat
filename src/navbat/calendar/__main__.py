@@ -22,6 +22,7 @@ from navbat.calendar.api import GoogleCalendarAPI
 from navbat.calendar.sync import CalendarSync
 from navbat.crypto import decrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
+from navbat.envfile import load_env_file
 from navbat.telegram.api import TelegramAPI
 from navbat.telegram.escalation import build_escalation
 
@@ -68,6 +69,7 @@ def doctors_with_calendars(session_factory, clinic_id) -> list[uuid.UUID]:
 
 
 def main() -> int:
+    load_env_file()
     parser = argparse.ArgumentParser(description="Sync Google Calendar клиники")
     parser.add_argument("--clinic", required=True, type=uuid.UUID)
     mode = parser.add_mutually_exclusive_group()

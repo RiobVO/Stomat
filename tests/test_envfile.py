@@ -44,3 +44,29 @@ def test_bom_from_windows_editor_is_stripped(tmp_path, monkeypatch):
 
     assert load_env_file(env) == 1
     assert os.environ["NAVBAT_TEST_TOKEN"] == "123"
+
+
+def test_every_cli_entrypoint_loads_the_env_file():
+    """`.env` — единственное место, где на машине пользователя лежат ключи.
+
+    Точка входа, которая его не грузит, падает «NAVBAT_ENC_KEY не задан» на
+    чистой оболочке, хотя ключ есть: ровно так подготовка показа спотыкалась
+    на шаге привязки Google Calendar (docs/DEMO.md, шаг 3).
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "src" / "navbat"
+    entrypoints = sorted(
+        path for path in root.rglob("*.py")
+        if "def main(" in path.read_text(encoding="utf-8"))
+    assert entrypoints, "точки входа не найдены — тест смотрит не туда"
+
+    missing = []
+    for path in entrypoints:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        calls = {node.func.id for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        if "load_env_file" not in calls:
+            missing.append(path.relative_to(root).as_posix())
+    assert not missing, f"CLI без загрузки .env: {missing}"

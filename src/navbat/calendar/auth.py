@@ -25,6 +25,7 @@ from sqlalchemy import text
 from navbat.calendar.api import TOKEN_URL, CalendarAuthError
 from navbat.crypto import encrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
+from navbat.envfile import load_env_file
 
 log = logging.getLogger("navbat.calendar")
 
@@ -140,6 +141,7 @@ def save_refresh_token(session_factory, clinic_id: uuid.UUID,
 
 
 def main() -> int:
+    load_env_file()
     parser = argparse.ArgumentParser(description="Онбординг Google Calendar")
     parser.add_argument("--clinic", required=True, type=uuid.UUID)
     parser.add_argument("--port", type=int, default=8765)
