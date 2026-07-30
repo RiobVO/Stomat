@@ -200,3 +200,46 @@ def test_empty_backup_dir_degrades(app_session_factory, clinic_a, tmp_path):
     ok, checks = checker.snapshot()
     assert ok is False
     assert checks["backups"] == "empty"
+
+
+def _skewed_timezone() -> str:
+    """Пояс, в котором календарная дата клиники ЗАВЕДОМО не совпадает с UTC —
+    иначе тест «день клиники, а не UTC» проходил бы девятнадцать часов из
+    суток просто так."""
+    utc_hour = datetime.now(timezone.utc).hour
+    return "Etc/GMT+12" if utc_hour < 12 else "Etc/GMT-12"
+
+
+def test_health_p95_ignores_admin_chats(app_session_factory, admin_engine,
+                                        clinic_a):
+    """p95 в /health — та же пациентская метрика, что в сводке: тяжёлая
+    админская команда не должна изображать деградацию SLA."""
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET tg_admin_chat_ids = "
+                          "ARRAY[777]::bigint[] WHERE id = :id"), {"id": clinic_a})
+        for upd, chat, secs in ((1, 100, 1), (2, 777, 60)):
+            conn.execute(text(
+                "INSERT INTO message_queue (clinic_id, update_id, tg_chat_id, "
+                "payload, status, created_at, completed_at) VALUES "
+                "(:c, :u, :chat, '{}', 'done', now() - make_interval(secs => :s), "
+                "now())"), {"c": clinic_a, "u": upd, "chat": chat, "s": secs})
+    _ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
+    assert checks["p95_response_sec_1h"] == 1.0, \
+        "минута админской команды поехала в пациентский SLA"
+
+
+def test_health_nlu_share_is_read_for_the_clinic_day(app_session_factory,
+                                                     admin_engine, clinic_a):
+    """Счётчики llm_usage пишутся в локальных сутках клиники, а /health читал
+    их по current_date (UTC): пять часов в сутки он показывал вчерашний день."""
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET timezone = :tz WHERE id = :id"),
+                     {"tz": _skewed_timezone(), "id": clinic_a})
+        conn.execute(text(
+            "INSERT INTO llm_usage (clinic_id, day, requests, failures) VALUES "
+            "(:c, (now() AT TIME ZONE (SELECT timezone FROM clinic "
+            "                          WHERE id = :c))::date, 7, 1), "
+            "(:c, current_date, 99, 42)"), {"c": clinic_a})
+    _ok, checks = HealthChecker(app_session_factory, clinic_a).snapshot()
+    assert checks["llm"]["nlu_today"] == "1/7 сбоев", \
+        "показаны сутки UTC, а не сутки клиники"

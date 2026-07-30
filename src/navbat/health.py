@@ -175,10 +175,14 @@ class HealthChecker:
     def _report_llm(self, checks: dict) -> None:
         """Информационно: ключи и доля сбоев NLU за сегодня (не валит статус —
         деградацию NLU ловит дрифт-алерт, здесь только видимость)."""
+        # «сегодня» — локальные сутки клиники: счётчики llm_usage пишутся
+        # именно в них, а current_date живёт в UTC и на +05:00 показывал
+        # вчерашний день пять часов в сутки
         with tenant_transaction(self._session_factory, self._clinic_id) as s:
             row = s.execute(text(
                 "SELECT requests, failures FROM llm_usage "
-                "WHERE day = current_date "
+                "WHERE day = (now() AT TIME ZONE (SELECT timezone FROM clinic "
+                "    WHERE id = current_setting('app.clinic_id')::uuid))::date "
                 "AND clinic_id = current_setting('app.clinic_id')::uuid"
             )).one_or_none()
         checks["llm"] = {
@@ -189,13 +193,21 @@ class HealthChecker:
         }
 
     def _report_p95(self, checks: dict) -> None:
-        """Информационно: p95 ответа за час (SLA-видимость, статус не валит)."""
+        """Информационно: p95 ответа за час (SLA-видимость, статус не валит).
+
+        Считаются только пациентские чаты — как в сводке владельца: тяжёлая
+        админская команда идёт той же очередью, но SLA обещан не ей.
+        """
         with tenant_transaction(self._session_factory, self._clinic_id) as s:
             p95 = s.execute(text(
                 "SELECT extract(epoch FROM percentile_cont(0.95) "
                 "WITHIN GROUP (ORDER BY completed_at - created_at)) "
                 "FROM message_queue WHERE status = 'done' "
-                "AND completed_at > now() - interval '1 hour'")).scalar_one()
+                "AND completed_at > now() - interval '1 hour' "
+                "AND NOT EXISTS (SELECT 1 FROM clinic c "
+                "    WHERE c.id = current_setting('app.clinic_id')::uuid "
+                "      AND message_queue.tg_chat_id = ANY(c.tg_admin_chat_ids))"
+            )).scalar_one()
         checks["p95_response_sec_1h"] = (round(float(p95), 1)
                                          if p95 is not None else None)
 
