@@ -360,6 +360,36 @@ def test_double_tap_on_offer_does_not_book_twice(app_session_factory,
     assert booked == 1, "повторный тап записал пациента второй раз"
 
 
+def test_abandoned_hold_does_not_close_the_queue(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """Новый пациент принял предложение и бросил ввод имени.
+
+    Бронь протухает, но строка appointment живёт со статусом 'hold' до
+    отдельной чистки. Если считать её действующей записью, повторный тап
+    закрыл бы очередь как выполненную — пациент остался бы и без записи,
+    и без очереди."""
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.nlu.extractor import FakeExtractor
+
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    action = _slot_action(api)
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    engine.handle_action(CHAT, action)  # hold + вопрос имени
+    with admin_engine.begin() as conn:  # пациент ушёл, бронь протухла
+        conn.execute(text("UPDATE appointment SET hold_expires_at = "
+                          "now() - interval '1 minute' WHERE status = 'hold'"))
+
+    engine.handle_action(CHAT, action)  # вернулся и жмёт ту же кнопку
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "notified")], \
+        "очередь закрыта как выполненная, хотя записи нет"
+
+
 def test_auto_fulfilled_if_booked_elsewhere(app_session_factory, admin_engine,
                                             clinic_a, doctor_a, service_cleaning):
     from conftest import next_monday

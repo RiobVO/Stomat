@@ -146,14 +146,31 @@ def test_cancel_confirm_after_appointment_moved(app_session_factory,
     confirm = engine.handle_action(CHAT, f"remind_cancel:{appointment_id}")
     assert "09:00" in confirm.text
 
+    # у пациента есть и вторая запись: переспрос обязан быть про ту же, о
+    # которой шла речь, а не про ближайшую
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         next_monday(), "11:00", chat_id=CHAT)
     sched.reschedule(appointment_id, at_tashkent(next_monday(), "15:00"))
-    engine.handle_action(CHAT, "cancel_yes")
+    again = engine.handle_action(CHAT, "cancel_yes")
 
     with admin_engine.begin() as conn:
         status = conn.execute(text("SELECT status FROM appointment "
                                    "WHERE id = :id"),
                               {"id": appointment_id}).scalar_one()
     assert status == "booked", "отменено время, которого пациент не видел"
+    assert "15:00" in again.text, "переспрос не про ту запись или без нового времени"
+
+    engine.handle_action(CHAT, "cancel_yes")
+    with admin_engine.begin() as conn:
+        status = conn.execute(text("SELECT status FROM appointment "
+                                   "WHERE id = :id"),
+                              {"id": appointment_id}).scalar_one()
+        actor = conn.execute(text(
+            "SELECT actor FROM appointment_audit WHERE action = 'cancel' "
+            "AND appointment_id = :id"), {"id": appointment_id}).scalar_one()
+    assert status == "cancelled"
+    assert actor == "reminder", \
+        "источник отмены потерян — предотвращённая неявка не дойдёт до сводки"
 
 
 def test_remind_cancel_for_already_cancelled(app_session_factory, admin_engine,
