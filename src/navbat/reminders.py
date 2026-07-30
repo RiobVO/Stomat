@@ -366,8 +366,11 @@ class ReminderService:
         today = date.today()
         if self._cleaned_on == today:
             return False
-        self._cleaned_on = today
+        # отметка ПОСЛЕ чистки: упавшая (обрыв БД) иначе не повторилась бы до
+        # завтра, а срок хранения — обещание в docs/PRIVACY.md. DELETE
+        # идемпотентен, повтор в этот же день безвреден
         cleanup_old_data(self._session_factory, self._clinic_id)
+        self._cleaned_on = today
         return True
 
     def run(self, stop: threading.Event, interval: float = 30.0) -> None:
