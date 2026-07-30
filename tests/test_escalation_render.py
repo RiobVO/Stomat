@@ -43,3 +43,10 @@ def test_notify_without_admin_chat_does_not_send():
     api = _Api()
     TelegramEscalation(api, admin_chat_id=None).notify(1, "x", {})
     assert api.sent == []
+
+
+def test_notify_fans_out_to_all_admins():
+    # M4: алерт уходит КАЖДОМУ админ-чату, не одному
+    api = _Api()
+    TelegramEscalation(api, [111, 222, 333]).notify(5, "повод", {})
+    assert [chat for chat, _ in api.sent] == [111, 222, 333]

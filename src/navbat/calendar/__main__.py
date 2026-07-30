@@ -47,14 +47,14 @@ def build_sync(session_factory: sessionmaker[Session],
     # уведомления пациентам/админу о конфликт-переносах — через бота клиники
     with tenant_transaction(session_factory, clinic_id) as session:
         row = session.execute(
-            text("SELECT tg_bot_token_encrypted, tg_admin_chat_id "
+            text("SELECT tg_bot_token_encrypted, tg_admin_chat_ids "
                  "FROM clinic WHERE id = :id"),
             {"id": clinic_id},
         ).one()
     tg_api = notifier = None
     if row.tg_bot_token_encrypted:
         tg_api = TelegramAPI(decrypt_text(row.tg_bot_token_encrypted))
-        notifier = TelegramEscalation(tg_api, row.tg_admin_chat_id)
+        notifier = TelegramEscalation(tg_api, row.tg_admin_chat_ids)
     return CalendarSync(session_factory, clinic_id, api=api,
                         notifier=notifier, tg_api=tg_api)
 

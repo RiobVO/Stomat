@@ -167,6 +167,36 @@ def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
         raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
 
 
+def add_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:
+    """Добавить админ-чат клинике (M4): получатель алертов + право на
+    команды /stats /release /dayoff /dayopen /forget. Идемпотентно."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        if session.execute(
+            text("SELECT 1 FROM clinic WHERE id = :id"), {"id": clinic_id}
+        ).scalar_one_or_none() is None:
+            raise ValueError(f"клиника {clinic_id} не найдена")
+        session.execute(
+            text("UPDATE clinic SET tg_admin_chat_ids = "
+                 "array_append(tg_admin_chat_ids, CAST(:chat AS bigint)) "
+                 "WHERE id = :id AND NOT (CAST(:chat AS bigint) = ANY(tg_admin_chat_ids))"),
+            {"chat": chat_id, "id": clinic_id},
+        )
+
+
+def remove_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        if session.execute(
+            text("SELECT 1 FROM clinic WHERE id = :id"), {"id": clinic_id}
+        ).scalar_one_or_none() is None:
+            raise ValueError(f"клиника {clinic_id} не найдена")
+        session.execute(
+            text("UPDATE clinic SET tg_admin_chat_ids = "
+                 "array_remove(tg_admin_chat_ids, CAST(:chat AS bigint)) "
+                 "WHERE id = :id"),
+            {"chat": chat_id, "id": clinic_id},
+        )
+
+
 def seed_demo_clinic(session_factory) -> None:
     """Создаёт демо-клинику с врачами и услугами, если её ещё нет."""
     with tenant_transaction(session_factory, DEMO_CLINIC_ID) as session:
@@ -257,6 +287,10 @@ def set_telegram(session_factory, clinic_id: uuid.UUID, token: str,
         session.execute(
             text("UPDATE clinic SET tg_bot_token_encrypted = :token, "
                  "tg_admin_chat_id = COALESCE(:admin, tg_admin_chat_id), "
+                 # --admin-chat задаёт стартовый админ-чат (M4: список из одного);
+                 # дальше добавлять/убирать через --add-admin/--remove-admin
+                 "tg_admin_chat_ids = CASE WHEN :admin IS NOT NULL "
+                 "    THEN ARRAY[:admin]::bigint[] ELSE tg_admin_chat_ids END, "
                  "tg_webhook_secret = COALESCE(tg_webhook_secret, :secret) "
                  "WHERE id = :id"),
             {"token": encrypt_text(token), "admin": admin_chat,
@@ -284,7 +318,7 @@ def show_clinic(session_factory, clinic_id: uuid.UUID) -> None:
     with tenant_transaction(session_factory, clinic_id) as session:
         clinic = session.execute(
             text("SELECT name, tg_bot_token_encrypted IS NOT NULL AS has_token, "
-                 "tg_admin_chat_id, gcal_refresh_token_encrypted IS NOT NULL AS has_gcal, "
+                 "tg_admin_chat_ids, gcal_refresh_token_encrypted IS NOT NULL AS has_gcal, "
                  "nlu_prompt_version "
                  "FROM clinic WHERE id = :id"), {"id": clinic_id},
         ).one_or_none()
@@ -297,8 +331,9 @@ def show_clinic(session_factory, clinic_id: uuid.UUID) -> None:
             text("SELECT name, duration_min, price FROM service ORDER BY name")
         ).all()
     print(f"Клиника: {clinic.name}")
+    admins = ", ".join(str(c) for c in clinic.tg_admin_chat_ids) or "НЕТ"
     print(f"  TG-токен: {'есть' if clinic.has_token else 'НЕТ'}; "
-          f"админ-чат: {clinic.tg_admin_chat_id or 'НЕТ'}; "
+          f"админ-чаты: {admins}; "
           f"GCal: {'есть' if clinic.has_gcal else 'НЕТ'}")
     prompt_label = (f"версия {clinic.nlu_prompt_version}"
                     if clinic.nlu_prompt_version else "встроенный файл")
@@ -330,6 +365,10 @@ def main() -> int:
     parser.add_argument("--set-price", metavar="KEY", help="изменить цену услуги")
     parser.add_argument("--set-schedule", metavar="DOCTOR_UUID", type=uuid.UUID,
                         help="заменить график врача (с --schedule-json)")
+    parser.add_argument("--add-admin", type=int, metavar="CHAT_ID",
+                        help="добавить админ-чат клинике (алерты + команды)")
+    parser.add_argument("--remove-admin", type=int, metavar="CHAT_ID",
+                        help="убрать админ-чат клиники")
     parser.add_argument("--tg-token")
     parser.add_argument("--admin-chat", type=int)
     parser.add_argument("--doctor", type=uuid.UUID)
@@ -415,6 +454,20 @@ def main() -> int:
         except ValueError as exc:
             sys.exit(f"[FAIL] {exc}")
         print(f"[OK] график врача {args.set_schedule} обновлён")
+        return 0
+    if args.add_admin is not None:
+        try:
+            add_admin(session_factory, args.clinic, args.add_admin)
+        except ValueError as exc:
+            sys.exit(f"[FAIL] {exc}")
+        print(f"[OK] админ-чат {args.add_admin} добавлен")
+        return 0
+    if args.remove_admin is not None:
+        try:
+            remove_admin(session_factory, args.clinic, args.remove_admin)
+        except ValueError as exc:
+            sys.exit(f"[FAIL] {exc}")
+        print(f"[OK] админ-чат {args.remove_admin} убран")
         return 0
     if args.tg_token:
         set_telegram(session_factory, args.clinic, args.tg_token, args.admin_chat)

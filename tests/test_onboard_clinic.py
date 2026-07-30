@@ -8,12 +8,31 @@ from sqlalchemy import text
 from navbat.crypto import decrypt_text
 from navbat.onboard import (
     _validate_intervals,
+    add_admin,
     add_doctor,
     add_service,
     create_clinic,
+    remove_admin,
     set_doctor_schedule,
     set_service_price,
 )
+
+
+def _admins(admin_engine, clinic_id):
+    with admin_engine.begin() as conn:
+        return conn.execute(
+            text("SELECT tg_admin_chat_ids FROM clinic WHERE id = :id"),
+            {"id": clinic_id}).scalar_one()
+
+
+def test_add_remove_admin(app_session_factory, admin_engine):
+    cid = create_clinic(app_session_factory, "Клиника")
+    add_admin(app_session_factory, cid, 111)
+    add_admin(app_session_factory, cid, 222)
+    add_admin(app_session_factory, cid, 111)  # дубль — идемпотентно
+    assert sorted(_admins(admin_engine, cid)) == [111, 222]
+    remove_admin(app_session_factory, cid, 111)
+    assert _admins(admin_engine, cid) == [222]
 
 
 def _clinic_row(admin_engine, clinic_id):

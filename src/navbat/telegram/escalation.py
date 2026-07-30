@@ -14,6 +14,16 @@ from navbat.telegram.api import TelegramAPIError
 log = logging.getLogger("navbat.escalation")
 
 
+def _as_chat_tuple(value) -> tuple[int, ...]:
+    """Нормализует admin/digest-чаты к кортежу: принимаем None, int или
+    список/массив (Postgres bigint[]). Back-compat со старым одиночным int."""
+    if value is None:
+        return ()
+    if isinstance(value, int):
+        return (value,)
+    return tuple(value)
+
+
 def _fmt_date(iso: str) -> str:
     try:
         return date.fromisoformat(iso).strftime("%d.%m")
@@ -50,21 +60,25 @@ def summarize_context(context: dict) -> str:
 
 
 class TelegramEscalation:
-    def __init__(self, api, admin_chat_id: int | None) -> None:
+    """Шлёт алерт ВСЕМ админ-чатам клиники (M4). Веер скрыт здесь — вызыватели
+    просто зовут notify(), не зная про список."""
+
+    def __init__(self, api, admin_chat_id=None) -> None:
         self._api = api
-        self._admin_chat_id = admin_chat_id
+        self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
 
     def notify(self, chat_id: int, reason: str, context: dict) -> None:
-        if self._admin_chat_id is None:
-            log.warning("эскалация chat=%s (admin_chat_id не задан): %s | %s",
+        if not self._admin_chat_ids:
+            log.warning("эскалация chat=%s (админ-чаты не заданы): %s | %s",
                         chat_id, reason, context)
             return
         message = (f"Эскалация: чат {chat_id}\n"
                    f"Причина: {reason}\n"
                    f"Что хотел пациент: {summarize_context(context)}\n"
                    f"Снять: /release {chat_id}")
-        try:
-            self._api.send_message(self._admin_chat_id, message)
-        except TelegramAPIError as e:
-            log.error("эскалация chat=%s не доставлена админу: %s | %s",
-                      chat_id, e, reason)
+        for admin_chat in self._admin_chat_ids:
+            try:
+                self._api.send_message(admin_chat, message)
+            except TelegramAPIError as e:
+                log.error("эскалация chat=%s не доставлена админу %s: %s | %s",
+                          chat_id, admin_chat, e, reason)

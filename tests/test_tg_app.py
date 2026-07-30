@@ -13,13 +13,13 @@ def test_loads_decrypted_token_and_admin_chat(app_session_factory, admin_engine,
     with admin_engine.begin() as conn:
         conn.execute(
             text("UPDATE clinic SET tg_bot_token_encrypted = :tok, "
-                 "tg_admin_chat_id = 777, tg_webhook_secret = 's3cret' "
-                 "WHERE id = :id"),
+                 "tg_admin_chat_ids = ARRAY[777, 888]::bigint[], "
+                 "tg_webhook_secret = 's3cret' WHERE id = :id"),
             {"tok": encrypt_text("123:ABC"), "id": clinic_a},
         )
     creds = load_clinic_credentials(app_session_factory, clinic_a)
     assert creds.token == "123:ABC"
-    assert creds.admin_chat_id == 777
+    assert creds.admin_chat_ids == (777, 888)  # все админ-чаты (M4)
     assert creds.webhook_secret == "s3cret"
 
 

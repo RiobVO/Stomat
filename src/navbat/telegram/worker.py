@@ -27,6 +27,7 @@ from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
 from navbat.telegram.api import ChatUnavailableError
+from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
     QueuedUpdate,
     claim_next,
@@ -51,14 +52,14 @@ class UpdateWorker:
         dialog: DialogEngine,
         api,  # TelegramAPI | FakeTelegramAPI (duck typing для тестов)
         notifier: EscalationNotifier | None = None,
-        admin_chat_id: int | None = None,
+        admin_chat_id=None,  # int | список | None — авторизация админ-команд (M4)
     ) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._dialog = dialog
         self._api = api
         self._notifier = notifier or LoggingEscalation()
-        self._admin_chat_id = admin_chat_id
+        self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
 
     def process_one(self) -> bool:
         """Обрабатывает один апдейт; False — очередь пуста."""
@@ -122,23 +123,23 @@ class UpdateWorker:
                 return
             if "text" in message:
                 if (message["text"].strip() == "/stats"
-                        and chat_id == self._admin_chat_id):
+                        and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._stats_reply())
                     return
                 if (message["text"].split()[:1] == ["/release"]
-                        and chat_id == self._admin_chat_id):
+                        and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._release_reply(message["text"]))
                     return
                 if (message["text"].split()[:1] == ["/dayoff"]
-                        and chat_id == self._admin_chat_id):
+                        and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._dayoff_reply(message["text"]))
                     return
                 if (message["text"].split()[:1] == ["/dayopen"]
-                        and chat_id == self._admin_chat_id):
+                        and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._dayopen_reply(message["text"]))
                     return
                 if (message["text"].split()[:1] == ["/forget"]
-                        and chat_id == self._admin_chat_id):
+                        and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._forget_reply(message["text"]))
                     return
                 verdict = self._rate_verdict(chat_id, claimed.id)
