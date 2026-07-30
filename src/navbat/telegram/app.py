@@ -123,7 +123,11 @@ def main() -> int:
         UpdateWorker(session_factory, args.clinic, dialog=dialog, api=api,
                      notifier=build_escalation(
                          api, session_factory, args.clinic,
-                         credentials.admin_chat_ids))
+                         credentials.admin_chat_ids),
+                     # авторизация админ-команд и кнопочной консоли идёт по
+                     # этому списку: без него админ-чат проваливается в
+                     # пациентский диалог (супервизор его передаёт)
+                     admin_chat_id=credentials.admin_chat_ids)
         for _ in range(args.workers)
     ]
     threads = [threading.Thread(target=w.run, args=(stop,), name=f"worker-{i}")
