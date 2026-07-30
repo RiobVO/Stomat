@@ -36,7 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from navbat.db.base import tenant_transaction
-from navbat.stats import collect_stats
+from navbat.stats import DailyStats, collect_stats
 
 log = logging.getLogger("navbat.demo_history")
 
@@ -321,27 +321,24 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
 
 
-def summary_bookings(session_factory, clinic_id: uuid.UUID, days: int = 14,
-                     now: datetime | None = None) -> int:
-    """Сколько записей ВИДИТ сводка владельца в окне последних `days` дней.
+def summary_stats(session_factory, clinic_id: uuid.UUID, days: int = 14,
+                  now: datetime | None = None) -> DailyStats | None:
+    """Сводка владельца за окно последних `days` дней; None — клиники нет.
 
     Нужно CLI: цель сидера — чтобы `/stats` не была пустой, и судить об этом
-    должен тот же код, который сводку рисует. Своя копия условий дважды
-    расходилась с витриной (ревью): оформление прошлых приёмов датируется
-    НАКАНУНЕ, поэтому приёмы самого старого дня окна сводке не видны, а живые
-    записи показа витрина считает наравне с синтетикой — счёт «только своего»
-    объявил бы «наливать некуда» над непустой сводкой.
+    должен тот же код, который сводку рисует. Своя копия условий расходилась с
+    витриной трижды (ревью): окно мерилось абсолютным временем вместо дней,
+    считались приёмы вместо confirm-аудитов, а успех — по факту создания вместо
+    видимости. Поэтому отдаём саму сводку и не пересказываем её условия.
 
-    Окно мерим локальными ДАТАМИ, как ведёт его сид. Абсолютное «now() минус N
-    суток» отрезало бы утро самого старого дня: при `days=0` не видно ни одной
-    прошедшей записи вовсе, а после наполнения в субботу повтор в воскресенье
-    вечером терял субботнее утро."""
+    Окно мерим локальными ДАТАМИ, как ведёт его сид: абсолютное «now() минус N
+    суток» отрезало бы утро самого старого дня."""
     with tenant_transaction(session_factory, clinic_id) as session:
         tz = _clinic_zone(session)
         if tz is None:
-            return 0
+            return None
         today = (now.astimezone(tz) if now is not None else datetime.now(tz)).date()
-        return collect_stats(session, today - timedelta(days=days), today, tz).booked
+        return collect_stats(session, today - timedelta(days=days), today, tz)
 
 
 def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:
