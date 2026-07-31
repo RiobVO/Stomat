@@ -284,3 +284,28 @@ def test_confirm_failure_twice_escalates(app_session_factory, admin_engine,
     assert fsm_state(admin_engine) == "escalated"
     assert notifier.calls == [(CHAT, "сбой подтверждения записи")]
     assert booked_count(admin_engine) == 0
+
+
+def test_confirm_failure_alert_ignores_request_cooldown(app_session_factory,
+                                                        admin_engine, clinic_a,
+                                                        doctor_a,
+                                                        service_cleaning):
+    """Кулдаун гасит только дубли «хочу человека»: техавария 2×confirm —
+    пациент доведён до конца и потерял запись — обязана жужжать всегда."""
+    _known_patient(app_session_factory, clinic_a)
+    day = next_monday()
+    sched = FailingConfirmScheduler(
+        SchedulingEngine(app_session_factory, clinic_a), failures=2)
+    engine, notifier = make(
+        app_session_factory, clinic_a,
+        [extr(service="cleaning", date_ref=explicit(day))],
+        clock=lambda: at_tashkent(day, "08:00"), scheduler=sched)
+
+    engine.handle_text(CHAT, "позовите администратора")  # алерт №1 + кулдаун
+    engine.handle_text(CHAT, "/start")
+    offer = engine.handle_text(CHAT, "чистка в понедельник")
+    retry = engine.handle_action(CHAT, slot_buttons(offer)[0].action)  # сбой №1
+    engine.handle_action(CHAT, slot_buttons(retry)[0].action)          # сбой №2
+
+    assert fsm_state(admin_engine) == "escalated"
+    assert len(notifier.calls) == 2, "техавария алертит и внутри кулдауна"

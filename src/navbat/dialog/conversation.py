@@ -38,6 +38,9 @@ class DialogContext:
     greeting_shown: bool = False
     medical_shown: bool = False
     nlu_failures: int = 0
+    # ISO-метка последнего алерта «хочу человека» — кулдаун дублей;
+    # переживает /start намеренно (карусель идёт именно через /start)
+    escalation_alerted_at: str | None = None
     # текущий сценарий записи/переноса/отмены (чистится по завершении)
     service: str | None = None
     date: str | None = None

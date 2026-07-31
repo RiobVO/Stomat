@@ -358,9 +358,12 @@ class UpdateWorker:
             if row.fsm_state != "escalated":
                 return Reply(at("release_not_escalated", lang, chat=target,
                                 state=row.fsm_state))
+            # кулдаун повторных алертов тоже в ноль: админ вернул бота —
+            # новая просьба человека снова важна
             session.execute(
                 text("UPDATE conversation SET fsm_state = 'idle', "
                      "context = jsonb_set(context, '{nlu_failures}', '0', true) "
+                     "- 'escalation_alerted_at' "
                      "WHERE tg_chat_id = :chat"),
                 {"chat": target},
             )

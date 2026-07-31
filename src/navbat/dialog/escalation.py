@@ -8,7 +8,9 @@ log = logging.getLogger("navbat.escalation")
 
 
 class EscalationNotifier(Protocol):
-    def notify(self, chat_id: int, reason: str, context: dict) -> None: ...
+    # False — алерт точно не доставлен ни одному получателю; None/True —
+    # считаем доставленным (обратная совместимость фейков и лог-заглушки)
+    def notify(self, chat_id: int, reason: str, context: dict) -> bool | None: ...
 
 
 class LoggingEscalation:

@@ -99,3 +99,64 @@ def test_start_in_escalated_without_lang_shows_lang_screen(app_session_factory,
     reply = engine.handle_text(CHAT, "/start")
     assert fsm_state(admin_engine) == "idle"
     assert [b.action for b in reply.buttons] == ["lang:uz", "lang:ru"]
+
+
+def test_repeat_escalation_within_cooldown_is_silent(app_session_factory,
+                                                     admin_engine, clinic_a,
+                                                     doctor_a, service_cleaning):
+    """Карусель «позовите → /start → позовите» жужжала админу на каждом круге.
+
+    Первый алерт уходит мгновенно (P0 «до человека один тап»), повторный в
+    кулдауне — тихо: пациент видит ту же заморозку, дубль алерта не шлётся."""
+    engine, notifier = _engine(app_session_factory, clinic_a, [])
+    engine.handle_text(CHAT, "позовите администратора")
+    engine.handle_text(CHAT, "/start")  # пациент сам разморозился
+    reply = engine.handle_text(CHAT, "позовите администратора")
+
+    assert fsm_state(admin_engine) == "escalated", "заморозка работает как раньше"
+    assert len(notifier.calls) == 1, "дубль алерта в кулдауне не уходит"
+    assert reply.text, "пациенту — обычный ответ эскалации"
+
+
+def test_repeat_escalation_after_cooldown_alerts_again(app_session_factory,
+                                                       admin_engine, clinic_a,
+                                                       doctor_a, service_cleaning):
+    from datetime import datetime, timedelta, timezone
+
+    from navbat.dialog.dialog_common import ESCALATION_ALERT_COOLDOWN
+    from test_dialog_booking import RecordingNotifier
+
+    now = {"t": datetime.now(timezone.utc)}
+    notifier = RecordingNotifier()
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]),
+                          notifier=notifier, clock=lambda: now["t"])
+    engine.handle_text(CHAT, "позовите администратора")
+    engine.handle_text(CHAT, "/start")
+    now["t"] += ESCALATION_ALERT_COOLDOWN + timedelta(minutes=1)
+    engine.handle_text(CHAT, "позовите администратора")
+
+    assert len(notifier.calls) == 2, "просьба после кулдауна — снова алерт"
+
+
+def test_failed_alert_delivery_does_not_start_cooldown(app_session_factory,
+                                                       admin_engine, clinic_a,
+                                                       doctor_a,
+                                                       service_cleaning):
+    """Ревью (major): notify глотает сбой доставки — если алерт НИКУДА не
+    дошёл, кулдаун стартовать не должен, иначе транзиентная авария канала
+    глушит «до человека один тап» на два часа."""
+    class UndeliveredNotifier(RecordingNotifier):
+        def notify(self, chat_id, reason, context):
+            super().notify(chat_id, reason, context)
+            return False  # все админ-чаты недоступны
+
+    notifier = UndeliveredNotifier()
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]),
+                          notifier=notifier)
+    engine.handle_text(CHAT, "позовите администратора")
+    engine.handle_text(CHAT, "/start")
+    engine.handle_text(CHAT, "позовите администратора")
+
+    assert len(notifier.calls) == 2, "недоставленный алерт не включает кулдаун"
