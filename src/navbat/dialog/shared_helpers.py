@@ -191,12 +191,16 @@ class _SharedHelpersMixin:
         считаем заново.
         """
         lang = self._lang(conv)
-        service_id = self._service_id(session, conv.context.service)
+        # кнопка несёт и услугу: она живёт в чате и переживает смену сценария,
+        # а услуга из текущего контекста записала бы пациента на другое
+        service_key, _, start_iso = start_iso.partition(":")
+        service_id = self._service_id(session, service_key)
         try:
             start = datetime.fromisoformat(start_iso)
         except ValueError:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
+        conv.context.service = service_key
         free = (self._free_doctors_at(session, service_id, start,
                                       conv.context.doctor_id)
                 if service_id is not None else [])
@@ -204,16 +208,18 @@ class _SharedHelpersMixin:
             return self._offer_slots(session, conv, note="slot_taken")
         if len(free) == 1:
             return self._on_slot_chosen(session, conv, str(free[0][0]), start_iso)
-        return self._ask_doctor(session, conv, start, free)
+        return self._ask_doctor(session, conv, start, free, service_key)
 
     def _ask_doctor(self, session: Session, conv: Conversation,
-                    start: datetime, free, note: str | None = None) -> Reply:
+                    start: datetime, free, service_key: str,
+                    note: str | None = None) -> Reply:
         lang = self._lang(conv)
         minutes = int(start.timestamp()) // 60
         rows = [(Button(name or t("btn_any_doctor", lang),
-                        f"d:{doctor_id}:{minutes}"),)
+                        f"d:{doctor_id}:{minutes}:{service_key}"),)
                 for doctor_id, name in free]
-        rows.append((Button(t("btn_any_doctor", lang), f"d:any:{minutes}"),))
+        rows.append((Button(t("btn_any_doctor", lang),
+                            f"d:any:{minutes}:{service_key}"),))
         local = start.astimezone(self._clinic_tz(session))
         prefix = t(note, lang) + "\n" if note else ""
         return Reply(prefix + t("ask_doctor", lang, when=f"{local:%H:%M}"),
@@ -223,11 +229,13 @@ class _SharedHelpersMixin:
                           rest: str) -> Reply:
         """`d:<id врача|any>:<минуты эпохи>` — кнопка несёт и врача, и время."""
         lang = self._lang(conv)
-        doctor_raw, _, minutes_raw = rest.partition(":")
+        doctor_raw, _, tail = rest.partition(":")
+        minutes_raw, _, service_key = tail.partition(":")
         if not minutes_raw.isdigit():
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
-        service_id = self._service_id(session, conv.context.service)
+        service_id = self._service_id(session, service_key)
+        conv.context.service = service_key
         try:
             start = datetime.fromtimestamp(int(minutes_raw) * 60,
                                            tz=self._clinic_tz(session))
@@ -249,7 +257,7 @@ class _SharedHelpersMixin:
                 # посадить его к другому нельзя — он выбирал ЭТОГО: говорим
                 # прямо и даём выбрать заново, даже если свободен один
                 return self._ask_doctor(session, conv, start, free,
-                                        note="doctor_taken")
+                                        service_key, note="doctor_taken")
         return self._on_slot_chosen(session, conv, str(chosen),
                                     start.isoformat())
 

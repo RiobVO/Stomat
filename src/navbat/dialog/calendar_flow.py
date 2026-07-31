@@ -157,7 +157,7 @@ class _CalendarFlowMixin:
         buttons = []
         for start in dict.fromkeys(item[0] for item in found):
             action = (reslot_action(conv.context.resched_id, start) if resched
-                      else f"time:{start.isoformat()}")
+                      else f"time:{ctx.service}:{start.isoformat()}")
             buttons.append(Button(f"{start.astimezone(tz):%H:%M}", action))
         rows = [tuple(buttons[i:i + SLOTS_PER_DAY_ROW])
                 for i in range(0, len(buttons), SLOTS_PER_DAY_ROW)]

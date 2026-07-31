@@ -82,7 +82,7 @@ class _BookingFlowMixin:
         # врачах четыре кнопки давали всего два реальных времени
         buttons = [
             Button(self._slot_label(start, None, tz, multi_doctor=False),
-                   f"time:{start.isoformat()}")
+                   f"time:{ctx.service}:{start.isoformat()}")
             for start in list(dict.fromkeys(s[0] for s in slots))[:SLOTS_PER_REPLY]
         ]
         buttons.append(Button(t("btn_other_time", lang), "ask_date"))
