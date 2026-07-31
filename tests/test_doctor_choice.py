@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from conftest import at_tashkent, make_doctor, next_monday
@@ -136,3 +137,89 @@ def test_doctor_pick_survives_a_garbage_callback(app_session_factory,
 
     assert engine.handle_action(CHAT, "d:не-uuid:12345").text
     assert engine.handle_action(CHAT, "time:не-время").text
+
+
+def test_old_time_button_does_not_become_a_doctor_button(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Вопрос «к кому» приходит СРАЗУ после сетки времени и перезаписывает
+    карту кнопок чата — а сетка остаётся на экране.
+
+    Пронумерованная кнопка «09:30» из неё превращалась в кнопку врача из
+    следующего сообщения: пациент жал 09:30, а бронировалось 09:00.
+    """
+    from navbat.telegram.worker import UpdateWorker, send_reply
+    from test_dialog_booking import RecordingNotifier
+    from test_tg_worker import FakeTelegramAPI, put_callback
+
+    two_doctors(admin_engine, clinic_a, doctor_a)
+    monday = next_monday()
+    engine = engine_on(app_session_factory, clinic_a, monday)
+    api = FakeTelegramAPI()
+    worker = UpdateWorker(app_session_factory, clinic_a, dialog=engine,
+                          api=api, notifier=RecordingNotifier())
+
+    grid = open_day(engine, monday)
+    send_reply(api, app_session_factory, clinic_a, CHAT, grid)
+    sent_grid = api.row_keyboards[-1]
+    second = [b for row in sent_grid for b in row][1]  # кнопка «09:30»
+    assert second.label == "09:30"
+
+    # пациент тапнул 09:00 → пришёл вопрос о враче и перезаписал карту
+    ask = engine.handle_action(CHAT, time_buttons(grid)[0].action)
+    send_reply(api, app_session_factory, clinic_a, CHAT, ask)
+
+    # ...а он вернулся к старому сообщению и нажал 09:30
+    put_callback(app_session_factory, clinic_a, second.action)
+    worker.process_one()
+
+    with admin_engine.begin() as conn:
+        starts = conn.execute(text(
+            "SELECT lower(time_range) FROM appointment "
+            "WHERE status IN ('hold', 'booked')")).scalars().all()
+    assert at_tashkent(monday, "09:00") not in starts, \
+        "тап по 09:30 забронировал 09:00 — карта кнопок перезаписана"
+
+
+def test_taken_doctor_is_not_silently_swapped(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a,
+                                              service_cleaning):
+    """Выбранного врача заняли, пока пациент отвечал.
+
+    Молча посадить его к другому нельзя — он выбирал ЭТОГО. Бот обязан
+    сказать и предложить свободных."""
+    from navbat.scheduling.engine import SchedulingEngine
+
+    first, second = two_doctors(admin_engine, clinic_a, doctor_a)
+    monday = next_monday()
+    engine = engine_on(app_session_factory, clinic_a, monday)
+    reply = open_day(engine, monday)
+    ask = engine.handle_action(CHAT, time_buttons(reply)[0].action)
+    mine = next(b for b in flat(ask.button_rows)
+                if b.action.startswith("d:") and "any" not in b.action)
+    chosen = mine.action.split(":")[1]
+
+    # чужая бронь заняла именно выбранного врача
+    other = SchedulingEngine(app_session_factory, clinic_a)
+    other.hold(uuid.UUID(chosen), service_cleaning,
+               at_tashkent(monday, "09:00"), tg_chat_id=CHAT + 500)
+
+    answer = engine.handle_action(CHAT, mine.action)
+
+    with admin_engine.begin() as conn:
+        mine_booked = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE tg_chat_id = :c "
+            "AND status IN ('hold', 'booked')"), {"c": CHAT}).scalar_one()
+    assert mine_booked == 0, "пациента молча посадили к другому врачу"
+    assert answer.button_rows or answer.buttons, "бот обязан дать выбор"
+
+
+def test_huge_minutes_do_not_crash_the_handler(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a,
+                                               service_cleaning):
+    """Минуты приходят из callback_data, то есть от клиента: переполнение
+    роняло обработку, и апдейт уходил в dead letter."""
+    monday = next_monday()
+    engine = engine_on(app_session_factory, clinic_a, monday)
+    open_day(engine, monday)
+
+    assert engine.handle_action(CHAT, "d:any:" + "9" * 40).text

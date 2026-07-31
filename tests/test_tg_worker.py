@@ -125,9 +125,13 @@ def test_message_reply_uses_short_callback_data(app_session_factory, admin_engin
     assert buttons, "ожидались кнопки слотов"
     for button in buttons:
         assert len(button.action.encode()) <= 64, "лимит callback_data Telegram"
-        assert button.action.startswith("a:")
-    actions_map = context_of(admin_engine)["tg_actions"]
-    assert actions_map["1"].startswith("time:")
+    # кнопка времени несёт действие сама: сразу за сеткой может прийти вопрос
+    # «к какому врачу», и он перезаписывает карту кнопок чата, пока сетка ещё
+    # на экране. Прочие кнопки шага («Другое время») живут одну отправку и
+    # по-прежнему нумеруются
+    assert sum(b.action.startswith("time:") for b in buttons) == 4
+    assert buttons[-1].action.startswith("a:")
+    assert context_of(admin_engine)["tg_actions"] == {"1": "ask_date"}
     assert queue_statuses(admin_engine) == ["done"]
 
 
@@ -139,7 +143,8 @@ def test_callback_executes_mapped_action(app_session_factory, admin_engine,
     put_message(app_session_factory, clinic_a, "чистку в понедельник")
     worker.process_one()
 
-    put_callback(app_session_factory, clinic_a, "a:1")  # первый слот
+    first_slot = api.sent[0][2][0].action  # сырой time: первого слота
+    put_callback(app_session_factory, clinic_a, first_slot)
     assert worker.process_one() is True
 
     assert api.answered, "callback_query должен быть подтверждён (часики)"

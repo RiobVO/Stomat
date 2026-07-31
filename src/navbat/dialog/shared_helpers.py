@@ -198,13 +198,19 @@ class _SharedHelpersMixin:
             return self._offer_slots(session, conv, note="slot_taken")
         if len(free) == 1:
             return self._on_slot_chosen(session, conv, str(free[0][0]), start_iso)
+        return self._ask_doctor(session, conv, start, free)
+
+    def _ask_doctor(self, session: Session, conv: Conversation,
+                    start: datetime, free, note: str | None = None) -> Reply:
+        lang = self._lang(conv)
         minutes = int(start.timestamp()) // 60
         rows = [(Button(name or t("btn_any_doctor", lang),
                         f"d:{doctor_id}:{minutes}"),)
                 for doctor_id, name in free]
         rows.append((Button(t("btn_any_doctor", lang), f"d:any:{minutes}"),))
         local = start.astimezone(self._clinic_tz(session))
-        return Reply(t("ask_doctor", lang, when=f"{local:%H:%M}"),
+        prefix = t(note, lang) + "\n" if note else ""
+        return Reply(prefix + t("ask_doctor", lang, when=f"{local:%H:%M}"),
                      button_rows=tuple(rows))
 
     def _on_doctor_chosen(self, session: Session, conv: Conversation,
@@ -216,8 +222,14 @@ class _SharedHelpersMixin:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
         service_id = self._service_id(session, conv.context.service)
-        start = datetime.fromtimestamp(int(minutes_raw) * 60,
-                                       tz=self._clinic_tz(session))
+        try:
+            start = datetime.fromtimestamp(int(minutes_raw) * 60,
+                                           tz=self._clinic_tz(session))
+        except (ValueError, OverflowError, OSError):
+            # минуты приходят от клиента: переполнение роняло обработку, и
+            # апдейт уходил в dead letter (та же защита, что у wl:take)
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
         free = (self._free_doctors_at(session, service_id, start,
                                       conv.context.doctor_id)
                 if service_id is not None else [])
@@ -227,8 +239,11 @@ class _SharedHelpersMixin:
         if doctor_raw != "any":
             chosen = next((d for d, _ in free if str(d) == doctor_raw), None)
             if chosen is None:
-                # врача заняли, пока пациент выбирал — предлагаем свободных
-                return self._on_time_chosen(session, conv, start.isoformat())
+                # выбранного врача заняли, пока пациент отвечал. Молча
+                # посадить его к другому нельзя — он выбирал ЭТОГО: говорим
+                # прямо и даём выбрать заново, даже если свободен один
+                return self._ask_doctor(session, conv, start, free,
+                                        note="doctor_taken")
         return self._on_slot_chosen(session, conv, str(chosen),
                                     start.isoformat())
 
