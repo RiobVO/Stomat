@@ -34,7 +34,10 @@ REVIEWED_UZ = {
         "Boshqa vaqtga ko'chirish uchun faol qabul topilmadi. "
         "Yozilishni xohlaysizmi?"
     ),
-    "resched_done": "✅ <b>KO'CHIRILDI</b>\n\n📅 {when}\n\nSizni kutamiz!",
+    # полировка-4: карточка-«билет» — добавлены строки {service}/{doctor}/
+    # {address}; узбекских СЛОВ не добавилось, формулировки ревью целы
+    "resched_done": "✅ <b>KO'CHIRILDI</b>\n\n"
+                    "🦷 {service}\n📅 {when}{doctor}{address}\n\nSizni kutamiz!",
     "conflict_moved": (
         "Afsuski, {old} vaqti band bo'lib qoldi — qabulni {new} ga "
         "ko'chirdim. To'g'ri kelmasa, boshqasini tanlang:"

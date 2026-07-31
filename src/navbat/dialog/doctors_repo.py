@@ -34,6 +34,17 @@ def doctor_list(session: Session) -> list[tuple[uuid.UUID, str | None]]:
     ]
 
 
+def doctor_name(session: Session, doctor_id: uuid.UUID | str) -> str | None:
+    """Имя врача по id, ВКЛЮЧАЯ скрытых: записи деактивированного врача
+    продолжают жить (контракт инкремента 2), и карточка переноса обязана
+    называть его, а не молчать."""
+    encrypted = session.execute(
+        text("SELECT name_encrypted FROM doctor WHERE id = :id"),
+        {"id": doctor_id},
+    ).scalar_one_or_none()
+    return decrypt_text(encrypted) if encrypted else None
+
+
 def doctor_list_all(session: Session) -> list[_Doc]:
     """ВСЕ врачи (вкл. деактивированных) для админ-консоли: namedtuple-строки
     с расшифрованным именем (id, name, working_intervals, buffer_min,

@@ -47,6 +47,10 @@ from navbat.telegram.worker import UpdateWorker
 
 log = logging.getLogger("navbat")
 
+# витрина /stats на показе: недельный посев demo_history даёт ~40 записей,
+# живая репетиция — единицы; между ними и лежит порог «история стёрта»
+SHOWCASE_MIN_BOOKED = 20
+
 
 def migrations_head() -> str | None:
     """Head ревизия по файлам миграций; None — файлов нет (урезанная
@@ -310,6 +314,20 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
     report(True, "NLU-промпт",
            f"версия {clinic.nlu_prompt_version} (БД)"
            if clinic.nlu_prompt_version else "встроенный файл")
+
+    if clinic_id == DEMO_CLINIC_ID:
+        # pytest стирает демо-историю, а финализатор сьюта возвращает клинику
+        # БЕЗ неё — 31.07 сводка показа вышла с «записей: 2», заметили только
+        # глазами. Судим тем же collect_stats, что и витрина (конвенция);
+        # порог ниже недельного посева demo_history (~40), но выше следов
+        # живой репетиции
+        from navbat.demo_history import summary_stats
+        window = summary_stats(session_factory, clinic_id, days=7)
+        booked = window.booked if window else 0
+        report(booked >= SHOWCASE_MIN_BOOKED, "витрина /stats (демо-история)",
+               f"записей за 7 дн: {booked}" if booked >= SHOWCASE_MIN_BOOKED
+               else f"записей за 7 дн: {booked} — /stats на показе будет "
+                    f"пустым: python -m navbat.onboard --demo-history")
 
     if use_real:
         report(bool(os.environ.get("OPENAI_API_KEY")), "OPENAI_API_KEY для --real")
