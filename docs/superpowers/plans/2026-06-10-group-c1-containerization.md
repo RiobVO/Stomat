@@ -1,4 +1,4 @@
-# C-1 Контейнеризация — Implementation Plan
+﻿# C-1 Контейнеризация — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -24,7 +24,7 @@
 - Modify: `src/navbat/supervisor.py`
 - Test: `tests/test_supervisor.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Добавить в конец `tests/test_supervisor.py`:
 
@@ -48,12 +48,12 @@ def test_sigterm_handler_sets_stop_event():
         signal.signal(signal.SIGTERM, previous)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_supervisor.py::test_sigterm_handler_sets_stop_event -q`
 Expected: FAIL — `ImportError: cannot import name 'install_sigterm_handler'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 В `src/navbat/supervisor.py` добавить `import signal` к импортам (после `import os`) и функцию после `parse_offsets`:
 
@@ -70,12 +70,12 @@ def install_sigterm_handler(stop: threading.Event) -> None:
     install_sigterm_handler(stop)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_supervisor.py -q`
 Expected: все PASS (4 старых + 1 новый)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/navbat/supervisor.py tests/test_supervisor.py
@@ -92,7 +92,7 @@ git commit -m "feat(deploy): graceful shutdown on SIGTERM (docker stop)"
 - Modify: `src/navbat/supervisor.py`
 - Test: `tests/test_supervisor.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Добавить в конец `tests/test_supervisor.py`:
 
@@ -141,12 +141,12 @@ def test_validate_real_env_accepts_prod_config(monkeypatch):
     assert validate_real_env() == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_supervisor.py -q -k validate_real_env`
 Expected: 4 FAIL — `ImportError: cannot import name 'validate_real_env'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 В `src/navbat/supervisor.py` после `install_sigterm_handler`:
 
@@ -179,12 +179,12 @@ def validate_real_env() -> list[str]:
 
 (`--check --real` не валидируем жёстко: run_check сам печатает [FAIL] по OPENAI_API_KEY — поведение чек-листа не меняем.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_supervisor.py -q`
 Expected: все PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/navbat/supervisor.py tests/test_supervisor.py
@@ -200,7 +200,7 @@ git commit -m "feat(deploy): fail-fast env validation for --real mode"
 - Create: `deploy/entrypoint.sh`
 - Create: `.gitattributes` (в корне репо — его ещё нет)
 
-- [ ] **Step 1: Create `.gitattributes`**
+- [x] **Step 1: Create `.gitattributes`**
 
 Хост — Windows (CRLF), скрипты уходят в Linux-образ: без принудительного LF entrypoint упадёт с `/bin/sh^M: bad interpreter`.
 
@@ -209,7 +209,7 @@ git commit -m "feat(deploy): fail-fast env validation for --real mode"
 *.sh text eol=lf
 ```
 
-- [ ] **Step 2: Create `deploy/entrypoint.sh`**
+- [x] **Step 2: Create `deploy/entrypoint.sh`**
 
 ```sh
 #!/bin/sh
@@ -233,7 +233,7 @@ exec python -m navbat \
     ${NAVBAT_REMINDER_OFFSETS:+--reminder-offsets "$NAVBAT_REMINDER_OFFSETS"}
 ```
 
-- [ ] **Step 3: Create `deploy/Dockerfile`**
+- [x] **Step 3: Create `deploy/Dockerfile`**
 
 ```dockerfile
 # Сборка из корня репо: docker build -f deploy/Dockerfile .
@@ -260,12 +260,12 @@ USER navbat
 ENTRYPOINT ["/entrypoint.sh"]
 ```
 
-- [ ] **Step 4: Verify build**
+- [x] **Step 4: Verify build**
 
 Run (из корня репо): `docker build -f deploy/Dockerfile -t navbat:dev . 2>&1 | tail -5`
 Expected: последняя строка содержит `naming to docker.io/library/navbat:dev` (или `Successfully tagged navbat:dev`), exit code 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .gitattributes deploy/Dockerfile deploy/entrypoint.sh
@@ -281,7 +281,7 @@ git commit -m "feat(deploy): app Dockerfile with migrations-on-start entrypoint"
 - Create: `deploy/initdb/01-app-role.sh`
 - Create: `deploy/.env.example`
 
-- [ ] **Step 1: Create `deploy/initdb/01-app-role.sh`**
+- [x] **Step 1: Create `deploy/initdb/01-app-role.sh`**
 
 Прод-аналог `docker/init.sql`, но пароль из env, не захардкожен:
 
@@ -309,7 +309,7 @@ END
 SQL
 ```
 
-- [ ] **Step 2: Create `deploy/docker-compose.prod.yml`**
+- [x] **Step 2: Create `deploy/docker-compose.prod.yml`**
 
 ```yaml
 # Прод-стек Navbat: docker compose -f docker-compose.prod.yml up -d
@@ -355,7 +355,7 @@ volumes:
   pgdata:
 ```
 
-- [ ] **Step 3: Create `deploy/.env.example`**
+- [x] **Step 3: Create `deploy/.env.example`**
 
 ```sh
 # Скопируй в deploy/.env и заполни. Файл .env — в .gitignore, не коммитить.
@@ -393,13 +393,13 @@ NAVBAT_TG_ADMIN_CHAT=
 # NAVBAT_REMINDER_OFFSETS=1440,120
 ```
 
-- [ ] **Step 4: Verify compose config**
+- [x] **Step 4: Verify compose config**
 
 Run (из `deploy/`, предварительно `cp .env.example .env` и заполнив NAVBAT_PG_PASSWORD/NAVBAT_APP_PASSWORD/NAVBAT_ENC_KEY любыми валидными значениями):
 `docker compose -f docker-compose.prod.yml config --quiet && echo CONFIG-OK`
 Expected: `CONFIG-OK` (без warning'ов о незаданных переменных)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add deploy/docker-compose.prod.yml deploy/initdb/01-app-role.sh deploy/.env.example
@@ -414,7 +414,7 @@ git commit -m "feat(deploy): production compose with parameterized db role"
 
 **Files:** только runbook-вывод (фиксируется в DEPLOY.md в финальном инкременте; здесь — проверка руками).
 
-- [ ] **Step 1: Чистый запуск postgres**
+- [x] **Step 1: Чистый запуск postgres**
 
 Run (из `deploy/`):
 ```bash
@@ -424,7 +424,7 @@ docker compose -f docker-compose.prod.yml logs postgres | grep -c "01-app-role" 
 ```
 Expected: в логах postgres есть строка про выполнение `01-app-role.sh`, ошибок нет.
 
-- [ ] **Step 2: Миграции + онбординг демо через app-образ**
+- [x] **Step 2: Миграции + онбординг демо через app-образ**
 
 У compose `run` entrypoint сохраняется — обходим его явно:
 ```bash
@@ -432,7 +432,7 @@ docker compose -f docker-compose.prod.yml run --rm --entrypoint sh app -c "alemb
 ```
 Expected: `[OK] демо-клиника: 00000000-0000-4000-8000-000000000d31` и `[OK] токен бота записан…` (токен берётся из NAVBAT_TG_TOKEN в deploy/.env).
 
-- [ ] **Step 3: Старт app + --check изнутри**
+- [x] **Step 3: Старт app + --check изнутри**
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d app
@@ -440,7 +440,7 @@ docker compose -f docker-compose.prod.yml exec app python -m navbat --check
 ```
 Expected: все строки `[OK]` (Google Calendar — «не настроен», это OK), exit code 0.
 
-- [ ] **Step 4: Graceful stop**
+- [x] **Step 4: Graceful stop**
 
 ```bash
 docker compose -f docker-compose.prod.yml stop app
@@ -448,7 +448,7 @@ docker compose -f docker-compose.prod.yml logs app | tail -5
 ```
 Expected: в хвосте логов `останавливаюсь…` (SIGTERM дошёл и обработан штатно), контейнер остановился без SIGKILL (`docker inspect` ExitCode=0; проверка: `docker inspect deploy-app-1 --format '{{.State.ExitCode}}'` → `0`).
 
-- [ ] **Step 5: Прибраться и прогнать полный сьют против дев-БД**
+- [x] **Step 5: Прибраться и прогнать полный сьют против дев-БД**
 
 ```bash
 docker compose -f docker-compose.prod.yml down
@@ -457,7 +457,7 @@ cd .. && python -m pytest -q
 Expected: `554 passed` (549 базовых + 1 SIGTERM + 4 env-валидации), без падений.
 ВАЖНО: дев-postgres (:5434, корневой compose) должен быть поднят; прод-стек портов не публикует и не конфликтует.
 
-- [ ] **Step 6: Восстановить демо дев-базы и финальный коммит-пуш**
+- [x] **Step 6: Восстановить демо дев-базы и финальный коммит-пуш**
 
 pytest TRUNCATE'ит дев-базу — вернуть демо-клинику:
 ```bash
@@ -471,7 +471,7 @@ Expected: `--check` все [OK]; push успешен.
 
 ## Definition of Done (C-1)
 
-- [ ] SIGTERM-тест и 4 env-валидационных теста зелёные; полный сьют зелёный.
-- [ ] `docker build` проходит; smoke Task 5 пройден целиком с записанными выводами.
-- [ ] Дев-окружение не задето: корневой `docker-compose.yml` не изменён, демо-клиника восстановлена, `--check` [OK].
-- [ ] Все коммиты запушены в origin/master.
+- [x] SIGTERM-тест и 4 env-валидационных теста зелёные; полный сьют зелёный.
+- [x] `docker build` проходит; smoke Task 5 пройден целиком с записанными выводами.
+- [x] Дев-окружение не задето: корневой `docker-compose.yml` не изменён, демо-клиника восстановлена, `--check` [OK].
+- [x] Все коммиты запушены в origin/master.
