@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Navbat — AI-администратор записи для стоматологий (Ташкент)
 
 Бот в Telegram, записывает пациентов 24/7 на узбекском и русском.
@@ -41,6 +45,17 @@
   узбекский — ресёрч живой речи подтвердил решения, апостроф закрыт,
   правка консистентности (1c8a35d). M6 (voice/STT) СНЯТ решением
   пользователя. Тестов 545.
+- 09.06.2026 ЗАКРЫТ последний неугаданный код-пункт (security MEDIUM
+  «открытый телефон в очереди», d5cd3c9, TDD): номер из кнопки контакта
+  хэшируется на границе enqueue (queue._redact_contact_phone) — в
+  message_queue.payload вместо message.contact.phone_number кладётся
+  phone_hash (тот же SHA-256 с солью, что в patient); не-998 → без хэша →
+  воркер эскалирует лид. Чистая функция, per-chat порядок очереди цел.
+  Диалог: новый вход handle_contact_hashed (хэш-путь воркера) + сырой
+  handle_contact сохранён для демо/каналов без очереди; create_patient(raw)
+  не тронут (5 фикстур), добавлен create_patient_with_hash. PRIVACY.md
+  разд. 7/9 синхронизированы. Серия 8/8 зелёная, демо восстановлено,
+  --check [OK], CI зелёный. Тестов 549.
 - СЛЕДУЮЩИЙ ШАГ: обязательной инженерной работы НЕТ. Открыто только
   гейтящееся решением/деньгами/носителем: глубокий узбекский (ЖИВОЙ
   носитель — UZ_STRINGS.md готов под это; машинно не дожимать), m2
@@ -101,6 +116,48 @@
   Восстановление — ОДНА команда: `python -m navbat.onboard --demo`
   (токен и админ-чат подтягиваются из локального .env: NAVBAT_TG_TOKEN,
   NAVBAT_TG_ADMIN_CHAT; файл в .gitignore, у пользователя не спрашивать).
+
+## Архитектура (карта для быстрого старта)
+
+Принцип: «LLM — рот, код — мозг» — все решения детерминированы, NLU только
+извлекает слоты. Слои (поток сообщения сверху вниз):
+
+- **Вход (`telegram/`).** `transport.py` (polling/webhook) → durable-очередь
+  `queue.py` (таблица message_queue, UNIQUE(clinic_id, update_id), двухфазный
+  клейм + SKIP LOCKED → порядок per-chat, переживает рестарт). `worker.py`
+  тянет из очереди, перехватывает админ-команды (авторизация по членству в
+  `clinic.tg_admin_chat_ids`), нумерует callback-кнопки (>64 байт → map в
+  `conversation.context['tg_actions']`), зовёт диалог. `api.py` — тонкий
+  httpx-клиент Bot API; `escalation.py` шлёт алерты ВСЕМ админ-чатам.
+- **Диалог (`dialog/`).** `fsm.py` — роутер `DialogEngine` (входные точки,
+  /start+меню до NLU, маршрутизация интента, callback-actions) поверх
+  mixin'ов сценариев `booking_flow`/`reschedule_flow`/`cancel_flow` + общих
+  `shared_helpers`; константы/протокол — `dialog_common.py`. Состояние —
+  типизированный `DialogContext` (`conversation.py`), персист в JSONB (поле
+  `extras` хранит adapter-ключи tg_actions). Весь доступ к БД — через
+  репозитории (`*_repo.py`, `patients.py`); в fsm НЕТ сырого SQL.
+- **Расписание (`scheduling/`).** `engine.py` — hold/confirm/cancel/reschedule;
+  занятость гарантирует БД (exclusion constraint с буфером в выражении) +
+  advisory-lock на врача (анти-дедлок), код занятость не проверяет.
+  `calendar_rules.py` — сетка слотов из working_intervals/праздников.
+- **Календарь (`calendar/`).** `sync.py` — reconciliation-синк с Google
+  (ручные события вытесняют ботовские с авто-переносом), `guard.py` —
+  freeBusy-guard перед confirm, `sync_loop.py` — цикл с алертом при затяжном
+  сбое.
+- **NLU (`nlu/`).** `schema.py` (Extraction + `SERVICE_KEYS` — единый источник
+  услуг), `extractor.py` (Fake/интерфейс), `openai_extractor.py`/
+  `gemini_extractor.py` за `fallback.py`, `wrappers.py` (деидентификация
+  телефонов перед LLM, дневной token-cap, метрика дрейфа). Промпт —
+  `spike_nlu/prompts/system.md` (тот же файл в проде).
+- **Фон + супервизор.** `reminders.py` (напоминания через reconciliation из
+  appointment, переживают рестарт; вечерний дайджест всем админам),
+  `retention.py` (чистка >90 дней). `supervisor.py` (`python -m navbat`) —
+  транспорт+воркеры+календарь+напоминания одним процессом; `--check` —
+  преддемо-чеклист. Онбординг — `onboard.py`.
+- **Мультитенант + крипта (`db/base.py`, `crypto.py`).** Каждая транзакция
+  ставит `app.clinic_id` (SET LOCAL); RLS FORCE на всех таблицах изолирует
+  клиники; приложение под непривилегированной ролью navbat_app. Имена —
+  AES-256-GCM, телефоны — SHA-256-хэш с per-clinic солью.
 
 ## Что проверено (факты, не трогать)
 
@@ -206,8 +263,11 @@
 - Секреты: локальный `.env` в корне (gitignored) — NAVBAT_TG_TOKEN,
   NAVBAT_TG_ADMIN_CHAT и пр.; грузится автоматически (navbat/envfile.py)
   в supervisor, onboard и demo. Окружение главнее файла.
-- Тесты: `python -m pytest` (308 зелёных). Конкурентные тесты —
-  гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит.
+- Тесты: `python -m pytest` (полный сьют); одиночный —
+  `python -m pytest tests/test_x.py::test_y -q`, по подстроке — `-k имя`.
+  Lint/format-тулинга нет (только pytest в pyproject). Конкурентные тесты —
+  гонять сьют 5–10 раз перед «готово», одиночный прогон дедлоки не ловит;
+  параллельный pytest против общей базы ЗАПРЕЩЁН (TRUNCATE-фикстуры рушат).
   CI: GitHub Actions гоняет сьют ×3 на каждый push. Docker Desktop может
   быть не запущен — стартануть и дождаться демона перед docker compose.
 - ВСЯ СИСТЕМА: `python -m navbat` (супервизор: канал+календарь+напоминания;
