@@ -168,6 +168,12 @@ class _SharedHelpersMixin:
         свободных слотов, поэтому «Любой» не сажает всех к одному врачу.
         Счётчик берётся из того же обхода, лишних запросов нет.
         """
+        if start <= self._clock():
+            # кнопки time:/d:/wl:take несут время и живут в чате сколько
+            # угодно, а движок сверяет старт только с рабочей сеткой врача:
+            # валидное «09:00 прошлого понедельника» на сетке лежит, и тап по
+            # вчерашнему сообщению записывал пациента в прошлое
+            return []
         day = start.astimezone(self._clinic_tz(session)).date()
         free: list[tuple[int, str, uuid.UUID, str | None]] = []
         for doctor_id, name in self._doctors(session, preferred):

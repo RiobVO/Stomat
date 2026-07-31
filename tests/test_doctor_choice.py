@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from conftest import at_tashkent, make_doctor, next_monday
 from navbat.dialog.fsm import DialogEngine
@@ -223,3 +223,44 @@ def test_huge_minutes_do_not_crash_the_handler(app_session_factory, admin_engine
     open_day(engine, monday)
 
     assert engine.handle_action(CHAT, "d:any:" + "9" * 40).text
+
+
+def test_time_button_from_a_past_grid_does_not_book_backwards(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Кнопка времени стала сырой — значит, живёт в чате сколько угодно.
+
+    Движок сверяет старт только с рабочей сеткой врача, а не с текущим
+    моментом: валидное «09:00 прошлого понедельника» на сетке лежит, и тап
+    по вчерашнему сообщению записывал бы пациента в прошлое. Та же дыра,
+    что уже находилась у reslot:."""
+    monday = next_monday()
+    past = monday - timedelta(days=14)
+    engine = engine_on(app_session_factory, clinic_a, monday)
+    open_day(engine, monday)
+
+    engine.handle_action(
+        CHAT, f"time:{at_tashkent(past, '09:00').isoformat()}")
+
+    with admin_engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT count(*) FROM appointment "
+            "WHERE lower(time_range) < now()")).scalar_one()
+    assert rows == 0, "запись оформлена в прошлое"
+
+
+def test_doctor_button_from_a_past_grid_does_not_book_backwards(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """То же для кнопки врача: она несёт минуты эпохи от клиента."""
+    monday = next_monday()
+    past = monday - timedelta(days=14)
+    engine = engine_on(app_session_factory, clinic_a, monday)
+    open_day(engine, monday)
+    minutes = int(at_tashkent(past, "09:00").timestamp()) // 60
+
+    engine.handle_action(CHAT, f"d:any:{minutes}")
+
+    with admin_engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT count(*) FROM appointment "
+            "WHERE lower(time_range) < now()")).scalar_one()
+    assert rows == 0, "запись оформлена в прошлое"
