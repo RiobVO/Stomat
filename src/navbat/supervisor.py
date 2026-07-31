@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 import threading
 import uuid
@@ -46,6 +47,11 @@ def parse_offsets(raw: str) -> tuple[timedelta, ...]:
     if not offsets:
         raise ValueError(f"пустой список офсетов: {raw!r}")
     return offsets
+
+
+def install_sigterm_handler(stop: threading.Event) -> None:
+    """docker stop шлёт SIGTERM — гасим теми же рельсами, что Ctrl+C."""
+    signal.signal(signal.SIGTERM, lambda signum, frame: stop.set())
 
 
 def build_real_extractor(session_factory, clinic_id: uuid.UUID, notifier):
@@ -226,6 +232,7 @@ def main() -> int:
                                 digest_chat_id=credentials.admin_chat_ids)
 
     stop = threading.Event()
+    install_sigterm_handler(stop)
     threads = [
         threading.Thread(target=reminders.run, args=(stop,), name="reminders"),
     ]
