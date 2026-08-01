@@ -29,6 +29,20 @@ def put(app_session_factory, clinic_id, update_id, chat_id=CHAT) -> bool:
                        payload={"update_id": update_id})
 
 
+# ── C-3: completed_at для p95 ответа ─────────────────────────────────────────
+
+def test_complete_stamps_completed_at(app_session_factory, admin_engine, clinic_a):
+    put(app_session_factory, clinic_a, 1)
+    claimed = claim_next(app_session_factory, clinic_a)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        complete(session, claimed.id)
+    with admin_engine.begin() as conn:
+        done_at = conn.execute(text(
+            "SELECT completed_at FROM message_queue WHERE id = :id"),
+            {"id": claimed.id}).scalar_one()
+    assert done_at is not None
+
+
 # ── Идемпотентность ──────────────────────────────────────────────────────────
 
 def test_enqueue_duplicate_is_noop(app_session_factory, admin_engine, clinic_a):

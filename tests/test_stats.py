@@ -65,6 +65,35 @@ def test_stats_include_nlu_drift(app_session_factory, clinic_a):
     assert "сбоев: 1" in out and "repair: 1" in out
 
 
+# ── C-3: p95 ответа за день ──────────────────────────────────────────────────
+
+def test_p95_response_from_done_queue(app_session_factory, admin_engine, clinic_a):
+    from navbat.stats import collect_daily_stats
+
+    with admin_engine.begin() as conn:
+        for upd, secs in ((1, 1), (2, 10)):
+            conn.execute(text(
+                "INSERT INTO message_queue (clinic_id, update_id, tg_chat_id, "
+                "payload, status, created_at, completed_at) VALUES "
+                "(:c, :u, 100, '{}', 'done', now() - make_interval(secs => :s), "
+                "now())"), {"c": clinic_a, "u": upd, "s": secs})
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_daily_stats(session, datetime.now(TASHKENT).date(),
+                                    TASHKENT)
+    assert stats.p95_response_sec is not None
+    assert 9.0 < stats.p95_response_sec < 10.0  # percentile_cont([1,10], 0.95)
+
+
+def test_p95_rendered_in_stats():
+    from navbat.stats import DailyStats, render_stats
+
+    stats = DailyStats(booked=1, cancelled=0, escalated=0, reminders_sent=0,
+                       llm_requests=0, llm_tokens=0, nlu_failures=0,
+                       nlu_repairs=0, prevented_noshows=0, saved_revenue=0,
+                       p95_response_sec=2.3)
+    assert "p95" in render_stats(stats, date(2026, 6, 10))
+
+
 # ── should_send_digest: чистые границы ───────────────────────────────────────
 
 def test_digest_only_after_evening_hour():

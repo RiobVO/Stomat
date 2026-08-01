@@ -110,7 +110,8 @@ def claim_next(session_factory: sessionmaker[Session],
 
 def complete(session: Session, queue_id: int) -> None:
     session.execute(
-        text("UPDATE message_queue SET status = 'done' WHERE id = :id"),
+        text("UPDATE message_queue SET status = 'done', completed_at = now() "
+             "WHERE id = :id"),
         {"id": queue_id},
     )
 

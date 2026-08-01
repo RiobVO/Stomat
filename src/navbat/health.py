@@ -58,6 +58,7 @@ class HealthChecker:
         ok = self._check_calendar(checks) and ok
         ok = self._check_cert(checks) and ok
         self._report_llm(checks)
+        self._report_p95(checks)
         return ok, checks
 
     def _check_db(self, checks: dict) -> bool:
@@ -123,6 +124,17 @@ class HealthChecker:
             "nlu_today": (f"{row.failures}/{row.requests} сбоев"
                           if row else "0/0 сбоев"),
         }
+
+    def _report_p95(self, checks: dict) -> None:
+        """Информационно: p95 ответа за час (SLA-видимость, статус не валит)."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as s:
+            p95 = s.execute(text(
+                "SELECT extract(epoch FROM percentile_cont(0.95) "
+                "WITHIN GROUP (ORDER BY completed_at - created_at)) "
+                "FROM message_queue WHERE status = 'done' "
+                "AND completed_at > now() - interval '1 hour'")).scalar_one()
+        checks["p95_response_sec_1h"] = (round(float(p95), 1)
+                                         if p95 is not None else None)
 
 
 class HealthServer:
