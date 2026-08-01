@@ -28,7 +28,7 @@ from navbat.dialog.fsm import DialogEngine
 from navbat.nlu.extractor import FakeExtractor
 from navbat.telegram.api import TelegramAPI
 from navbat.telegram.escalation import TelegramEscalation
-from navbat.telegram.transport import PollingTransport, WebhookServer
+from navbat.telegram.transport import PollingTransport, WebhookServer, ensure_webhook
 from navbat.telegram.worker import UpdateWorker
 
 log = logging.getLogger("navbat.telegram")
@@ -133,9 +133,8 @@ def main() -> int:
                 port=args.webhook_port,
             )
             webhook_server.start()
-            api.set_webhook(args.webhook_url.rstrip("/") + webhook_server.path,
-                            secret_token=credentials.webhook_secret)
-            log.info("webhook установлен: %s", args.webhook_url)
+            ensure_webhook(api, args.webhook_url, credentials.webhook_secret,
+                           notifier=notifier, path=webhook_server.path)
             stop.wait()  # до Ctrl+C
         else:
             api.delete_webhook()  # иначе getUpdates вернёт 409
