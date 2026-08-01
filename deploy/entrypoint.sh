@@ -16,4 +16,6 @@ exec python -m navbat \
     ${NAVBAT_REAL:+--real} \
     ${NAVBAT_WORKERS:+--workers "$NAVBAT_WORKERS"} \
     ${NAVBAT_SYNC_INTERVAL:+--sync-interval "$NAVBAT_SYNC_INTERVAL"} \
-    ${NAVBAT_REMINDER_OFFSETS:+--reminder-offsets "$NAVBAT_REMINDER_OFFSETS"}
+    ${NAVBAT_REMINDER_OFFSETS:+--reminder-offsets "$NAVBAT_REMINDER_OFFSETS"} \
+    ${NAVBAT_WEBHOOK_URL:+--webhook-url "$NAVBAT_WEBHOOK_URL"} \
+    ${NAVBAT_WEBHOOK_PORT:+--webhook-port "$NAVBAT_WEBHOOK_PORT"}
