@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime
 
 from navbat.dialog.replies import service_label
@@ -66,6 +67,9 @@ class TelegramEscalation:
     def __init__(self, api, admin_chat_id=None) -> None:
         self._api = api
         self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
+        # владелец системы (не клиники): системные алерты дублируются ему
+        raw_owner = os.environ.get("NAVBAT_OWNER_CHAT_ID", "")
+        self._owner_chat = int(raw_owner) if raw_owner.lstrip("-").isdigit() else None
 
     def notify(self, chat_id: int, reason: str, context: dict) -> None:
         if not self._admin_chat_ids:
@@ -82,3 +86,20 @@ class TelegramEscalation:
             except TelegramAPIError as e:
                 log.error("эскалация chat=%s не доставлена админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
+
+    def notify_system(self, reason: str, context: dict) -> None:
+        """Системный алерт: веер админ-чатам + владельцу системы (env)."""
+        message = f"⚠ Системный алерт\n{reason}"
+        targets = list(self._admin_chat_ids)
+        if self._owner_chat and self._owner_chat not in targets:
+            targets.append(self._owner_chat)
+        if not targets:
+            log.warning("системный алерт (чаты не заданы): %s | %s",
+                        reason, context)
+            return
+        for chat in targets:
+            try:
+                self._api.send_message(chat, message)
+            except TelegramAPIError as e:
+                log.error("системный алерт не доставлен в %s: %s | %s",
+                          chat, e, reason)

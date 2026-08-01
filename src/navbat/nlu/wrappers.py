@@ -17,7 +17,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
-from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import (
+    EscalationNotifier,
+    LoggingEscalation,
+    system_alert,
+)
 from navbat.nlu.extractor import ExtractionError, Extractor
 from navbat.nlu.schema import Extraction
 
@@ -122,9 +126,10 @@ class UsageRecorder:
         if share <= self._drift_threshold:
             return
         self._drift_alerted_on = today
-        self._notifier.notify(
-            0, f"NLU-дрифт: {row.failures} сбоев из {row.requests} запросов "
-               f"за сегодня ({share:.0%}) — проверить промпт/модель",
+        system_alert(
+            self._notifier,
+            f"NLU-дрифт: {row.failures} сбоев из {row.requests} запросов "
+            f"за сегодня ({share:.0%}) — проверить промпт/модель",
             {"failures": row.failures, "requests": row.requests})
 
     def cap_exceeded(self) -> bool:
@@ -140,9 +145,10 @@ class UsageRecorder:
         if self._alerted_on == today:
             return
         self._alerted_on = today
-        self._notifier.notify(
-            0, f"дневной лимит LLM-токенов ({self._cap}) исчерпан — "
-               f"бот эскалирует диалоги до конца дня", {"cap": self._cap})
+        system_alert(
+            self._notifier,
+            f"дневной лимит LLM-токенов ({self._cap}) исчерпан — "
+            f"бот эскалирует диалоги до конца дня", {"cap": self._cap})
 
 
 class DriftTrackingExtractor:

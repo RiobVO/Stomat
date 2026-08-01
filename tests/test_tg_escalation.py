@@ -44,3 +44,32 @@ def test_api_failure_does_not_break_processing():
     escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
     escalation.notify(100, "причина", {})  # не должно бросить
     assert api.sent == []
+
+
+# ── C-3: системные алерты — админ-чаты + канал владельца ────────────────────
+
+def test_notify_system_fans_to_admins_and_owner(monkeypatch):
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", "555")
+    api = FakeTelegramAPI()
+    esc = TelegramEscalation(api, [111, 222])
+    esc.notify_system("синк умер", {})
+    chats = [entry[0] for entry in api.sent]
+    assert chats == [111, 222, 555]
+    assert "Системный алерт" in api.sent[0][1]
+
+
+def test_notify_system_without_owner_env(monkeypatch):
+    monkeypatch.delenv("NAVBAT_OWNER_CHAT_ID", raising=False)
+    api = FakeTelegramAPI()
+    esc = TelegramEscalation(api, [111])
+    esc.notify_system("cap исчерпан", {})
+    assert [entry[0] for entry in api.sent] == [111]
+
+
+def test_system_alert_falls_back_to_notify():
+    from navbat.dialog.escalation import system_alert
+    from test_dialog_booking import RecordingNotifier
+
+    notifier = RecordingNotifier()
+    system_alert(notifier, "проблема", {}, chat_id=42)
+    assert notifier.calls == [(42, "проблема")]
