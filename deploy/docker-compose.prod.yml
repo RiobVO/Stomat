@@ -32,6 +32,7 @@ services:
       NAVBAT_ADMIN_DSN: postgresql+psycopg://postgres:${NAVBAT_PG_PASSWORD}@postgres:5432/navbat
       NAVBAT_APP_DSN: postgresql+psycopg://navbat_app:${NAVBAT_APP_PASSWORD}@postgres:5432/navbat
       NAVBAT_CERT_PATH: /etc/letsencrypt/live/${NAVBAT_DOMAIN:-unset}/fullchain.pem
+      NAVBAT_LOG_FORMAT: json
     volumes:
       - letsencrypt:/etc/letsencrypt:ro
     healthcheck:
