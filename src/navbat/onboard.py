@@ -291,10 +291,11 @@ def set_telegram(session_factory, clinic_id: uuid.UUID, token: str,
                  # дальше добавлять/убирать через --add-admin/--remove-admin
                  "tg_admin_chat_ids = CASE WHEN :admin IS NOT NULL "
                  "    THEN ARRAY[:admin]::bigint[] ELSE tg_admin_chat_ids END, "
-                 "tg_webhook_secret = COALESCE(tg_webhook_secret, :secret) "
+                 "tg_webhook_secret_encrypted = "
+                 "    COALESCE(tg_webhook_secret_encrypted, :secret) "
                  "WHERE id = :id"),
             {"token": encrypt_text(token), "admin": admin_chat,
-             "secret": secrets.token_urlsafe(32), "id": clinic_id},
+             "secret": encrypt_text(secrets.token_urlsafe(32)), "id": clinic_id},
         )
     print(f"[OK] токен бота записан для клиники {clinic_id}")
 
