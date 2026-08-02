@@ -12,9 +12,11 @@ from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import Conversation, save_conversation
 from navbat.reminders import ReminderService
 from navbat.retention import cleanup_old_data
+from navbat.telegram import relay_repo
 from navbat.telegram.queue import enqueue
 
 CHAT_OLD, CHAT_NEW = 900, 901
+ADMIN_CHAT = 904
 
 
 def seed(app_session_factory, admin_engine, clinic_a) -> None:
@@ -136,3 +138,26 @@ def test_cleanup_strips_the_kept_dialog_down_to_its_language(
     assert row.fsm_state == "idle" and row.patient_id is None
     with tenant_transaction(app_session_factory, clinic_a) as session:
         assert get_chat_lang(session, chat) == "uz"
+
+
+def test_cleanup_removes_stale_relay_anchors(app_session_factory, admin_engine,
+                                             clinic_a):
+    """Якоря свайп-ответов чистит тот же дневной прогон, что и всё остальное.
+
+    Свой срок, короче общего: якорь нужен, пока жива переписка по эскалации,
+    и 90 дней он копился бы зря. Отдельного планировщика у чистки нет —
+    без вызова из cleanup_old_data якоря не удалял никто."""
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        relay_repo.save_anchor(session, ADMIN_CHAT, 42, CHAT_OLD)
+        relay_repo.save_anchor(session, ADMIN_CHAT, 43, CHAT_NEW)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE admin_relay SET created_at = now() - "
+                          "interval '8 days' WHERE message_id = 42"))
+
+    cleanup_old_data(app_session_factory, clinic_a)
+
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        assert relay_repo.patient_for(session, ADMIN_CHAT, 42) is None, \
+            "якорь недельной давности пережил чистку"
+        assert relay_repo.patient_for(session, ADMIN_CHAT, 43) == CHAT_NEW, \
+            "свежий якорь снесён — админ не ответит на вчерашний алерт"

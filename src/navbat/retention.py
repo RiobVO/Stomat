@@ -1,10 +1,12 @@
 """Retention: чистка PII-носителей старше NAVBAT_RETENTION_DAYS (Ф1.5, D.3).
 
 Чистятся сырые сообщения пациентов (message_queue.payload) в конечных
-статусах и протухшие контексты диалогов (conversation) — включая escalated:
-мёртвый лид старше 90 дней — это PII без операционной ценности. pending
-в очереди не трогаем (подберёт reclaim); записи и аудит — операционная
-история клиники, не чистятся.
+статусах, протухшие контексты диалогов (conversation) — включая escalated:
+мёртвый лид старше 90 дней — это PII без операционной ценности, — вопросы
+без ответа (unanswered_question) и терминальные строки листа ожидания
+(waitlist). Особняком якоря свайп-ответов (admin_relay): у них свой,
+недельный срок. pending в очереди не трогаем (подберёт reclaim); записи
+и аудит — операционная история клиники, не чистятся.
 """
 from __future__ import annotations
 
@@ -16,10 +18,16 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.telegram import relay_repo
 
 log = logging.getLogger("navbat.retention")
 
 RETENTION_DAYS = int(os.environ.get("NAVBAT_RETENTION_DAYS", 90))
+# Якорь свайп-ответа нужен, пока жива переписка по эскалации, — неделя
+# покрывает выходные клиники. Срок отдельный от общего: PII в якоре — только
+# пара chat_id, зато после протухания он лишь мешает (реплай на древний алерт
+# уводит ответ пациенту, который давно ушёл из разговора).
+RELAY_RETENTION_DAYS = 7
 
 _HAS_UPCOMING_VISIT = (
     "EXISTS (SELECT 1 FROM appointment a WHERE a.tg_chat_id = c.tg_chat_id "
@@ -31,8 +39,9 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                      days: int = RETENTION_DAYS) -> tuple[int, int]:
     """Удаляет старые done/failed-сообщения и неактивные диалоги.
 
-    Возвращает (удалено сообщений, удалено диалогов). Идемпотентно —
-    повторный запуск в тот же день безвреден.
+    Возвращает (удалено сообщений, удалено диалогов) — две главные цифры;
+    счётчики остальных чисток идут в лог, ни одному вызывателю они не нужны.
+    Идемпотентно — повторный запуск в тот же день безвреден.
     """
     with tenant_transaction(session_factory, clinic_id) as session:
         messages = session.execute(
@@ -78,8 +87,11 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "AND created_at < now() - make_interval(days => :days)"),
             {"days": days},
         ).rowcount
-    if messages or dialogs or questions or waitlist:
+        relays = relay_repo.cleanup_old(session, RELAY_RETENTION_DAYS)
+    if messages or dialogs or questions or waitlist or relays:
         log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов, "
-                 "%d записей очереди старше %d дней",
-                 messages, dialogs, questions, waitlist, days)
+                 "%d записей очереди старше %d дней; %d якорей свайп-ответа "
+                 "старше %d дней",
+                 messages, dialogs, questions, waitlist, days,
+                 relays, RELAY_RETENTION_DAYS)
     return messages, dialogs
