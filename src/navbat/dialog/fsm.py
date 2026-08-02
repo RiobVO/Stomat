@@ -482,7 +482,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if extraction.is_medical and applicable and not conv.context.medical_shown:
             conv.context.medical_shown = True
             disclaimer = MEDICAL_DISCLAIMER[self._lang(conv)]
-            return Reply(f"{disclaimer}\n\n{reply.text}", reply.buttons)
+            # replace, а не Reply(...): обёртка обязана донести ВСЕ поля
+            # ответа. Ручная сборка теряла button_rows/menu/contact_request —
+            # пациент с жалобой получал дисклеймер без кнопок (ревью 02.08)
+            return replace(reply, text=f"{disclaimer}\n\n{reply.text}")
         return reply
 
     # ── Кнопки (callback-actions) ────────────────────────────────────────
