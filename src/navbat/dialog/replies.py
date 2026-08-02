@@ -292,6 +292,12 @@ TEMPLATES = {
         "uz": "👤 Administratorga uzataman. Klinika hozir yopiq — u sizga "
               "ertalab shu yerda javob beradi.",
     },
+    # ответ живого администратора, пришедший свайпом из админ-чата: подпись
+    # обязательна — иначе пациент читает реплику человека как речь бота
+    "relay_from_admin": {
+        "ru": "👤 Администратор: {text}",
+        "uz": "👤 Administrator: {text}",
+    },
     "confirm_retry": {
         "ru": "Техническая заминка — подтвердить запись не получилось. "
               "Пожалуйста, выберите время ещё раз:",

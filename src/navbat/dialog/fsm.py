@@ -53,7 +53,11 @@ from navbat.dialog.dialog_common import (
     mentions_price_question,
     mentions_symptom,
 )
-from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import (
+    EscalationNotifier,
+    LoggingEscalation,
+    relay_from_patient,
+)
 from navbat.dialog.patients import normalize_phone, phone_to_hash
 from navbat.telegram.admin_texts import Reason
 from navbat.dialog.replies import (
@@ -280,6 +284,11 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
     def _process_text(self, session: Session, conv: Conversation, message: str) -> Reply:
         lang = self._lang(conv)
         if conv.state == "escalated":
+            # заморозка глушит бота, но не пациента: его реплики уходят
+            # карточкой в админ-чат, иначе человек отвечает вслепую на один
+            # только факт «просил администратора». Состояние не трогаем —
+            # это по-прежнему стоп-состояние (NLU не дёргается)
+            relay_from_patient(self._notifier, conv.chat_id, message)
             return self._escalated_reply(conv)
         if conv.state == "awaiting_name":
             # детектор просьбы человека здесь выключен: любой текст может

@@ -33,9 +33,10 @@ from navbat.dialog.escalation import (
 )
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
+from navbat.telegram import relay_repo
 from navbat.telegram.admin_console import AdminConsole, booked_warning
 from navbat.telegram.admin_texts import Reason, at
-from navbat.telegram.api import ChatUnavailableError
+from navbat.telegram.api import ChatUnavailableError, TelegramAPIError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
     QueuedUpdate,
@@ -215,6 +216,15 @@ class UpdateWorker:
                                self._llm_reply(message["text"],
                                                self._admin_lang(chat_id)))
                     return
+                if (chat_id in self._admin_chat_ids
+                        and "reply_to_message" in message):
+                    # свайп-ответ админа пациенту: реплай — однозначное
+                    # «это ответ на ТО сообщение», и в консоль такой текст
+                    # пускать нельзя (посреди ввода цены она приняла бы его
+                    # за значение шага). Слэш-команды выше по коду работают
+                    # и в реплае — аварийный выход остаётся.
+                    self._send(chat_id, self._relay_reply(chat_id, message))
+                    return
                 if chat_id in self._admin_chat_ids:
                     # админ-чат = чистая консоль: владелец НИКОГДА не попадает
                     # в пациентский диалог. Перехват ДО паузы (как /stats) —
@@ -342,6 +352,35 @@ class UpdateWorker:
         if phone:
             return Reply(t("bot_paused_phone", lang, phone=phone))
         return Reply(t("bot_paused", lang))
+
+    def _relay_reply(self, chat_id: int, message: dict) -> Reply:
+        """Ответ администратора пациенту свайпом (reply на алерт или 💬).
+
+        Адресата даёт якорь (admin_relay), а не разбор текста алерта: шаблоны
+        двуязычные и меняются. Якоря нет — реплай на консольное сообщение или
+        на алерт старше ретеншена: угадывать пациента нельзя, админ получает
+        подсказку. Пациенту уходит подписанная реплика, чтобы он отличил
+        живого человека от бота.
+        """
+        lang = self._admin_lang(chat_id)
+        anchor_id = message["reply_to_message"]["message_id"]
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            patient = relay_repo.patient_for(session, chat_id, anchor_id)
+            if patient is None:
+                return Reply(at("relay_no_anchor", lang))
+            # язык пациента, а не админа: ответ читает пациент (как /release)
+            patient_lang = get_chat_lang(session, patient)
+        try:
+            self._send(patient, Reply(t("relay_from_admin", patient_lang,
+                                        text=message["text"])))
+        except TelegramAPIError as e:
+            # включая ChatUnavailableError: пациент заблокировал бота, и админ
+            # обязан узнать об этом здесь — иначе он ждёт реакции на письмо,
+            # которого не было
+            log.error("ответ админа %s пациенту %s не доставлен: %s",
+                      chat_id, patient, e)
+            return Reply(at("relay_failed", lang, error=str(e)))
+        return Reply(at("relay_delivered", lang))
 
     def _release_reply(self, command: str, lang: str = "ru") -> Reply:
         """Снятие эскалации админом: /release <chat_id> (Ф1.5, BRIEF разд. 14.A).

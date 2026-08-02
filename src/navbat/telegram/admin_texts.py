@@ -562,6 +562,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "ru": "⚠ Системный алерт\n{reason}",
         "uz": "⚠ Tizim ogohlantirishi\n{reason}",
     },
+    # реплика замороженного пациента. Тем же plain-каналом, что алерты: текст
+    # пациента чужой, экранировать его под HTML нечем — parse_mode здесь нет
+    "relay_card": {
+        "ru": "💬 Чат {chat}: {text}",
+        "uz": "💬 Chat {chat}: {text}",
+    },
     # «что хотел пациент» в алерте: подписи полей брони. Часть того же экрана,
     # что причина, — значит и язык тот же (остаток по №16)
     "ctx_service": {"ru": "услуга — {value}", "uz": "xizmat — {value}"},
@@ -677,6 +683,17 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "release_ok": {
         "ru": "[OK] эскалация снята: чат {chat}",
         "uz": "[OK] murojaat yopildi: chat {chat}",
+    },
+    # свайп-ответ админа пациенту: подтверждения адресату ответа
+    "relay_delivered": {"ru": "✅ Доставлено", "uz": "✅ Yetkazildi"},
+    "relay_failed": {
+        "ru": "⚠️ Не доставлено: {error}",
+        "uz": "⚠️ Yetkazilmadi: {error}",
+    },
+    "relay_no_anchor": {
+        "ru": "Отвечайте реплаем на алерт эскалации или карточку 💬",
+        "uz": "Eskalatsiya ogohlantirishiga yoki 💬 kartochkaga javob (reply) "
+              "qiling",
     },
     "forget_usage": {
         "ru": "Формат: /forget <chat_id> — анонимизировать пациента",

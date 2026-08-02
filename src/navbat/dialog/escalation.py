@@ -35,6 +35,24 @@ def fyi_alert(notifier, chat_id: int, reason: str, context: dict) -> None:
         notifier.notify(chat_id, reason, context)
 
 
+def relay_from_patient(notifier, chat_id: int, text: str) -> None:
+    """💬 Реплика замороженного пациента в админ-чаты — вход канала ответа.
+
+    Не эскалация: фолбэка на notify() здесь нет (в отличие от fyi_alert) —
+    он повторял бы алерт «пациент просит человека» на каждой реплике, ровно
+    против анти-спама эскалаций. Нотификаторы без канала (LoggingEscalation,
+    фейки) молчат: пациенту это ничего не ломает, он и так заморожен.
+
+    Текст пациента в лог не пишем — это свободная реплика, в ней бывает имя
+    (m1: PII не уходит в логи вместе с эскалацией)."""
+    handler = getattr(notifier, "relay_from_patient", None)
+    if handler is None:
+        log.info("реплика chat=%s не переслана: канал ответа не настроен",
+                 chat_id)
+        return
+    handler(chat_id, text)
+
+
 def ops_alert(notifier, reason: str, context: dict, chat_id: int = 0,
               detail: str | None = None) -> None:
     """Операционный сигнал КЛИНИКЕ (и владельцу системы заодно): бот
