@@ -8,8 +8,11 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date, datetime
+from typing import Callable
 
+from navbat.db.base import tenant_transaction
 from navbat.dialog.replies import service_label
+from navbat.telegram import relay_repo
 from navbat.telegram.admin_texts import (DEFAULT_LANG, Reason,
                                          admin_lang_resolver, plain,
                                          render_reason)
@@ -79,9 +82,14 @@ class TelegramEscalation:
     """Шлёт алерт ВСЕМ админ-чатам клиники (M4). Веер скрыт здесь — вызыватели
     просто зовут notify(), не зная про список."""
 
-    def __init__(self, api, admin_chat_id=None, lang_of=None) -> None:
+    def __init__(self, api, admin_chat_id=None, lang_of=None,
+                 anchor_writer: Callable[[int, int, int], None] | None = None
+                 ) -> None:
         self._api = api
         self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
+        # якорь свайп-ответа (админ-чат, message_id) → пациент; без писателя
+        # (CLI, тесты без БД) канал ответа просто не заводится
+        self._anchor_writer = anchor_writer
         # язык конкретного админ-чата (карта, №16): алерт приходит владельцу
         # на том же языке, на котором он держит консоль. Без резолвера —
         # русский, чтобы CLI и тесты не тянули за собой БД
@@ -105,12 +113,35 @@ class TelegramEscalation:
                             chat=chat_id, reason=_reason_in(reason, lang),
                             context=summarize_context(context, lang))
             try:
-                self._api.send_message(admin_chat, message)
+                sent = self._api.send_message(admin_chat, message)
                 delivered = True
             except TelegramAPIError as e:
                 log.error("эскалация chat=%s не доставлена админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
+                continue
+            self._save_anchor(admin_chat, sent, chat_id)
         return delivered
+
+    def _save_anchor(self, admin_chat: int, sent, patient_chat: int) -> None:
+        """Якорь свайп-ответа на ЭТО сообщение админ-чата.
+
+        Свой message_id на каждую отправку: он уникален внутри чата, один общий
+        увёл бы ответ администратора не тому пациенту. Сбой записи ловим широко
+        и рассылку не роняем — эскалация это сигнал, а не транзакция: потерять
+        «пациент просит человека» хуже, чем потерять свайп-ответ (у админа
+        остаются /release и прямой чат).
+        """
+        if self._anchor_writer is None:
+            return
+        message_id = (sent or {}).get("message_id")
+        if message_id is None:
+            return
+        try:
+            self._anchor_writer(admin_chat, message_id, patient_chat)
+        except Exception as e:  # noqa: BLE001 — алерт важнее якоря
+            log.error("якорь ответа не сохранён (админ %s, сообщение %s, "
+                      "пациент %s): %r", admin_chat, message_id,
+                      patient_chat, e)
 
     def notify_fyi(self, chat_id: int, reason: str, context: dict) -> None:
         """🟡 Информирование владельца: человек не нужен, снимать нечего.
@@ -203,7 +234,18 @@ def build_escalation(tg_api, session_factory, clinic_id,
     Единственная сборка для прода: резолвер легко забыть — standalone-синк
     (`python -m navbat.calendar`) собирал нотификатор сам и рассылал причины
     по-русски даже узбекскому владельцу (ревью). Тесты и CLI без БД создают
-    TelegramEscalation напрямую и получают русский по умолчанию."""
+    TelegramEscalation напрямую и получают русский по умолчанию.
+
+    Здесь же заводится писатель якорей: своей транзакцией, потому что якорь
+    пишется ПОСЛЕ отправки — привязывать его к транзакции вызывающего значило
+    бы откатывать канал ответа из-за постороннего сбоя."""
+    def anchor_writer(admin_chat_id: int, message_id: int,
+                      patient_chat_id: int) -> None:
+        with tenant_transaction(session_factory, clinic_id) as session:
+            relay_repo.save_anchor(session, admin_chat_id, message_id,
+                                   patient_chat_id)
+
     return TelegramEscalation(tg_api, admin_chat_ids,
                               lang_of=admin_lang_resolver(session_factory,
-                                                          clinic_id))
+                                                          clinic_id),
+                              anchor_writer=anchor_writer)
