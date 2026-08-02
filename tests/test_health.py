@@ -125,6 +125,20 @@ def test_expiring_cert_degrades(app_session_factory, clinic_a, tmp_path):
     assert checks["cert_days_left"] <= CERT_WARN_DAYS - 5
 
 
+def test_expiring_cert_alerts_owner_once_per_day(app_session_factory, clinic_a,
+                                                 tmp_path):
+    from test_dialog_booking import RecordingNotifier
+
+    cert = _selfsigned(tmp_path, CERT_WARN_DAYS - 5)
+    notifier = RecordingNotifier()
+    checker = HealthChecker(app_session_factory, clinic_a, cert_path=cert,
+                            notifier=notifier)
+    checker.snapshot()
+    checker.snapshot()  # тот же день — без повтора
+    assert len(notifier.calls) == 1
+    assert "cert" in notifier.calls[0][1].lower()
+
+
 def test_p95_reported_in_health(app_session_factory, admin_engine, clinic_a):
     with admin_engine.begin() as conn:
         conn.execute(text(

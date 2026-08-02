@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog.escalation import system_alert
 
 log = logging.getLogger("navbat.health")
 
@@ -43,11 +44,13 @@ class HealthChecker:
 
     def __init__(self, session_factory: sessionmaker[Session],
                  clinic_id: uuid.UUID, *, sync_interval_sec: int = 60,
-                 cert_path: str | None = None) -> None:
+                 cert_path: str | None = None, notifier=None) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._sync_interval_sec = sync_interval_sec
         self._cert_path = cert_path
+        self._notifier = notifier
+        self._cert_alerted_on: date | None = None  # алерт раз в день
 
     def snapshot(self, light: bool = False) -> tuple[bool, dict]:
         checks: dict = {}
@@ -107,6 +110,14 @@ class HealthChecker:
             checks["cert_days_left"] = "missing"
             return True
         checks["cert_days_left"] = days
+        if days < CERT_WARN_DAYS and self._notifier is not None:
+            today = datetime.now(timezone.utc).date()
+            if self._cert_alerted_on != today:
+                self._cert_alerted_on = today
+                system_alert(
+                    self._notifier,
+                    f"TLS-cert истекает через {days} дн. — проверьте certbot "
+                    f"(renewal каждые 12 ч в compose)", {})
         return days >= CERT_WARN_DAYS
 
     def _report_llm(self, checks: dict) -> None:

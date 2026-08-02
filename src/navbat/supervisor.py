@@ -288,7 +288,8 @@ def main() -> int:
     health = HealthServer(
         HealthChecker(session_factory, args.clinic,
                       sync_interval_sec=args.sync_interval,
-                      cert_path=os.environ.get("NAVBAT_CERT_PATH")),
+                      cert_path=os.environ.get("NAVBAT_CERT_PATH"),
+                      notifier=notifier),
         port=args.health_port)
     health.start()
 
