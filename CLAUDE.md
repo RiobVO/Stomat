@@ -56,14 +56,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   не тронут (5 фикстур), добавлен create_patient_with_hash. PRIVACY.md
   разд. 7/9 синхронизированы. Серия 8/8 зелёная, демо восстановлено,
   --check [OK], CI зелёный. Тестов 549.
-- СЛЕДУЮЩИЙ ШАГ: обязательной инженерной работы НЕТ. Открыто только
-  гейтящееся решением/деньгами/носителем: глубокий узбекский (ЖИВОЙ
-  носитель — UZ_STRINGS.md готов под это; машинно не дожимать), m2
-  (book↔question — реальный сет с пилота), m4 (граница «вечера» — product),
-  P4 T1/T2 (платные LLM-прогоны). Ждать явной команды (новая задача /
-  пилот Ф2 / группа C). Рискованные intent-бэкстопы M7 (отмена/симптом) —
-  тоже на пилот (класс m2).
-- Группа C, пилот Ф2, платные прогоны — строго по явной команде.
+- 10.06.2026 ГРУППА C ЗАПУЩЕНА ПО ЯВНОЙ КОМАНДЕ пользователя («сделать
+  production-ready»). Спека одобрена: docs/superpowers/specs/
+  2026-06-10-group-c-deploy-ops-design.md (ресурсов нет → provider-agnostic,
+  stdlib-минимализм, всё проверяется локально в Docker). Решение: после
+  группы C — батч «витрина для покупателя» (демо-показ, /stats глазами
+  владельца). Планы по инкрементам: docs/superpowers/plans/2026-06-10-*.
+- ЗАКРЫТЫ C-1…C-4 (всё в origin/master, по плану на инкремент, TDD):
+  C-1 контейнеризация — Dockerfile (editable: parents[3]/spike_nlu!),
+  entrypoint с alembic upgrade, SIGTERM graceful, validate_real_env,
+  deploy/docker-compose.prod.yml, smoke на чистом томе (ExitCode=0);
+  C-2 публичная поверхность — nginx+certbot (profile web), шифрование
+  tg_webhook_secret (0012, backfill проверен round-trip), ensure_webhook
+  c retry+алертом, /health (db/queue/calendar/cert/llm-ключи; БЕЗ живого
+  LLM-пинга — деньги), clinic.gcal_last_sync_at (0011), webhook-режим
+  супервизора, app healthcheck → healthy;
+  C-3 наблюдаемость — JSON-логи (NAVBAT_LOG_FORMAT, logging_setup.py),
+  p95 ответа (0013 completed_at; /stats+дайджест+health), канал владельца
+  NAVBAT_OWNER_CHAT_ID (notify_system + system_alert c фолбэком для фейков),
+  дневной cert-алерт;
+  C-4 kill-switch — 0014 (bot_paused, llm_enabled), /pause /resume /llm,
+  GatedExtractor → LLMDisabledError → меню БЕЗ эскалации, глобальный
+  NAVBAT_LLM_DISABLED, docs/OPERATIONS.md. Тестов 594, --check [OK].
+- СЛЕДУЮЩИЙ ШАГ: исполнить план C-5 (бэкапы: WAL-архив + sidecar +
+  ЖИВОЙ restore-прогон с RTO) — план docs/superpowers/plans/
+  2026-06-10-group-c5-backups.md уже написан. Затем C-6 (GCal watch +
+  мгновенный алерт OAuth-refresh), затем C-7 финал: docs/DEPLOY.md
+  («голый VPS → клиника»), smoke, чекбоксы BRIEF разд. 14 группы C,
+  серия 8/8, обновить этот якорь. Рабочие заметки: Docker Desktop может
+  быть выключен — стартануть и ждать демона; deploy/.env сгенерирован
+  локально (gitignored, tg-токен скопирован из корневого .env);
+  .recon_group_c.md в корне — рабочий артефакт, не коммитить; pytest
+  стирает демо-клинику — восстанавливать onboard --demo в конце инкремента.
+- На стороне пользователя (когда решит): VPS+домен, S3-хранилище,
+  верификация Google-приложения, NAVBAT_OWNER_CHAT_ID. Платные прогоны
+  (P4 T1/T2), глубокий узбекский (носитель), m2/m4 — гейты прежние.
+- Пилот Ф2 — строго по явной команде.
 - Эту секцию ОБНОВЛЯТЬ в конце каждой сессии: где остановились + следующий
   шаг. Это якорь преемственности между чатами.
 
