@@ -31,6 +31,11 @@ class ExtractionError(Exception):
     """Невалидный/пустой ответ NLU — после repair-попыток или вне фикстур."""
 
 
+class LLMDisabledError(ExtractionError):
+    """LLM выключен рубильником (/llm off или NAVBAT_LLM_DISABLED) —
+    это режим, не сбой: FSM отвечает меню без счётчика сбоев."""
+
+
 class ProviderDownError(Exception):
     """Провайдер LLM недоступен (сеть/таймаут/HTTP) — повод для fallback.
 

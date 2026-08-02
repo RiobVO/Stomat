@@ -48,7 +48,7 @@ from navbat.dialog.replies import (
 )
 from navbat.dialog.reschedule_flow import _RescheduleFlowMixin
 from navbat.dialog.shared_helpers import _SharedHelpersMixin
-from navbat.nlu.extractor import ExtractionError, Extractor
+from navbat.nlu.extractor import ExtractionError, Extractor, LLMDisabledError
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import AppointmentNotFoundError
@@ -230,6 +230,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
         try:
             extraction = self._extractor.extract(message)
+        except LLMDisabledError:
+            # рубильник /llm off: свободный текст без NLU — мягко в кнопки,
+            # счётчик сбоев не трогаем (это режим, не сбой)
+            return Reply(t("llm_off_menu", lang), menu=menu_rows(lang))
         except ExtractionError:
             return self._on_nlu_failure(conv)
         conv.context.nlu_failures = 0
