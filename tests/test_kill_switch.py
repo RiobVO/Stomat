@@ -104,3 +104,43 @@ def test_paused_bot_still_serves_admin_commands(app_session_factory,
     worker.process_one()
     assert len(api.sent) == 1
     assert "Сводка" in api.sent[0][1]
+
+
+# ── Админ-команды рубильников ────────────────────────────────────────────────
+
+def test_pause_and_resume_commands(app_session_factory, admin_engine, clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, script=[],
+                                 admin_chat_id=ADMIN)
+    put_message(app_session_factory, clinic_a, "/pause ремонт кабинета",
+                chat_id=ADMIN)
+    worker.process_one()
+    assert _flag(admin_engine, clinic_a, "bot_paused") is True
+    assert "[OK]" in api.sent[-1][1] and "ремонт кабинета" in api.sent[-1][1]
+
+    put_message(app_session_factory, clinic_a, "/resume", chat_id=ADMIN)
+    worker.process_one()
+    assert _flag(admin_engine, clinic_a, "bot_paused") is False
+
+
+def test_llm_toggle_commands(app_session_factory, admin_engine, clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, script=[],
+                                 admin_chat_id=ADMIN)
+    put_message(app_session_factory, clinic_a, "/llm off", chat_id=ADMIN)
+    worker.process_one()
+    assert _flag(admin_engine, clinic_a, "llm_enabled") is False
+
+    put_message(app_session_factory, clinic_a, "/llm on", chat_id=ADMIN)
+    worker.process_one()
+    assert _flag(admin_engine, clinic_a, "llm_enabled") is True
+
+    put_message(app_session_factory, clinic_a, "/llm", chat_id=ADMIN)
+    worker.process_one()
+    assert "Формат" in api.sent[-1][1]  # подсказка формата
+
+
+def test_pause_requires_admin(app_session_factory, admin_engine, clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a,
+                                 script=[extr("other")], admin_chat_id=ADMIN)
+    put_message(app_session_factory, clinic_a, "/pause")  # пациентский чат
+    worker.process_one()
+    assert _flag(admin_engine, clinic_a, "bot_paused") is False  # не сработала
