@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from navbat.db.base import tenant_transaction
 from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.replies import TEMPLATES
 from navbat.nlu.extractor import FakeExtractor, LLMDisabledError
 from navbat.nlu.wrappers import GatedExtractor
 from test_dialog_booking import CHAT, RecordingNotifier, extr
@@ -93,6 +94,37 @@ def test_paused_bot_replies_politely_without_dialog(app_session_factory,
     assert len(api.sent) == 1
     assert "приостановлена" in api.sent[0][1]
     assert notifier.calls == []  # пауза не плодит эскалаций
+
+
+def _set_phone(admin_engine, clinic_id, phone):
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET phone = :p WHERE id = :c"),
+                     {"p": phone, "c": clinic_id})
+
+
+def test_paused_bot_gives_the_clinic_phone(app_session_factory, admin_engine,
+                                           clinic_a):
+    """«Позвоните в клинику» без номера — тупик: паузу включают ровно тогда,
+    когда пациенту нужен живой телефон, а он у клиники уже есть."""
+    _pause(admin_engine, clinic_a)
+    _set_phone(admin_engine, clinic_a, "+998 71 200-00-00")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, script=[])
+    put_message(app_session_factory, clinic_a, "хочу записаться")
+    worker.process_one()
+
+    assert "+998 71 200-00-00" in api.sent[0][1]
+
+
+def test_paused_bot_without_phone_keeps_the_old_text(app_session_factory,
+                                                     admin_engine, clinic_a):
+    """Телефон не задан (онбординг без --phone) — прежний текст; «None»
+    в сообщении пациенту недопустим."""
+    _pause(admin_engine, clinic_a)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, script=[])
+    put_message(app_session_factory, clinic_a, "хочу записаться")
+    worker.process_one()
+
+    assert api.sent[0][1] == TEMPLATES["bot_paused"]["ru"]
 
 
 def test_paused_bot_still_serves_admin_commands(app_session_factory,

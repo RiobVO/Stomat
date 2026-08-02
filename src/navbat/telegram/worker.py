@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog import clinic_repo
 from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import (
     EscalationNotifier,
@@ -335,6 +336,11 @@ class UpdateWorker:
     def _paused_reply(self, chat_id: int) -> Reply:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             lang = get_chat_lang(session, chat_id)
+            # на паузе телефон — единственный оставшийся у пациента путь;
+            # не задан (онбординг без --phone) — прежний текст без номера
+            phone = clinic_repo.clinic_phone(session)
+        if phone:
+            return Reply(t("bot_paused_phone", lang, phone=phone))
         return Reply(t("bot_paused", lang))
 
     def _release_reply(self, command: str, lang: str = "ru") -> Reply:
