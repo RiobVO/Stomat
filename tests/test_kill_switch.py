@@ -74,3 +74,33 @@ def test_llm_off_free_text_gets_menu_without_failure_count(app_session_factory,
             "SELECT fsm_state FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).scalar_one()
     assert state != "escalated"
+
+
+# ── Пауза бота: гейт воркера ─────────────────────────────────────────────────
+
+def _pause(admin_engine, clinic_id, value=True):
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET bot_paused = :v WHERE id = :c"),
+                     {"v": value, "c": clinic_id})
+
+
+def test_paused_bot_replies_politely_without_dialog(app_session_factory,
+                                                    admin_engine, clinic_a):
+    _pause(admin_engine, clinic_a)
+    worker, api, notifier = make_worker(app_session_factory, clinic_a, script=[])
+    put_message(app_session_factory, clinic_a, "хочу записаться")
+    assert worker.process_one() is True
+    assert len(api.sent) == 1
+    assert "приостановлена" in api.sent[0][1]
+    assert notifier.calls == []  # пауза не плодит эскалаций
+
+
+def test_paused_bot_still_serves_admin_commands(app_session_factory,
+                                                admin_engine, clinic_a):
+    _pause(admin_engine, clinic_a)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, script=[],
+                                 admin_chat_id=ADMIN)
+    put_message(app_session_factory, clinic_a, "/stats", chat_id=ADMIN)
+    worker.process_one()
+    assert len(api.sent) == 1
+    assert "Сводка" in api.sent[0][1]
