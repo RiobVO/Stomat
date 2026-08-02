@@ -609,6 +609,29 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `stats_usage` | Формат: /stats — за сегодня, /stats 7 — за неделю или /stats 30 | **Format: /stats — bugun uchun, /stats 7 — hafta uchun yoki /stats 30** | |
 | `btn_period` | {days} дней | **{days} kun** | |
 | `btn_period_today` | 📅 День | **📅 Bugun** | |
+### Лента записей, экран «Сегодня» и утренняя сводка
+
+Карточка приходит владельцу в момент события (запись, отмена, перенос),
+экран «Сегодня» показывает весь день списком, утренняя сводка приносит его
+в 08:30 сама. Пометка 🌙 — запись сделана вне рабочих часов (бот работал,
+пока клиника спала). `{patient}`, `{doctor}` — имена людей, `{phone}` —
+номер цифрами, `{when}` — дата и время `08.06 15:30`, `{time}` — часы
+`15:30`, `{date}` — дата `08.06`.
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `feed_booked` | ✅ Запись: {patient}, {service}, {when}, {doctor}{night} | **✅ Yozuv: {patient}, {service}, {when}, {doctor}{night}** | |
+| `feed_cancelled` | ❌ Отмена: {patient}, {service}, {when}, {doctor}{night} | **❌ Bekor qilindi: {patient}, {service}, {when}, {doctor}{night}** | |
+| `feed_resched` | 🔄 Перенос: {patient}, {service} → {when}, {doctor}{night} | **🔄 Ko'chirildi: {patient}, {service} → {when}, {doctor}{night}** | |
+| `feed_no_name` | без имени | **ismsiz** | |
+| `feed_no_service` | приём | **qabul** | |
+| `btn_today_list` | 📅 Сегодня | **📅 Bugun** | |
+| `btn_today_refresh` | 🔄 Обновить | **🔄 Yangilash** | |
+| `today_header` | 📅 <b>Сегодня, {date}</b> — приёмов: {count} | **📅 <b>Bugun, {date}</b> — qabullar: {count}** | |
+| `today_line` | {time} {patient} ({phone}) — {service}, {doctor} | **{time} {patient} ({phone}) — {service}, {doctor}** | |
+| `today_empty` | 📅 Сегодня записей нет | **📅 Bugun yozuvlar yo'q** | |
+| `today_no_phone` | без телефона | **telefonsiz** | |
+| `morning_header` | ☀️ <b>Доброе утро!</b> | **☀️ <b>Xayrli tong!</b>** | |
 ### Команды администратора
 
 | Ключ | Русский | Узбекский (черновик) | Правка |

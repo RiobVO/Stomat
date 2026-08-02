@@ -242,6 +242,12 @@ class AdminConsole:
             self._clear_pending(chat_id)
             self._worker._send(chat_id, self.main_menu(chat_id))
             return
+        if body == "today":
+            # «Обновить» перерисовывает день на месте: экран висит в чате
+            # часами, а записи за это время приходят и отменяются
+            self._edit_or_send(chat_id, message_id,
+                               self._worker._today_reply(lang=self._lang(chat_id)))
+            return
         kind, _, arg = body.partition(":")
         if body == "services" or kind == "services":
             r = self._services_menu(self._lang(chat_id))
@@ -291,8 +297,9 @@ class AdminConsole:
         pause_btn = at("btn_resume" if paused else "btn_pause", lang)
         rows = ((at("btn_services", lang), at("btn_doctors", lang)),
                 (at("btn_about", lang), at("btn_dayoff", lang)),
-                (at("btn_stats", lang), at("btn_preview", lang)),
-                (at("btn_lang", lang), pause_btn))
+                (at("btn_today_list", lang), at("btn_stats", lang)),
+                (at("btn_preview", lang), at("btn_lang", lang)),
+                (pause_btn,))
         head = at("console_paused", lang) if paused else ""
         return Reply(f"{head}{at('console_title', lang)}", menu=rows)
 
@@ -308,6 +315,8 @@ class AdminConsole:
             return self._faq_menu(lang)
         if key == "btn_dayoff":
             return self._dayoff_menu(lang)
+        if key == "btn_today_list":
+            return self._worker._today_reply(lang=lang)
         if key == "btn_stats":
             return self._worker._stats_reply(lang=lang)
         if key == "btn_lang":

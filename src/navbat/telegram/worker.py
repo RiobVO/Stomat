@@ -45,6 +45,7 @@ from navbat.telegram.queue import (
     fail,
     reclaim_stale,
 )
+from navbat.telegram.today_view import render_today
 
 log = logging.getLogger("navbat.telegram")
 
@@ -175,6 +176,11 @@ class UpdateWorker:
                     self._send(chat_id,
                                self._stats_reply(message["text"],
                                                  self._admin_lang(chat_id)))
+                    return
+                if (message["text"].split()[:1] == ["/today"]
+                        and chat_id in self._admin_chat_ids):
+                    self._send(chat_id,
+                               self._today_reply(self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/release"]
                         and chat_id in self._admin_chat_ids):
@@ -574,6 +580,18 @@ class UpdateWorker:
         # склейка, а не подстановка: at() внутри at() экранировал бы
         # причину дважды и показывал «&lt;ремонт&gt;» (ревью, дефект 5)
         return at("dayoff_usage", lang) + "\n" + upcoming
+
+    def _today_reply(self, lang: str = "ru") -> Reply:
+        """Экран «Сегодня»: приёмы дня клиники (/today и кнопка консоли).
+
+        Кнопка обновления несёт сырой adm:today (мимо tg_actions, как
+        stats:): экран висит в чате часами, а карта кнопок одна на чат и
+        перезаписывается любой следующей отправкой."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+            body = render_today(session, lang, tz)
+        return Reply(body, button_rows=(
+            (Button(at("btn_today_refresh", lang), "adm:today"),),))
 
     def _stats_reply(self, command: str = "/stats", lang: str = "ru") -> Reply:
         """Сводка владельца (П-6): /stats — день, /stats 7|30 — период."""
