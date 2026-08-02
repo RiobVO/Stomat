@@ -14,6 +14,7 @@ from navbat.dialog import appointments_repo, clinic_repo
 from navbat.dialog.conversation import Conversation, DialogContext
 from navbat.dialog.dates import resolve_date_ref
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY, _looks_like_question
+from navbat.dialog.escalation import booking_feed
 from navbat.dialog.patients import create_patient_with_hash, find_patient_by_chat
 from navbat.dialog.replies import (
     Button, Reply, card_lines, menu_rows, service_label, t)
@@ -230,4 +231,8 @@ class _BookingFlowMixin:
                                      clinic_repo.clinic_address(session))))
         self._clear_booking(conv)
         conv.state = "idle"
+        # запись состоялась — карточка владельцу прямо сейчас. Только здесь:
+        # откаты hold'а выше (слот занят календарём, сбой confirm) для клиники
+        # не события, а внутренняя кухня бота
+        booking_feed(self._notifier, session, appointment_id, "booked")
         return reply

@@ -14,11 +14,15 @@ from navbat.db.base import tenant_transaction
 from navbat.dialog.replies import service_label
 from navbat.telegram import relay_repo
 from navbat.telegram.admin_texts import (DEFAULT_LANG, Reason,
-                                         admin_lang_resolver, plain,
+                                         admin_lang_resolver, at, plain,
                                          render_reason)
 from navbat.telegram.api import TelegramAPIError
 
 log = logging.getLogger("navbat.escalation")
+
+# пометка «записано вне рабочих часов» в карточке ленты: эмодзи одинаково
+# читается на обоих языках, поэтому живёт в коде, а не в шаблонах
+NIGHT_MARK = " 🌙"
 
 
 def _as_chat_tuple(value) -> tuple[int, ...]:
@@ -187,6 +191,42 @@ class TelegramEscalation:
             except TelegramAPIError as e:
                 log.error("FYI chat=%s не доставлен админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
+
+    def booking_event(self, kind: str, card, when: str,
+                      night: bool = False) -> None:
+        """Карточка ленты (✅/❌/🔄) всем админ-чатам в момент события.
+
+        Не алерт и не FYI: реагировать не нужно, это витрина работы бота для
+        клиники без Google Calendar. Якорь свайп-ответа не пишется — карточка
+        не канал разговора с пациентом (в отличие от 💬-реплики).
+
+        Уходит с parse_mode=HTML: подстановки экранирует at(), а имя пациента
+        приходит из БД и голым «<» ломало бы парсер Telegram.
+        """
+        if not self._admin_chat_ids:
+            log.info("лента: карточка %s не отправлена (админ-чаты не заданы)",
+                     kind)
+            return
+        for admin_chat in self._admin_chat_ids:
+            lang = self._lang_of(admin_chat)
+            message = at(
+                f"feed_{kind}", lang,
+                patient=card.patient_name or at("feed_no_name", lang),
+                service=(service_label(card.service_key, lang)
+                         if card.service_key else at("feed_no_service", lang)),
+                when=when,
+                # врач без имени — штатное состояние каталога (onboard без
+                # --doctor): та же заглушка, что в консоли
+                doctor=card.doctor_name or at("doc_noname", lang),
+                night=NIGHT_MARK if night else "",
+            )
+            try:
+                self._api.send_message(admin_chat, message, parse_mode="HTML")
+            except TelegramAPIError as e:
+                # остальным получателям карточка всё равно нужна (паттерн
+                # notify_fyi): сбой одного чата не гасит рассылку
+                log.error("лента: карточка %s не доставлена админу %s: %s",
+                          kind, admin_chat, e)
 
     def notify_ops(self, reason: str, context: dict,
                    detail: str | None = None) -> None:

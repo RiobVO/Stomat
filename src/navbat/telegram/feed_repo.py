@@ -1,0 +1,99 @@
+"""Данные карточки ленты записей — один запрос по appointment_id.
+
+Лента шлёт владельцу карточку в момент события (запись, отмена, перенос).
+Собирать её обязан ОДИН слой: точки события живут в диалоге, напоминаниях и
+календарном синке, и знать про шифрование имён, рабочие часы клиники и
+статус привязки пациента им незачем. Функции работают внутри
+tenant_transaction (RLS по clinic_id).
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from navbat.crypto import decrypt_text
+from navbat.dialog import clinic_repo, doctors_repo
+from navbat.scheduling.calendar_rules import outside_open_hours
+
+
+@dataclass(frozen=True)
+class Card:
+    """Запись глазами владельца: кто, к кому, когда и в каком состоянии."""
+
+    start: datetime
+    service_key: str | None      # canonical-ключ услуги; NULL у записи без услуги
+    doctor_name: str | None
+    patient_name: str | None     # None — пациент не назвался (запись с улицы, /forget)
+    patient_phone: str | None
+    tg_chat_id: int | None
+    created_at: datetime
+    status: str
+
+
+def appointment_card(session: Session, appointment_id: uuid.UUID | str
+                     ) -> Card | None:
+    """Данные карточки по записи; None — записи уже нет.
+
+    Имя врача, имя и телефон пациента расшифровываются здесь же: админ-чат —
+    тот же доверенный канал, что событие календаря врача (docs/PRIVACY.md),
+    и владельцу нужен не хэш, а человек, которому можно позвонить.
+
+    Пациент ищется по patient_id, а при пустом — по чату записи: привязка
+    пациента к записи идёт ОТДЕЛЬНОЙ транзакцией уже после confirm
+    (booking_flow: транзакция движка держит ту же строку), и первая запись
+    нового пациента иначе уходила бы владельцу «без имени».
+    """
+    row = session.execute(
+        text("""
+            SELECT lower(a.time_range) AS start, a.created_at, a.status,
+                   a.tg_chat_id, s.name AS service,
+                   d.name_encrypted AS doctor_encrypted,
+                   p.name_encrypted AS patient_encrypted, p.phone_encrypted
+            FROM appointment a
+            LEFT JOIN service s ON s.id = a.service_id
+            LEFT JOIN doctor d ON d.id = a.doctor_id
+            LEFT JOIN LATERAL (
+                SELECT pt.name_encrypted, pt.phone_encrypted
+                FROM patient pt
+                WHERE pt.id = a.patient_id
+                   OR (a.patient_id IS NULL
+                       AND pt.tg_chat_id = a.tg_chat_id)
+                ORDER BY pt.id
+                LIMIT 1
+            ) p ON true
+            WHERE a.id = CAST(:id AS uuid)
+        """),
+        {"id": str(appointment_id)},
+    ).one_or_none()
+    if row is None:
+        return None
+    return Card(
+        start=row.start,
+        service_key=row.service,
+        doctor_name=_decrypted(row.doctor_encrypted),
+        patient_name=_decrypted(row.patient_encrypted),
+        patient_phone=_decrypted(row.phone_encrypted),
+        tg_chat_id=row.tg_chat_id,
+        created_at=row.created_at,
+        status=row.status,
+    )
+
+
+def is_after_hours(session: Session, moment: datetime, tz: ZoneInfo) -> bool:
+    """Момент вне рабочего окна клиники — пометка 🌙 у карточки.
+
+    Тот же предикат, что считает after_hours_booked в /stats: «бот записал,
+    пока клиника спала» в ленте и в сводке обязано означать одно и то же.
+    """
+    day = moment.astimezone(tz).date()
+    return outside_open_hours(moment, doctors_repo.working_intervals(session),
+                              clinic_repo.holidays_on(session, day), tz)
+
+
+def _decrypted(value: str | None) -> str | None:
+    return decrypt_text(value) if value else None
