@@ -1,4 +1,4 @@
-# C-4 Kill-switch — Implementation Plan
+﻿# C-4 Kill-switch — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -27,7 +27,7 @@
 - Create: `migrations/versions/0014_kill_switch.py`, `tests/test_kill_switch.py`
 - Modify: `src/navbat/nlu/extractor.py`, `src/navbat/nlu/wrappers.py`, `src/navbat/dialog/fsm.py`, `src/navbat/dialog/replies.py`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_kill_switch.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_kill_switch.py`:
 
 ```python
 """Kill-switch (C-4): /pause, /llm off, глобальный env-рубильник.
@@ -108,9 +108,9 @@ def test_llm_off_free_text_gets_menu_without_failure_count(app_session_factory,
     assert state != "escalated"
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_kill_switch.py -q` → FAIL (нет LLMDisabledError / колонок)
+- [x] **Step 2: Run** `python -m pytest tests/test_kill_switch.py -q` → FAIL (нет LLMDisabledError / колонок)
 
-- [ ] **Step 3: Migration `0014_kill_switch.py`**:
+- [x] **Step 3: Migration `0014_kill_switch.py`**:
 
 ```python
 """C-4: kill-switch — пауза бота и выключение LLM на клинику.
@@ -141,7 +141,7 @@ def downgrade() -> None:
     op.execute("ALTER TABLE clinic DROP COLUMN IF EXISTS llm_enabled")
 ```
 
-- [ ] **Step 4: Код.**
+- [x] **Step 4: Код.**
 
 `nlu/extractor.py` — рядом с ExtractionError:
 
@@ -200,9 +200,9 @@ class GatedExtractor:
     },
 ```
 
-- [ ] **Step 5: Run** `python -m pytest tests/test_kill_switch.py tests/test_replies_uz.py -q` → PASS
+- [x] **Step 5: Run** `python -m pytest tests/test_kill_switch.py tests/test_replies_uz.py -q` → PASS
 
-- [ ] **Step 6: Commit** `feat(ops): llm kill-switch - GatedExtractor + soft menu path`
+- [x] **Step 6: Commit** `feat(ops): llm kill-switch - GatedExtractor + soft menu path`
 
 ---
 
@@ -212,7 +212,7 @@ class GatedExtractor:
 - Modify: `src/navbat/telegram/worker.py`, `src/navbat/dialog/replies.py`
 - Test: `tests/test_kill_switch.py`
 
-- [ ] **Step 1: Write the failing tests** (в конец test_kill_switch.py):
+- [x] **Step 1: Write the failing tests** (в конец test_kill_switch.py):
 
 ```python
 # ── Пауза бота: гейт воркера ─────────────────────────────────────────────────
@@ -245,9 +245,9 @@ def test_paused_bot_still_serves_admin_commands(app_session_factory,
     assert "Сводка" in api.sent[0][1]
 ```
 
-- [ ] **Step 2: Run** → FAIL (пациент получает обычный диалог)
+- [x] **Step 2: Run** → FAIL (пациент получает обычный диалог)
 
-- [ ] **Step 3: Код.** `worker.py` — в `_handle`, в ветке `"message"` ПОСЛЕ блока админ-команд (все `if ... in self._admin_chat_ids` идут первыми) и в ветке `callback_query`/`contact` ДО обработки — добавить гейт. Конкретно: вынести проверку в метод:
+- [x] **Step 3: Код.** `worker.py` — в `_handle`, в ветке `"message"` ПОСЛЕ блока админ-команд (все `if ... in self._admin_chat_ids` идут первыми) и в ветке `callback_query`/`contact` ДО обработки — добавить гейт. Конкретно: вынести проверку в метод:
 
 ```python
     def _bot_paused(self) -> bool:
@@ -295,9 +295,9 @@ def test_paused_bot_still_serves_admin_commands(app_session_factory,
     },
 ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_kill_switch.py tests/test_tg_worker.py tests/test_replies_uz.py -q` → PASS
+- [x] **Step 4: Run** `python -m pytest tests/test_kill_switch.py tests/test_tg_worker.py tests/test_replies_uz.py -q` → PASS
 
-- [ ] **Step 5: Commit** `feat(ops): bot pause gate in worker - polite reply, admin commands alive`
+- [x] **Step 5: Commit** `feat(ops): bot pause gate in worker - polite reply, admin commands alive`
 
 ---
 
@@ -307,7 +307,7 @@ def test_paused_bot_still_serves_admin_commands(app_session_factory,
 - Modify: `src/navbat/telegram/worker.py`
 - Test: `tests/test_kill_switch.py`
 
-- [ ] **Step 1: Write the failing tests**:
+- [x] **Step 1: Write the failing tests**:
 
 ```python
 # ── Админ-команды рубильников ────────────────────────────────────────────────
@@ -350,9 +350,9 @@ def test_pause_requires_admin(app_session_factory, admin_engine, clinic_a):
     assert _flag(admin_engine, clinic_a, "bot_paused") is False  # не сработала
 ```
 
-- [ ] **Step 2: Run** → FAIL
+- [x] **Step 2: Run** → FAIL
 
-- [ ] **Step 3: Код** — worker._handle, после `/forget`-блока, тем же паттерном:
+- [x] **Step 3: Код** — worker._handle, после `/forget`-блока, тем же паттерном:
 
 ```python
                 if (message["text"].split()[:1] == ["/pause"]
@@ -405,9 +405,9 @@ def test_pause_requires_admin(app_session_factory, admin_engine, clinic_a):
         return Reply("Формат: /llm on | /llm off")
 ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_kill_switch.py -q` → PASS (все 9)
+- [x] **Step 4: Run** `python -m pytest tests/test_kill_switch.py -q` → PASS (все 9)
 
-- [ ] **Step 5: Commit** `feat(ops): /pause /resume /llm admin commands`
+- [x] **Step 5: Commit** `feat(ops): /pause /resume /llm admin commands`
 
 ---
 
@@ -417,7 +417,7 @@ def test_pause_requires_admin(app_session_factory, admin_engine, clinic_a):
 - Modify: `src/navbat/telegram/app.py` (build_dialog_extractor), `deploy/.env.example`
 - Create: `docs/OPERATIONS.md`
 
-- [ ] **Step 1: Проводка** — `build_dialog_extractor` оборачивает ОБА пути (fake и real):
+- [x] **Step 1: Проводка** — `build_dialog_extractor` оборачивает ОБА пути (fake и real):
 
 ```python
 def build_dialog_extractor(use_real: bool, session_factory, clinic_id, notifier):
@@ -434,29 +434,29 @@ def build_dialog_extractor(use_real: bool, session_factory, clinic_id, notifier)
 
 (точная вставка: обернуть оба return; лог-строки не трогать).
 
-- [ ] **Step 2: `docs/OPERATIONS.md`** — раздел «Рубильники» (полный текст в файле): /pause-/resume (что видит пациент, что продолжает работать — напоминания), /llm on|off (мягкий режим), глобальный LLM-рубильник (`NAVBAT_LLM_DISABLED=1` в deploy/.env + `docker compose -f docker-compose.prod.yml restart app`), полная остановка (`docker compose ... stop app` — очередь durable, апдейты Telegram доживут до старта), и таблица «симптом → действие». Плюс заглушка-раздел «Restore из бэкапа» со ссылкой «появится в C-5».
+- [x] **Step 2: `docs/OPERATIONS.md`** — раздел «Рубильники» (полный текст в файле): /pause-/resume (что видит пациент, что продолжает работать — напоминания), /llm on|off (мягкий режим), глобальный LLM-рубильник (`NAVBAT_LLM_DISABLED=1` в deploy/.env + `docker compose -f docker-compose.prod.yml restart app`), полная остановка (`docker compose ... stop app` — очередь durable, апдейты Telegram доживут до старта), и таблица «симптом → действие». Плюс заглушка-раздел «Restore из бэкапа» со ссылкой «появится в C-5».
 
-- [ ] **Step 3: `.env.example`** — в секцию владельца добавить:
+- [x] **Step 3: `.env.example`** — в секцию владельца добавить:
 
 ```sh
 # Глобальный рубильник LLM (1 = выключен; рестарт app обязателен)
 # NAVBAT_LLM_DISABLED=
 ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_kill_switch.py tests/test_tg_app.py tests/test_telegram_real_path.py -q` → PASS
+- [x] **Step 4: Run** `python -m pytest tests/test_kill_switch.py tests/test_tg_app.py tests/test_telegram_real_path.py -q` → PASS
 
-- [ ] **Step 5: Commit** `feat(ops): wire LLM gate into extractor build + OPERATIONS runbook`
+- [x] **Step 5: Commit** `feat(ops): wire LLM gate into extractor build + OPERATIONS runbook`
 
 ---
 
 ### Task 5: финал
 
-- [ ] **Step 1:** `python -m pytest -q` → `588 passed` (579 + 4 Task1 + 2 Task2 + 3 Task3... пересчёт: 4+2+4(=test_llm_toggle*3 ассерта — один тест) — фактически тестов: 4+2+3 = 9 → 588).
-- [ ] **Step 2:** `python -m navbat.onboard --demo`; `python -m navbat --check` → [OK].
-- [ ] **Step 3:** отметить чекбоксы плана; `git push`.
+- [x] **Step 1:** `python -m pytest -q` → `588 passed` (579 + 4 Task1 + 2 Task2 + 3 Task3... пересчёт: 4+2+4(=test_llm_toggle*3 ассерта — один тест) — фактически тестов: 4+2+3 = 9 → 588).
+- [x] **Step 2:** `python -m navbat.onboard --demo`; `python -m navbat --check` → [OK].
+- [x] **Step 3:** отметить чекбоксы плана; `git push`.
 
 ## Definition of Done (C-4)
 
-- [ ] 9 новых тестов зелёные; полный сьют зелёный; uz-строки прошли test_replies_uz.
-- [ ] /pause не плодит эскалаций; админ-команды живы на паузе; /llm off не ведёт в escalated.
-- [ ] OPERATIONS.md покрывает все три рубильника; демо восстановлено; всё в origin.
+- [x] 9 новых тестов зелёные; полный сьют зелёный; uz-строки прошли test_replies_uz.
+- [x] /pause не плодит эскалаций; админ-команды живы на паузе; /llm off не ведёт в escalated.
+- [x] OPERATIONS.md покрывает все три рубильника; демо восстановлено; всё в origin.
