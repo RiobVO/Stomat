@@ -358,6 +358,14 @@ TEMPLATES = {
         "ru": "👍 Отлично, ждём вас!",
         "uz": "👍 Ajoyib, sizni kutamiz!",
     },
+    # recall: приглашение через N месяцев после визита (инкремент 4)
+    "recall_invite": {
+        "ru": "🔁 {service}: прошло {months} мес. после визита — пора "
+              "показаться врачу. Записать вас?",
+        "uz": "🔁 {service}: tashrifdan keyin {months} oy o'tdi — shifokorga "
+              "ko'rinish vaqti keldi. Sizni yozib qo'yaymi?",
+    },
+    "btn_recall_book": {"ru": "📅 Записаться", "uz": "📅 Yozilish"},
     "rate_limited": {
         "ru": "Слишком много сообщений подряд — сделайте небольшую паузу, "
               "и я отвечу.",

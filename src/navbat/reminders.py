@@ -41,7 +41,7 @@ from navbat.stats import (
     should_send_digest)
 from navbat.telegram import feed_repo
 from navbat.telegram.admin_texts import Reason, at
-from navbat.telegram.api import ChatUnavailableError
+from navbat.telegram.api import ChatUnavailableError, TelegramAPIError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.today_view import render_day
 from navbat.telegram.worker import send_reply
@@ -55,6 +55,11 @@ MAX_ATTEMPTS = 3
 # дайджеста. Полчаса здесь содержательны — сводка должна лечь в чат перед
 # открытием в 09:00, но не в 08:00, когда её ещё некому читать.
 MORNING_SUMMARY_TIME = dt_time(8, 30)
+
+# Recall: окно рассылки приглашений в локальных часах клиники. Не env:
+# «не будить пациента ночью» — не настройка, а обещание.
+RECALL_HOUR_FROM = 9
+RECALL_HOUR_TO = 21
 
 # Лист ожидания: горизонт поиска слота, антиспам-кулдаун, TTL записи (env)
 WAITLIST_HORIZON_DAYS = int(os.environ.get("WAITLIST_HORIZON_DAYS", "14"))
@@ -321,6 +326,95 @@ class ReminderService:
             waitlist_repo.mark_notified(session, row.id)
         return start
 
+    # ── Recall: пора показаться врачу ────────────────────────────────────
+
+    def send_recalls(self, now_local: datetime | None = None) -> int:
+        """Позвать на повторный визит тех, у кого после приёма прошёл интервал
+        услуги (service.recall_months). Возвращает число отправленных
+        приглашений.
+
+        Reconciliation, как и напоминания: что отправлено — видно в
+        recall_outreach, поэтому рестарт процесса не начинает рассылку заново.
+        """
+        if self._tg_api is None:
+            return 0
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+        moment = now_local or datetime.now(tz)
+        # ночная рассылка разбудила бы пациента. Очередь «на утро» не копим:
+        # такт цикла — полминуты, первый же дневной такт разошлёт всё
+        # созревшее, поэтому вне окна выходим до выборки
+        if not RECALL_HOUR_FROM <= moment.hour < RECALL_HOUR_TO:
+            return 0
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            due = session.execute(text("""
+                SELECT a.id, a.tg_chat_id, a.lang, s.name AS service,
+                       s.recall_months
+                FROM appointment a
+                JOIN service s ON s.id = a.service_id
+                WHERE a.status = 'booked'
+                  -- /forget обнулил чат: анонимизированного не беспокоим
+                  AND a.tg_chat_id IS NOT NULL
+                  AND s.recall_months IS NOT NULL
+                  AND upper(a.time_range)
+                      + make_interval(months => s.recall_months) <= now()
+                  -- пациент уже придёт — звать его на приём нелепо
+                  AND NOT EXISTS (
+                      SELECT 1 FROM appointment f
+                      WHERE f.tg_chat_id = a.tg_chat_id
+                        AND f.status = 'booked'
+                        AND lower(f.time_range) > now()
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM recall_outreach r
+                      WHERE r.appointment_id = a.id
+                  )
+                ORDER BY upper(a.time_range)
+            """)).all()
+        sent = 0
+        for row in due:
+            if self._send_recall(row):
+                sent += 1
+        return sent
+
+    def _send_recall(self, row) -> bool:
+        """True — приглашение ушло. Строка conversation не трогается: кнопка
+        несёт исходный приём сама (правило фона)."""
+        lang = row.lang or "ru"
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            # отметка ДО отправки: два такта цикла (или два процесса) могли
+            # прочитать одну строку — второму INSERT вернёт 0, и он промолчит
+            claimed = session.execute(
+                text("INSERT INTO recall_outreach (clinic_id, appointment_id, "
+                     "                             tg_chat_id, lang) "
+                     "VALUES (current_setting('app.clinic_id')::uuid, "
+                     "        :appointment, :chat, :lang) "
+                     "ON CONFLICT (appointment_id) DO NOTHING"),
+                {"appointment": row.id, "chat": row.tg_chat_id, "lang": lang},
+            ).rowcount
+        if not claimed:
+            return False
+        # кнопка сырая и несёт СВОЙ приём: приглашение висит в чате днями, а
+        # карта tg_actions одна на чат и перезаписывается любой следующей
+        # отправкой кнопок
+        reply = Reply(
+            t("recall_invite", lang,
+              service=service_label(row.service or "checkup", lang),
+              months=row.recall_months),
+            (Button(t("btn_recall_book", lang), f"rcl:{row.id}"),),
+        )
+        try:
+            send_reply(self._tg_api, self._session_factory, self._clinic_id,
+                       row.tg_chat_id, reply)
+        except TelegramAPIError as e:
+            # приглашение потеряно, отметка остаётся: пациент заблокировал бота
+            # или Telegram лёг, а повтор каждым тактом цикла превратил бы
+            # приглашение в спам. Ретраи напоминания — другой случай: там
+            # срывается уже назначенный приём
+            log.warning("recall %s: приглашение не доставлено: %s", row.id, e)
+            return False
+        return True
+
     # ── Вечерняя сводка админу ───────────────────────────────────────────
 
     def _admin_lang(self, chat_id: int) -> str:
@@ -467,6 +561,7 @@ class ReminderService:
                 self.reconcile()
                 self.send_due()
                 self.match_waitlist()
+                self.send_recalls()
                 self.maybe_send_morning_summary()
                 self.maybe_send_digest()
                 self.maybe_cleanup()

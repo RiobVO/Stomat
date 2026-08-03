@@ -411,6 +411,8 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `relay_from_admin` | 👤 Администратор: {text} | **👤 Administrator: {text}** | |
 | `confirm_retry` | Техническая заминка — подтвердить запись не получилось. Пожалуйста, выберите время ещё раз: | **Texnik nosozlik — qabulni tasdiqlab bo'lmadi. Iltimos, vaqtni yana tanlang:** | |
 | `btn_menu_about` | ℹ️ О клинике | **ℹ️ Klinika haqida** | |
+| `recall_invite` | 🔁 {service}: прошло {months} мес. после визита — пора показаться врачу. Записать вас? | **🔁 {service}: tashrifdan keyin {months} oy o'tdi — shifokorga ko'rinish vaqti keldi. Sizni yozib qo'yaymi?** | |
+| `btn_recall_book` | 📅 Записаться | **📅 Yozilish** | |
 
 ---
 
