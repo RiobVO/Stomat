@@ -22,7 +22,7 @@
 - Create: `deploy/scripts/backup-loop.sh`, `deploy/initdb/02-replication-hba.sh`
 - Modify: `deploy/docker-compose.prod.yml`, `deploy/.env.example`
 
-- [ ] **Step 1: `deploy/initdb/02-replication-hba.sh`** (выполнится при чистой инициализации тома):
+- [x] **Step 1: `deploy/initdb/02-replication-hba.sh`** (выполнится при чистой инициализации тома):
 
 ```sh
 #!/bin/sh
@@ -33,7 +33,7 @@ set -e
 echo "host replication all all scram-sha-256" >> "$PGDATA/pg_hba.conf"
 ```
 
-- [ ] **Step 2: `deploy/scripts/backup-loop.sh`**:
+- [x] **Step 2: `deploy/scripts/backup-loop.sh`**:
 
 ```sh
 #!/bin/sh
@@ -70,7 +70,7 @@ while :; do
 done
 ```
 
-- [ ] **Step 3: compose** — postgres получает WAL-параметры и volume; новый сервис backup:
+- [x] **Step 3: compose** — postgres получает WAL-параметры и volume; новый сервис backup:
 
 К `postgres` добавить:
 
@@ -118,7 +118,7 @@ done
 
 и `postgres.depends_on: wal-perms: condition: service_completed_successfully`.
 
-- [ ] **Step 4: `.env.example`** — секция бэкапов:
+- [x] **Step 4: `.env.example`** — секция бэкапов:
 
 ```sh
 # ── Бэкапы ───────────────────────────────────────────────────────────────
@@ -129,9 +129,9 @@ done
 # NAVBAT_BACKUP_RCLONE_REMOTE=
 ```
 
-- [ ] **Step 5: Verify** `docker compose -f deploy/docker-compose.prod.yml config --quiet && echo CONFIG-OK` → CONFIG-OK
+- [x] **Step 5: Verify** `docker compose -f deploy/docker-compose.prod.yml config --quiet && echo CONFIG-OK` → CONFIG-OK
 
-- [ ] **Step 6: Commit** `feat(deploy): WAL archiving + 2h pg_basebackup sidecar with rotation`
+- [x] **Step 6: Commit** `feat(deploy): WAL archiving + 2h pg_basebackup sidecar with rotation`
 
 ---
 
@@ -139,7 +139,7 @@ done
 
 Прогон на прод-стенде локально, с чистого тома (initdb-скрипты должны выполниться).
 
-- [ ] **Step 1: поднять стенд с данными**
+- [x] **Step 1: поднять стенд с данными**
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml down -v
@@ -148,7 +148,7 @@ docker compose -f deploy/docker-compose.prod.yml run --rm --entrypoint sh app -c
 ```
 Expected: [OK] демо-клиника.
 
-- [ ] **Step 2: первый бэкап** — поднять backup-сервис, дождаться архива:
+- [x] **Step 2: первый бэкап** — поднять backup-сервис, дождаться архива:
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml up -d backup
@@ -157,14 +157,14 @@ docker compose -f deploy/docker-compose.prod.yml exec backup ls /backups
 ```
 Expected: `[backup] ... OK`, каталог `YYYYMMDD-HHMMSS` с base.tar.gz.
 
-- [ ] **Step 3: маркер после бэкапа** (проверка WAL-доезда):
+- [x] **Step 3: маркер после бэкапа** (проверка WAL-доезда):
 
 ```bash
 docker compose ... exec postgres psql -U postgres -d navbat -c "INSERT INTO holiday (clinic_id, date, reason) SELECT id, '2099-01-01', 'restore-marker' FROM clinic LIMIT 1; SELECT pg_switch_wal();"
 ```
 (switch_wal заставляет заархивировать сегмент с маркером.)
 
-- [ ] **Step 4: катастрофа + restore** — зафиксировать время старта:
+- [x] **Step 4: катастрофа + restore** — зафиксировать время старта:
 
 ```bash
 docker compose ... stop postgres backup app  (часы пошли)
@@ -190,15 +190,15 @@ docker compose ... exec postgres psql -U postgres -d navbat -tAc "SELECT reason 
 ```
 Expected: `restore-marker` — данные ПОСЛЕ бэкапа доехали из WAL. Часы остановить → RTO.
 
-- [ ] **Step 5: добить стенд** — `up -d app` → `--check` изнутри [OK]; удалить маркер-строку; `down` стенда.
+- [x] **Step 5: добить стенд** — `up -d app` → `--check` изнутри [OK]; удалить маркер-строку; `down` стенда.
 
-- [ ] **Step 6: записать процедуру + фактический RTO в docs/OPERATIONS.md** (заменить заглушку разделом с шагами из Step 4, включая PITR-вариант с `recovery_target_time` и предупреждение про NAVBAT_ENC_KEY: бэкап без ключа шифрования бесполезен).
+- [x] **Step 6: записать процедуру + фактический RTO в docs/OPERATIONS.md** (заменить заглушку разделом с шагами из Step 4, включая PITR-вариант с `recovery_target_time` и предупреждение про NAVBAT_ENC_KEY: бэкап без ключа шифрования бесполезен).
 
-- [ ] **Step 7: Commit** `docs(ops): tested restore runbook with measured RTO` + push.
+- [x] **Step 7: Commit** `docs(ops): tested restore runbook with measured RTO` + push.
 
 ## Definition of Done (C-5)
 
-- [ ] Стенд: WAL-архив пишется, бэкап снимается, ротация работает.
-- [ ] Restore прогнан руками: маркер из WAL доехал, RTO измерен и записан.
-- [ ] OPERATIONS.md содержит полную процедуру восстановления + PITR.
-- [ ] Compose-конфиг валиден; всё в origin; дев-демо восстановлено.
+- [x] Стенд: WAL-архив пишется, бэкап снимается, ротация работает.
+- [x] Restore прогнан руками: маркер из WAL доехал, RTO измерен и записан.
+- [x] OPERATIONS.md содержит полную процедуру восстановления + PITR.
+- [x] Compose-конфиг валиден; всё в origin; дев-демо восстановлено.

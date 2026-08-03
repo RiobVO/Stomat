@@ -62,7 +62,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   stdlib-минимализм, всё проверяется локально в Docker). Решение: после
   группы C — батч «витрина для покупателя» (демо-показ, /stats глазами
   владельца). Планы по инкрементам: docs/superpowers/plans/2026-06-10-*.
-- ЗАКРЫТЫ C-1…C-4 (всё в origin/master, по плану на инкремент, TDD):
+- ЗАКРЫТЫ C-1…C-5 (всё в origin/master, по плану на инкремент, TDD):
   C-1 контейнеризация — Dockerfile (editable: parents[3]/spike_nlu!),
   entrypoint с alembic upgrade, SIGTERM graceful, validate_real_env,
   deploy/docker-compose.prod.yml, smoke на чистом томе (ExitCode=0);
@@ -77,10 +77,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   дневной cert-алерт;
   C-4 kill-switch — 0014 (bot_paused, llm_enabled), /pause /resume /llm,
   GatedExtractor → LLMDisabledError → меню БЕЗ эскалации, глобальный
-  NAVBAT_LLM_DISABLED, docs/OPERATIONS.md. Тестов 594, --check [OK].
-- СЛЕДУЮЩИЙ ШАГ: исполнить план C-5 (бэкапы: WAL-архив + sidecar +
-  ЖИВОЙ restore-прогон с RTO) — план docs/superpowers/plans/
-  2026-06-10-group-c5-backups.md уже написан. Затем C-6 (GCal watch +
+  NAVBAT_LLM_DISABLED, docs/OPERATIONS.md. Тестов 594, --check [OK];
+  C-5 бэкапы — WAL-архив (archive_command + init-сервис wal-perms: named
+  volume отдаётся root'ом, chown до старта БД), sidecar pg_basebackup
+  -Ft -z раз в 2 ч с ротацией (busybox head -n -N работает), initdb
+  02-replication-hba.sh; restore ПРОГНАН РУКАМИ на прод-стенде: маркер
+  после бэкапа доехал из WAL, RTO = 24 сек, runbook + PITR-вариант в
+  docs/OPERATIONS.md (грабли: stopped-контейнер держит том → rm -f -s;
+  вложенные кавычки из PowerShell → printf \047). Python-кода ноль,
+  pytest не гонялся — дев-демо цело, --check [OK].
+- СЛЕДУЮЩИЙ ШАГ: C-6 (GCal watch +
   мгновенный алерт OAuth-refresh), затем C-7 финал: docs/DEPLOY.md
   («голый VPS → клиника»), smoke, чекбоксы BRIEF разд. 14 группы C,
   серия 8/8, обновить этот якорь. Рабочие заметки: Docker Desktop может
