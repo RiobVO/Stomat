@@ -130,6 +130,24 @@ def test_broken_appointment_id_does_not_crash(app_session_factory, admin_engine,
     assert fsm_state(admin_engine) == "idle"
 
 
+def test_urn_form_of_the_id_opens_the_same_cancel(app_session_factory,
+                                                  admin_engine, clinic_a,
+                                                  doctor_a, service_cleaning):
+    """Валидатор Python шире постгресового CAST: «urn:uuid:…» он принимает,
+    а `CAST(... AS uuid)` на префиксе падает. Исключение травило транзакцию,
+    и вместо вопроса «отменить?» сообщение уходило в ретрай. Форма записи id
+    субъекта не меняет — своя запись обязана дойти до подтверждения отмены."""
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, next_monday(), "09:00",
+                             chat_id=CHAT)
+    engine = make_engine(app_session_factory, clinic_a)
+
+    reply = engine.handle_action(CHAT, f"remind_cancel:urn:uuid:{appointment_id}")
+
+    assert {b.action for b in reply.buttons} == {"cancel_yes", "cancel_no"}
+    assert fsm_state(admin_engine) == "cancel_confirm"
+
+
 def test_cancel_confirm_after_appointment_moved(app_session_factory,
                                                 admin_engine, clinic_a,
                                                 doctor_a, service_cleaning):
