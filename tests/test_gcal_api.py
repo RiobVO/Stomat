@@ -86,6 +86,31 @@ def test_failed_refresh_raises_auth_error():
 
 # ── list_events ──────────────────────────────────────────────────────────────
 
+# ── watch-каналы (C-6) ───────────────────────────────────────────────────────
+
+def test_watch_events_posts_channel():
+    api, requests = make_api(
+        lambda req, reqs: httpx.Response(200, json={
+            "resourceId": "RES1", "expiration": "1760000000000"}))
+    result = api.watch_events(CAL, "CH-1", "https://x.uz/gcal/push/CH-1")
+
+    call = api_calls(requests)[0]
+    assert call.url.path.endswith("/events/watch")
+    body = json.loads(call.content)
+    assert body == {"id": "CH-1", "type": "web_hook",
+                    "address": "https://x.uz/gcal/push/CH-1"}
+    assert result["resourceId"] == "RES1"
+
+
+def test_stop_channel_missing_is_ok():
+    # канал уже умер у Google (404) — идемпотентность важнее строгости
+    api, requests = make_api(lambda req, reqs: httpx.Response(404, json={}))
+    api.stop_channel("CH-1", "RES1")
+    call = api_calls(requests)[0]
+    assert call.url.path.endswith("/channels/stop")
+    assert json.loads(call.content) == {"id": "CH-1", "resourceId": "RES1"}
+
+
 def test_list_events_paginates_and_returns_sync_token():
     def handler(request, reqs):
         params = dict(request.url.params)

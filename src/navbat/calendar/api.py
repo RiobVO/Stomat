@@ -97,6 +97,18 @@ class GoogleCalendarAPI:
         })
         return bool(result["calendars"][calendar_id].get("busy"))
 
+    def watch_events(self, calendar_id: str, channel_id: str, address: str) -> dict:
+        """Push-канал на события календаря; Google вернёт resourceId+expiration."""
+        return self._call("POST", f"/calendars/{calendar_id}/events/watch", json={
+            "id": channel_id, "type": "web_hook", "address": address,
+        })
+
+    def stop_channel(self, channel_id: str, resource_id: str) -> None:
+        # 404 — канал уже истёк: идемпотентность важнее строгости
+        self._call("POST", "/channels/stop",
+                   json={"id": channel_id, "resourceId": resource_id},
+                   missing_ok=True)
+
     # ── OAuth и транспорт ────────────────────────────────────────────────
 
     def _refresh_access_token(self) -> None:
