@@ -49,6 +49,15 @@ def clinic_phone(session: Session) -> str | None:
     ).scalar_one()
 
 
+def clinic_review_url(session: Session) -> str | None:
+    """Ссылка на площадку отзывов — её получает пациент, поставивший 4–5;
+    NULL — не задана (онбординг --review-url), благодарность идёт без ссылки."""
+    return session.execute(
+        text("SELECT review_url FROM clinic "
+             "WHERE id = current_setting('app.clinic_id')::uuid")
+    ).scalar_one()
+
+
 def holidays_on(session: Session, day: date) -> set[date]:
     """Выходные/праздники клиники, попадающие на day (пусто = рабочий)."""
     return set(session.execute(

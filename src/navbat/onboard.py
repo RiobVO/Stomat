@@ -225,6 +225,19 @@ def set_clinic_phone(session_factory, clinic_id: uuid.UUID,
         )
 
 
+def set_clinic_review_url(session_factory, clinic_id: uuid.UUID,
+                          url: str) -> None:
+    """Ссылка на площадку отзывов: её получает пациент, поставивший 4–5
+    (инкремент 5); пустое значение очищает поле — благодарность идёт без
+    ссылки."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        session.execute(
+            text("UPDATE clinic SET review_url = :u "
+                 "WHERE id = current_setting('app.clinic_id')::uuid"),
+            {"u": url or None},
+        )
+
+
 def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
                         doctor_id: uuid.UUID, intervals: dict) -> None:
     schedule = _validate_intervals(intervals)
@@ -665,6 +678,8 @@ def main() -> int:
                         help="условия оплаты для FAQ «можно картой?»")
     parser.add_argument("--phone", metavar="TEXT",
                         help="телефон клиники для FAQ «какой номер?»")
+    parser.add_argument("--review-url", metavar="URL",
+                        help="ссылка на отзывы — её получает довольный пациент")
     parser.add_argument("--set-schedule", metavar="DOCTOR_UUID", type=uuid.UUID,
                         help="заменить график врача (с --schedule-json)")
     parser.add_argument("--add-admin", type=int, metavar="CHAT_ID",
@@ -808,6 +823,10 @@ def main() -> int:
     if args.phone is not None:
         set_clinic_phone(session_factory, args.clinic, args.phone)
         print(f"[OK] телефон клиники: {args.phone or '(очищен)'}")
+        return 0
+    if args.review_url is not None:
+        set_clinic_review_url(session_factory, args.clinic, args.review_url)
+        print(f"[OK] ссылка на отзывы: {args.review_url or '(очищена)'}")
         return 0
     if args.set_schedule:
         if not args.schedule_json:

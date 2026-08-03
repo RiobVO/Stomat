@@ -33,7 +33,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from navbat.crypto import encrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog import (
-    appointments_repo, clinic_repo, doctors_repo, questions_repo, services_repo)
+    appointments_repo, clinic_repo, doctors_repo, questions_repo, review_repo,
+    services_repo)
 from navbat.dialog.booking_flow import _BookingFlowMixin
 from navbat.dialog.calendar_flow import _CalendarFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
@@ -528,6 +529,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # висит в чате до приёма и переживает и отмену, и смену сценария
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
+        if kind == "rate":
+            # оценка приёма — тоже не переход диалога, а отметка в журнале, и
+            # ловится она до гейта escalated по той же причине, что «Приду»:
+            # пациент, ждущий администратора, вправе поставить звезду, а не
+            # получить в ответ «передаю администратору»
+            return self._on_review_rating(session, conv, rest)
         if kind == "unfreeze":
             # выход из заморозки тапом = ровно то, что делает /start
             # (BRIEF 14.A): hold отпущен, счётчик сбоев в ноль, меню на экран.
@@ -593,6 +600,52 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # инлайн-календарь (П-5): сырые короткие callback'и мимо map'а
             return self._on_calendar(session, conv, rest)
         return Reply(t("other_fallback", lang), menu=menu_rows(lang))
+
+    def _on_review_rating(self, session: Session, conv: Conversation,
+                          rest: str) -> Reply:
+        """Тап по звезде: `rate:<uuid приёма>:<1..5>`.
+
+        Кнопки висят в чате и переживают смену сценария, поэтому субъект
+        приходит в самой кнопке и проверяется на месте (принадлежность чату —
+        в review_repo). Оценка — вход от клиента: и uuid, и цифру разбираем
+        защитно, мусор отвечает «кнопка не активна», а не роняет транзакцию
+        (CHECK rating BETWEEN 1 AND 5 в БД — последний рубеж, не первый).
+        """
+        lang = self._lang(conv)
+        # rpartition: uuid тоже может содержать ':' («urn:uuid:…» — валидатор
+        # Python его принимает), а цифра оценки всегда последняя
+        raw_id, _, raw_rating = rest.rpartition(":")
+        try:
+            # в БД уходит каноническая форма, а не исходная строка: валидатор
+            # Python ШИРЕ постгресового CAST, и на «urn:uuid:…» CAST(... AS
+            # uuid) травил бы всю транзакцию (тот же урок, что у rcl:/attend:)
+            parsed = uuid.UUID(raw_id)
+        except ValueError:
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        if not raw_rating.isdigit() or not 1 <= int(raw_rating) <= 5:
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        rating = int(raw_rating)
+        if not review_repo.rate(session, str(parsed), conv.chat_id, rating):
+            if review_repo.is_rated(session, str(parsed), conv.chat_id):
+                # повторный тап по погашенному сообщению (клиент был офлайн):
+                # честный toast без второго сообщения в чат
+                return Reply("", toast=t("review_already", lang))
+            # чужой, битый или вычищенный приём: сценарий пациента не трогаем
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        if rating <= 3:
+            # недовольного не зовём писать публичный отзыв — сигнал уходит
+            # владельцу (алерт — инкремент 5, Task 2)
+            return Reply(t("review_thanks_bad", lang), edit=True)
+        answer = t("review_thanks_good", lang)
+        url = clinic_repo.clinic_review_url(session)
+        if url:
+            answer += "\n\n" + t("review_link_line", lang, url=url)
+        # edit=True гасит звёзды на месте: оценка одна на приём, и висящая
+        # клавиатура обещала бы вторую
+        return Reply(answer, edit=True)
 
     # ── Вопросы ──────────────────────────────────────────────────────────
 
