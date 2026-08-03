@@ -48,6 +48,9 @@ class _CancelFlowMixin:
                       appointment) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
+        # отмена — не продолжение приглашения: пациент занялся существующей
+        # записью, и конверсию recall засчитывать нечему (перенос — так же)
+        ctx.recall_source = None
         if appointment is None:
             self._clear_booking(conv)
             conv.state = "idle"

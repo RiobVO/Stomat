@@ -46,6 +46,9 @@ class _RescheduleFlowMixin:
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("resched_none", lang))
+        # перенос — это уже не продолжение приглашения: пациент занялся
+        # существующей записью, и конверсию recall засчитывать нечему
+        ctx.recall_source = None
         ctx.resched_id = str(appointment.id)
         ctx.resched_doctor = str(appointment.doctor_id)
         # услугу не переспрашиваем — переносим ту же; перенос остаётся
@@ -124,6 +127,7 @@ class _RescheduleFlowMixin:
             return stale()
         # контекст переезжает на ту запись, которую назвала кнопка: иначе
         # переспрос «слот занят» предложит слоты под чужую запись
+        ctx.recall_source = None  # перенос — не продолжение приглашения
         ctx.resched_id = str(appointment.id)
         ctx.resched_doctor = str(appointment.doctor_id)
         ctx.service = self._service_name(session, appointment.service_id) \

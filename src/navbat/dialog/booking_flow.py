@@ -33,7 +33,9 @@ class _BookingFlowMixin:
             ctx.cancel_id = None
             ctx.cancel_when = None
         if extraction.service:
-            ctx.service = extraction.service
+            # свободный текст — вход в запись мимо кнопки приглашения: названная
+            # услуга либо продолжает сценарий rcl, либо рвёт с ним связь
+            self._set_scenario_service(ctx, extraction.service)
         self._merge_when(session, ctx, extraction)
         if extraction.doctor:
             self._resolve_doctor(session, ctx, extraction.doctor)
@@ -99,7 +101,8 @@ class _BookingFlowMixin:
         service_id = self._service_id(session, ctx.service)
         if service_id is None:
             # клиника не оказывает услугу из NLU — спрашиваем из своего каталога
-            ctx.service = None
+            # (услуга приглашения исчезла из каталога — связь с ним тоже рвётся)
+            self._set_scenario_service(ctx, None)
             conv.state = "booking_collect"
             return Reply(t("ask_service", lang), self._service_buttons(session, lang))
 
