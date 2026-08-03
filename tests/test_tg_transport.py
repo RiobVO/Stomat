@@ -159,3 +159,59 @@ def test_ensure_webhook_exhausted_alerts_and_survives():
     assert len(api.calls) == 3  # WEBHOOK_SETUP_RETRIES
     assert len(notifier.calls) == 1
     assert "webhook" in notifier.calls[0][1].lower()
+
+
+# ── C-6: push Google Calendar будит синк ─────────────────────────────────────
+
+import threading
+
+from conftest import make_doctor
+
+
+def _gcal_doctor(admin_engine, clinic_id, channel_id="CH-1"):
+    doctor_id = make_doctor(admin_engine, clinic_id)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET gcal_calendar_id = 'cal@x', "
+                          "gcal_channel_id = :ch WHERE id = :d"),
+                     {"ch": channel_id, "d": doctor_id})
+
+
+def gcal_post(server, token) -> httpx.Response:
+    return httpx.post(f"http://127.0.0.1:{server.port}/gcal/push/{token}",
+                      headers={"X-Goog-Resource-State": "exists"})
+
+
+def test_gcal_push_wakes_sync(app_session_factory, admin_engine, clinic_a):
+    _gcal_doctor(admin_engine, clinic_a, channel_id="CH-1")
+    wake = threading.Event()
+    server = WebhookServer(app_session_factory, clinic_a, secret=SECRET,
+                           host="127.0.0.1", port=0, gcal_wake=wake)
+    server.start()
+    try:
+        assert gcal_post(server, "CH-1").status_code == 200
+        assert wake.is_set()
+    finally:
+        server.stop()
+
+
+def test_gcal_push_unknown_channel_404(app_session_factory, admin_engine, clinic_a):
+    _gcal_doctor(admin_engine, clinic_a, channel_id="CH-1")
+    wake = threading.Event()
+    server = WebhookServer(app_session_factory, clinic_a, secret=SECRET,
+                           host="127.0.0.1", port=0, gcal_wake=wake)
+    server.start()
+    try:
+        assert gcal_post(server, "CH-STALE").status_code == 404
+        assert not wake.is_set()
+    finally:
+        server.stop()
+
+
+def test_gcal_push_without_calendar_404(app_session_factory, admin_engine, clinic_a):
+    # календарь выключен: gcal_wake не передан — путь закрыт, telegram живёт
+    server = webhook_server(app_session_factory, clinic_a)
+    try:
+        assert gcal_post(server, "CH-1").status_code == 404
+        assert post(server, tg_message(10)).status_code == 200
+    finally:
+        server.stop()
