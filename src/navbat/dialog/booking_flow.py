@@ -113,6 +113,9 @@ class _BookingFlowMixin:
                 uuid.UUID(doctor_id), service_id, start,
                 patient_id=patient.id if patient else None,
                 tg_chat_id=conv.chat_id,
+                # снимок языка: диалог доживёт до ретеншена, а recall и отзывы
+                # зовут пациента спустя месяцы — им читать неоткуда, кроме записи
+                lang=lang,
             )
         except (SlotTakenError, InvalidSlotError):
             return self._offer_slots(session, conv, note="slot_taken")
