@@ -172,6 +172,45 @@ class TelegramEscalation:
                 continue
             self._save_anchor(admin_chat, sent, chat_id)
 
+    def review_alert(self, chat_id: int, rating: int, service_key: str | None,
+                     when: str) -> None:
+        """⭐1–3 всем админ-чатам: перехват негатива до публичного отзыва.
+
+        Не эскалация и не FYI: пациент не заморожен и человека не просил,
+        поэтому ни шапки, ни подсказки /release здесь нет. Но якорь свайп-ответа
+        пишется на КАЖДОЕ сообщение (в отличие от карточки ленты): смысл алерта
+        в том, чтобы владелец ответил недовольному прямо отсюда, не разыскивая
+        его чат руками.
+
+        Уходит PLAIN, как остальные алерты: подставляются только число, chat_id
+        и строки каталога — пациентского текста, который надо экранировать,
+        в алерте нет.
+        """
+        if not self._admin_chat_ids:
+            log.warning("оценка %s от chat=%s: алерт не отправлен "
+                        "(админ-чаты не заданы)", rating, chat_id)
+            return
+        for admin_chat in self._admin_chat_ids:
+            lang = self._lang_of(admin_chat)
+            message = plain(
+                "alert_review", lang, rating=rating, chat=chat_id, when=when,
+                # услуги может не быть у записи с улицы — алерт это не отменяет;
+                # заглушка та же, что в карточке ленты, чтобы владелец читал
+                # про один и тот же приём одними словами
+                service=(service_label(service_key, lang) if service_key
+                         else plain("feed_no_service", lang)))
+            try:
+                sent = self._api.send_message(admin_chat, message)
+            except Exception as e:  # noqa: BLE001 — алерт важнее одного чата
+                # остальным получателям алерт всё равно нужен (паттерн
+                # booking_event): сбой одного чата не гасит рассылку. Шире
+                # TelegramAPIError намеренно — клиент бросает и ValueError
+                # (httpx .json() на не-JSON ответе прокси, api._call)
+                log.error("оценка %s от chat=%s не доставлена админу %s: %r",
+                          rating, chat_id, admin_chat, e)
+                continue
+            self._save_anchor(admin_chat, sent, chat_id)
+
     def notify_fyi(self, chat_id: int, reason: str, context: dict) -> None:
         """🟡 Информирование владельца: человек не нужен, снимать нечего.
 

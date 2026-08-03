@@ -95,6 +95,45 @@ def booking_feed(notifier, session, appointment_id, kind: str) -> None:
                   kind, appointment_id, e)
 
 
+def review_alert(notifier, session, appointment_id, chat_id: int,
+                 rating: int) -> None:
+    """⭐1–3 в админ-чаты: владелец перехватывает недовольного до того, как тот
+    напишет публичный отзыв.
+
+    Не эскалация: фолбэка на notify() здесь нет (как у booking_feed) —
+    нотификаторы без канала (LoggingEscalation, фейки) молчат. Замораживать
+    пациента и звать администратора никто не просил: это сигнал владельцу,
+    решение звонить — его.
+
+    session уже открыт вызывающим (транзакция тапа): услугу и время приёма
+    добираем из неё же — оценка без «по какому приёму» владельцу бесполезна.
+    """
+    handler = getattr(notifier, "review_alert", None)
+    if handler is None:
+        log.debug("оценка %s по записи %s: канал алерта не настроен",
+                  rating, appointment_id)
+        return
+    # алерт — сигнал, а не транзакция: сбой сбора данных или доставки не вправе
+    # уронить обработку пациента, он свою оценку уже поставил
+    try:
+        # savepoint по той же причине, что у booking_feed: SELECT идёт ВНУТРИ
+        # транзакции тапа, и его падение травит её целиком (PostgreSQL 25P02) —
+        # вместе с ещё не закоммиченной оценкой и conversation пациента. Откат
+        # до savepoint снимает abort и оставляет внешнюю транзакцию живой
+        with session.begin_nested():
+            card = feed_repo.appointment_card(session, appointment_id)
+            if card is None:
+                log.warning("оценка %s: запись %s не найдена — алерт пропущен",
+                            rating, appointment_id)
+                return
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+            handler(chat_id, rating, card.service_key,
+                    f"{card.start.astimezone(tz):%d.%m %H:%M}")
+    except Exception as e:  # noqa: BLE001 — алерт дешевле обработки пациента
+        log.error("оценка %s по записи %s: алерт владельцу не отправлен: %r",
+                  rating, appointment_id, e)
+
+
 def ops_alert(notifier, reason: str, context: dict, chat_id: int = 0,
               detail: str | None = None) -> None:
     """Операционный сигнал КЛИНИКЕ (и владельцу системы заодно): бот

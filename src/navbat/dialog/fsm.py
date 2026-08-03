@@ -59,6 +59,7 @@ from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
     relay_from_patient,
+    review_alert,
 )
 from navbat.dialog.patients import normalize_phone, phone_to_hash
 from navbat.telegram.admin_texts import Reason
@@ -637,7 +638,15 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                                        Reply(t("stale_button", lang)))
         if rating <= 3:
             # недовольного не зовём писать публичный отзыв — сигнал уходит
-            # владельцу (алерт — инкремент 5, Task 2)
+            # владельцу, и он перехватывает негатив звонком. Пациент при этом
+            # НЕ заморожен: человека он не просил, а ответить ему владелец
+            # может свайпом по алерту (якорь пишет нотификатор).
+            # Алерт уходит ДО коммита оценки, как карточка ленты: собрать его
+            # можно только из открытой транзакции, а вынести отправку за неё
+            # значит тащить сигнал через воркер ради случая «UPDATE прошёл,
+            # а сохранение conversation упало» — цена не сходится
+            review_alert(self._notifier, session, str(parsed), conv.chat_id,
+                         rating)
             return Reply(t("review_thanks_bad", lang), edit=True)
         answer = t("review_thanks_good", lang)
         url = clinic_repo.clinic_review_url(session)
