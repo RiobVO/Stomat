@@ -231,6 +231,7 @@ def main() -> int:
     # календарь: sync-цикл + freeBusy-guard перед confirm
     slot_guard = None
     calendar_sync = None
+    watch_manager = None
     with tenant_transaction(session_factory, args.clinic) as session:
         gcal_token = session.execute(
             text("SELECT gcal_refresh_token_encrypted FROM clinic WHERE id = :id"),
@@ -247,6 +248,12 @@ def main() -> int:
         calendar_sync = CalendarSync(session_factory, args.clinic, api=gcal_api,
                                      notifier=notifier, tg_api=tg_api)
         log.info("календарь: sync каждые %d с + freeBusy-guard", args.sync_interval)
+        if args.webhook_url:
+            from navbat.calendar.watch import GcalWatchManager
+
+            watch_manager = GcalWatchManager(session_factory, args.clinic,
+                                             gcal_api, args.webhook_url)
+            log.info("календарь: watch-каналы включены (push будит синк)")
     else:
         log.info("календарь: выключен")
 
@@ -257,6 +264,7 @@ def main() -> int:
                                 digest_chat_id=credentials.admin_chat_ids)
 
     stop = threading.Event()
+    sync_wake = threading.Event()  # push /gcal/push/<канал> будит календарь
     install_sigterm_handler(stop)
     threads = [
         threading.Thread(target=reminders.run, args=(stop,), name="reminders"),
@@ -275,8 +283,14 @@ def main() -> int:
 
         def calendar_loop() -> None:
             while not stop.is_set():
+                if watch_manager is not None:
+                    try:
+                        watch_manager.ensure_channels()
+                    except Exception:
+                        log.exception("watch-каналы: ensure_channels упал")
                 sync_loop.run_once()
-                stop.wait(args.sync_interval)
+                sync_wake.wait(args.sync_interval)
+                sync_wake.clear()
 
         threads.append(threading.Thread(target=calendar_loop, name="calendar"))
 
@@ -301,7 +315,8 @@ def main() -> int:
                          "(onboard --tg-token генерирует)")
             webhook_server = WebhookServer(
                 session_factory, args.clinic,
-                secret=credentials.webhook_secret, port=args.webhook_port)
+                secret=credentials.webhook_secret, port=args.webhook_port,
+                gcal_wake=sync_wake if calendar_sync is not None else None)
             webhook_server.start()
             ensure_webhook(tg_api, args.webhook_url,
                            credentials.webhook_secret,
@@ -314,6 +329,7 @@ def main() -> int:
         log.info("останавливаюсь…")
     finally:
         stop.set()
+        sync_wake.set()  # разбудить календарный поток, чтобы он увидел stop
         if webhook_server:
             webhook_server.stop()
         health.stop()
