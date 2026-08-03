@@ -76,14 +76,20 @@ def booking_feed(notifier, session, appointment_id, kind: str) -> None:
     # или доставки не вправе уронить обработку пациента. Он уже получил ответ
     # о записи, а повтор апдейта прогнал бы весь сценарий заново
     try:
-        card = feed_repo.appointment_card(session, appointment_id)
-        if card is None:
-            log.warning("лента: запись %s не найдена — карточка %s пропущена",
-                        appointment_id, kind)
-            return
-        tz = ZoneInfo(clinic_repo.clinic_timezone(session))
-        handler(kind, card, f"{card.start.astimezone(tz):%d.%m %H:%M}",
-                feed_repo.is_after_hours(session, card.created_at, tz))
+        # savepoint: карточка собирается ВНУТРИ транзакции вызывающего, и
+        # упавший SELECT травит её целиком (PostgreSQL 25P02) — дальше падает
+        # всё, что диалог ещё не записал (привязка пациента, conversation),
+        # хотя запись уже подтверждена своей транзакцией движка. Откат до
+        # savepoint снимает abort и оставляет внешнюю транзакцию живой
+        with session.begin_nested():
+            card = feed_repo.appointment_card(session, appointment_id)
+            if card is None:
+                log.warning("лента: запись %s не найдена — карточка %s "
+                            "пропущена", appointment_id, kind)
+                return
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+            handler(kind, card, f"{card.start.astimezone(tz):%d.%m %H:%M}",
+                    feed_repo.is_after_hours(session, card.created_at, tz))
     except Exception as e:  # noqa: BLE001 — карточка дешевле обработки пациента
         log.error("лента: карточка %s по записи %s не отправлена: %r",
                   kind, appointment_id, e)

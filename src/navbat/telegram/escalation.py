@@ -222,10 +222,13 @@ class TelegramEscalation:
             )
             try:
                 self._api.send_message(admin_chat, message, parse_mode="HTML")
-            except TelegramAPIError as e:
+            except Exception as e:  # noqa: BLE001 — карточка некритична
                 # остальным получателям карточка всё равно нужна (паттерн
-                # notify_fyi): сбой одного чата не гасит рассылку
-                log.error("лента: карточка %s не доставлена админу %s: %s",
+                # notify_fyi): сбой одного чата не гасит рассылку. Шире
+                # TelegramAPIError намеренно: клиент бросает и ValueError —
+                # httpx .json() на не-JSON ответе прокси (api._call), до
+                # всякого разбора ok:false, и это выбивало весь веер
+                log.error("лента: карточка %s не доставлена админу %s: %r",
                           kind, admin_chat, e)
 
     def notify_ops(self, reason: str, context: dict,
