@@ -18,6 +18,7 @@ from sqlalchemy import text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.patients import create_patient
 from navbat.dialog.replies import service_label, t
 from navbat.nlu.extractor import FakeExtractor
 from navbat.onboard import set_clinic_review_url
@@ -33,6 +34,10 @@ from test_tg_worker import FakeTelegramAPI, make_worker, put_message
 TASHKENT = ZoneInfo("Asia/Tashkent")
 REVIEW_URL = "https://g.page/r/shifo-dent/review"
 ADMIN_RU, ADMIN_UZ, ADMIN_CHAT = 8101, 8102, 8103
+# номер уезжает в базу нормализованным (998…), поэтому в тексте алерта ищем
+# обе формы: и то, что ввёл пациент, и то, что лежит в шифртексте
+PATIENT_NAME, PATIENT_PHONE = "Азиза Каримова", "901234567"
+PATIENT_PHONE_E164 = "998901234567"
 
 
 def make_review_service(app_session_factory, clinic_id):
@@ -62,23 +67,47 @@ def at_local(hour: int) -> datetime:
 
 
 def seed_visit(admin_engine, clinic_id, doctor_id, service_id, hours_ago,
-               chat_id=CHAT, lang="ru", source="bot") -> uuid.UUID:
-    """Приём, ЗАКОНЧИВШИЙСЯ hours_ago часов назад, прямым INSERT: движок не
-    даёт занять прошедшее время, а просьбу об оценке рождает именно
-    состоявшийся визит."""
+               chat_id=CHAT, lang="ru", source="bot", minutes_ago=0,
+               status="booked", patient_id=None) -> uuid.UUID:
+    """Приём, ЗАКОНЧИВШИЙСЯ hours_ago часов и minutes_ago минут назад, прямым
+    INSERT: движок не даёт занять прошедшее время, а просьбу об оценке рождает
+    именно состоявшийся визит. Минуты нужны границам окна отдельным аргументом:
+    у make_interval часы — целое число."""
     appointment_id = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(
             text("INSERT INTO appointment (id, clinic_id, doctor_id, "
-                 "service_id, time_range, status, tg_chat_id, lang, source) "
+                 "service_id, time_range, status, tg_chat_id, lang, source, "
+                 "patient_id) "
                  "SELECT :i, :c, :d, :s, "
                  "       tstzrange(q.hi - interval '30 minutes', q.hi, '[)'), "
-                 "       'booked', :chat, :lang, :src "
-                 "FROM (SELECT now() - make_interval(hours => :h) AS hi) q"),
+                 "       :status, :chat, :lang, :src, CAST(:pid AS uuid) "
+                 "FROM (SELECT now() - make_interval(hours => :h, "
+                 "                                   mins => :m) AS hi) q"),
             {"i": appointment_id, "c": clinic_id, "d": doctor_id,
              "s": service_id, "chat": chat_id, "lang": lang, "h": hours_ago,
-             "src": source})
+             "m": minutes_ago, "src": source, "status": status,
+             "pid": str(patient_id) if patient_id else None})
     return appointment_id
+
+
+def age_review_request(admin_engine, appointment_id, days_ago) -> None:
+    """Состарить просьбу: кнопка-звезда висит в чате, пока жива строка журнала
+    (полгода), и проверять свежесть можно только по её возрасту."""
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE review SET requested_at = "
+                 "now() - make_interval(days => :d) "
+                 "WHERE appointment_id = :a"),
+            {"d": days_ago, "a": appointment_id})
+
+
+def add_patient(app_session_factory, clinic_id) -> uuid.UUID:
+    """Пациент с настоящими именем и номером — для проверки, что алерт об
+    оценке их не разглашает."""
+    with tenant_transaction(app_session_factory, clinic_id) as session:
+        return create_patient(session, tg_chat_id=CHAT, name=PATIENT_NAME,
+                              phone=PATIENT_PHONE)
 
 
 def review_rows(admin_engine, clinic_id):
@@ -188,6 +217,48 @@ def test_second_cycle_does_not_repeat_the_request(app_session_factory,
 
 
 # ── Кого не спрашиваем ──────────────────────────────────────────────────────
+
+def test_visit_just_past_the_lower_edge_is_asked(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """Нижняя граница окна (2 часа): сразу за ней просьба уже уходит — часом
+    раньше было рано (тест выше), а тянуть дальше значит спрашивать по
+    остывшему впечатлению. Ровно 2:00 не пиннится: между INSERT и выборкой
+    проходит время, и точная граница флакует."""
+    seed_visit(admin_engine, clinic_a, doctor_a, service_cleaning, hours_ago=2,
+               minutes_ago=1)
+    service, api = make_review_service(app_session_factory, clinic_a)
+
+    assert service.send_review_requests(now_local=at_local(12)) == 1
+    assert len(api.sent) == 1
+
+
+def test_visit_just_past_the_upper_edge_is_not_asked(app_session_factory,
+                                                     admin_engine, clinic_a,
+                                                     doctor_a,
+                                                     service_cleaning):
+    """Верхняя граница окна (48 часов): за ней молчим. Стережёт именно край —
+    «трое суток» ниже разрешают сдвинуть константу вдвое и не заметить."""
+    seed_visit(admin_engine, clinic_a, doctor_a, service_cleaning, hours_ago=49)
+    service, api = make_review_service(app_session_factory, clinic_a)
+
+    assert service.send_review_requests(now_local=at_local(12)) == 0
+    assert api.sent == []
+    assert review_rows(admin_engine, clinic_a) == []
+
+
+def test_cancelled_visit_is_not_asked(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a, service_cleaning):
+    """Приёма не было: отменённую запись спрашивать «как всё прошло?» — значит
+    напомнить о себе ровно тому, кто отменил, и получить оценку ни за что."""
+    seed_visit(admin_engine, clinic_a, doctor_a, service_cleaning, hours_ago=3,
+               status="cancelled")
+    service, api = make_review_service(app_session_factory, clinic_a)
+
+    assert service.send_review_requests(now_local=at_local(12)) == 0
+    assert api.sent == []
+    assert review_rows(admin_engine, clinic_a) == []
+
 
 def test_visit_three_days_ago_is_not_asked(app_session_factory, admin_engine,
                                            clinic_a, doctor_a,
@@ -384,6 +455,37 @@ def test_foreign_star_rates_nothing(app_session_factory, admin_engine,
     assert [r.rating for r in review_rows(admin_engine, clinic_a)] == [None]
 
 
+def test_stale_request_rates_nothing_and_lets_the_owner_sleep(
+        app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Вторая половина инварианта сырой кнопки — свежесть. Звёзды висят в чате,
+    пока жива строка журнала (полгода), и тап через месяцы записал бы оценку
+    давнему приёму, а при 1–3 ещё и поднял бы владельца алертом о том, чего он
+    уже не исправит. Просроченная просьба — мёртвая кнопка: rated_at у неё
+    пуст, поэтому ответ «кнопка не активна», а не «уже учтено»."""
+    appointment_id = seed_visit(admin_engine, clinic_a, doctor_a,
+                                service_cleaning, hours_ago=3)
+    service, _ = make_review_service(app_session_factory, clinic_a)
+    assert service.send_review_requests(now_local=at_local(12)) == 1
+    age_review_request(admin_engine, appointment_id, days_ago=8)
+    engine, api = make_alerting_engine(app_session_factory, clinic_a,
+                                       [ADMIN_RU])
+
+    good = engine.handle_action(CHAT, f"rate:{appointment_id}:5")
+
+    assert good.text == t("stale_button", "ru"), good.text
+    assert good.toast is None, "протухшая просьба — это не «уже учтено»"
+
+    bad = engine.handle_action(CHAT, f"rate:{appointment_id}:2")
+
+    assert bad.text == t("stale_button", "ru"), bad.text
+    assert api.sent == [], "алерт о приёме недельной давности разбудил владельца"
+    assert anchors(admin_engine) == []
+    row = review_rows(admin_engine, clinic_a)[0]
+    assert (row.rating, row.rated_at) == (None, None), \
+        "оценка просроченной кнопки легла в журнал"
+
+
 def test_garbage_in_the_star_button_answers_instead_of_crashing(
         app_session_factory, admin_engine, clinic_a, doctor_a,
         service_cleaning):
@@ -414,8 +516,10 @@ def test_bad_rating_alerts_every_admin_chat(app_session_factory, admin_engine,
     """Смысл фичи: недовольный не уходит писать в Google молча — владелец
     узнаёт об оценке в ту же секунду, на своём языке и с якорем свайп-ответа,
     чтобы ответить пациенту прямо из алерта."""
+    patient_id = add_patient(app_session_factory, clinic_a)
     appointment_id = seed_visit(admin_engine, clinic_a, doctor_a,
-                                service_cleaning, hours_ago=3)
+                                service_cleaning, hours_ago=3,
+                                patient_id=patient_id)
     service, _ = make_review_service(app_session_factory, clinic_a)
     assert service.send_review_requests(now_local=at_local(12)) == 1
     set_admin_lang(app_session_factory, clinic_a, ADMIN_UZ, "uz")
@@ -430,10 +534,24 @@ def test_bad_rating_alerts_every_admin_chat(app_session_factory, admin_engine,
         "алерт уходит веером всем админ-чатам клиники, по одному разу"
     sent = {chat: body for chat, body, _ in api.sent}
     when = visit_when(admin_engine, appointment_id)
+    # PII у приёма ЕСТЬ и алерту досягаемы — собирается он из той же карточки.
+    # Без этой сверки проверка «имени и телефона в алерте нет» прошла бы и на
+    # приёме без пациента, ничего не сторожа
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        card = feed_repo.appointment_card(session, appointment_id)
+    assert (card.patient_name, card.patient_phone) == \
+        (PATIENT_NAME, PATIENT_PHONE_E164), card
     for body in sent.values():
         assert body.startswith("⭐2"), body
         assert str(CHAT) in body, "владельцу нужен чат, кому звонить: " + body
         assert when in body, body
+        # алерт — сигнал «позвони в этот чат», а не карточка пациента: имя и
+        # телефон расшифровываются только там, где владелец их запросил
+        # (лента, /today). Лишняя копия PII в мгновенном веерном алерте — та
+        # же цена, что у карточки, но без причины
+        assert PATIENT_NAME not in body, body
+        assert PATIENT_PHONE not in body and PATIENT_PHONE_E164 not in body, \
+            body
     # язык каждого чата решается при отправке (карта, №16)
     assert service_label("cleaning", "ru") in sent[ADMIN_RU], sent[ADMIN_RU]
     assert service_label("cleaning", "uz") in sent[ADMIN_UZ], sent[ADMIN_UZ]
@@ -538,9 +656,12 @@ def test_stats_hide_the_rating_line_without_ratings():
 def test_retention_forgets_old_reviews(app_session_factory, admin_engine,
                                        clinic_a):
     """В строке журнала — chat_id пациента: вечно она не живёт. Срок свой,
-    полугодовой, как у журнала приглашений."""
-    old, fresh = uuid.uuid4(), uuid.uuid4()
+    полугодовой, как у журнала приглашений. Возраст считается по ПРОСЬБЕ:
+    у молчащей строки rated_at пуст, и по нему она не удалялась бы никогда —
+    самый долгоживущий chat_id остался бы у того, кто даже не ответил."""
+    old, fresh, silent = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     insert_review(admin_engine, clinic_a, old, rating=5, days_ago=200)
+    insert_review(admin_engine, clinic_a, silent, days_ago=200)
     insert_review(admin_engine, clinic_a, fresh, rating=5, days_ago=10)
 
     cleanup_old_data(app_session_factory, clinic_a)
