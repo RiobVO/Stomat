@@ -112,6 +112,33 @@ def test_attend_on_cancelled_appointment_confirms_nothing(
     assert reply.text == TEMPLATES["stale_button"]["ru"]
 
 
+def test_attend_after_the_visit_started_confirms_nothing(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Кнопка висит в чате до приёма и переживает его начало.
+
+    Тап через минуту после начала — уже не подтверждение: владельцу нельзя
+    показывать «придёт» о приёме, который идёт или прошёл, а пациенту
+    отвечать «ждём вас». Половина инварианта долгоживущей кнопки — проверка
+    свежести времени, а не только принадлежности чату (тот же гейт, что у
+    remind_cancel)."""
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, next_monday(), "09:00",
+                             chat_id=CHAT)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE appointment SET time_range = tstzrange("
+            "now() - interval '1 minute', now() + interval '29 minutes', '[)')"
+            " WHERE id = :id"), {"id": appointment_id})
+    engine = make_engine(app_session_factory, clinic_a)
+
+    reply = engine.handle_action(CHAT, f"attend:{appointment_id}")
+
+    row = confirmation(admin_engine, appointment_id)
+    assert row.confirm_status is None and row.confirmed_at is None, \
+        "подтверждён начавшийся приём"
+    assert reply.text == TEMPLATES["stale_button"]["ru"]
+
+
 def test_broken_appointment_id_does_not_crash(app_session_factory,
                                               admin_engine, clinic_a,
                                               doctor_a, service_cleaning):
@@ -124,6 +151,23 @@ def test_broken_appointment_id_does_not_crash(app_session_factory,
 
     assert reply.text == TEMPLATES["stale_button"]["ru"]
     assert fsm_state(admin_engine) == "idle"
+
+
+def test_urn_form_of_the_id_confirms_the_same_appointment(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Валидатор Python шире постгресового CAST: «urn:uuid:…» он принимает,
+    а `CAST(... AS uuid)` на префиксе падает. Исключение травило транзакцию,
+    и вместо ответа пациенту сообщение уходило в ретрай. Форма записи id
+    субъекта не меняет — своя запись обязана подтвердиться."""
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, next_monday(), "09:00",
+                             chat_id=CHAT)
+    engine = make_engine(app_session_factory, clinic_a)
+
+    reply = engine.handle_action(CHAT, f"attend:urn:uuid:{appointment_id}")
+
+    assert confirmation(admin_engine, appointment_id).confirm_status == "confirmed"
+    assert reply.text == TEMPLATES["attend_ok"]["ru"]
 
 
 def test_attend_in_escalated_still_records(app_session_factory, admin_engine,

@@ -423,8 +423,11 @@ class ReminderService:
             try:
                 # у каждого админ-чата свой язык консоли (карта, №16)
                 lang = self._admin_lang(chat)
+                # момент сводки, а не время рендера: веер по чатам с разными
+                # языками обязан показать один и тот же список молчунов
                 body = (at("morning_header", lang) + "\n\n"
-                        + render_day(cards, moment.date(), lang, tz))
+                        + render_day(cards, moment.date(), lang, tz,
+                                     now=moment))
                 self._tg_api.send_message(chat, body, parse_mode="HTML")
                 delivered += 1
             except Exception as e:

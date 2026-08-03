@@ -512,12 +512,16 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 # id приходит из callback_data, то есть от клиента: мусор не
                 # должен падать в приведении типа и уводить сообщение в dead
                 # letter (тот же урок, что у remind_cancel)
-                uuid.UUID(rest)
+                parsed = uuid.UUID(rest)
             except ValueError:
                 confirmed = False
             else:
+                # в БД уходит каноническая форма, а не исходная строка:
+                # валидатор Python ШИРЕ постгресового CAST (принимает
+                # «urn:uuid:…» и фигурные скобки), и на такой строке
+                # CAST(... AS uuid) падал бы, травя всю транзакцию
                 confirmed = appointments_repo.confirm_attendance(
-                    session, rest, conv.chat_id)
+                    session, str(parsed), conv.chat_id)
             if confirmed:
                 return Reply(t("attend_ok", lang))
             # чужая или уже отменённая запись ничего не подтверждает: кнопка

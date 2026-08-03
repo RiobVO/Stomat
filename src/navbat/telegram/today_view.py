@@ -25,21 +25,28 @@ _SILENT = "⏳ "
 
 def render_today(session: Session, lang: str, tz: ZoneInfo) -> str:
     """День клиники на СЕГОДНЯ: шапка с датой и числом приёмов + строки."""
-    today = datetime.now(tz).date()
-    return render_day(feed_repo.day_cards(session, today, tz), today, lang, tz)
+    now = datetime.now(tz)
+    return render_day(feed_repo.day_cards(session, now.date(), tz), now.date(),
+                      lang, tz, now=now)
 
 
-def render_day(cards, day: date, lang: str, tz: ZoneInfo) -> str:
+def render_day(cards, day: date, lang: str, tz: ZoneInfo,
+               now: datetime | None = None) -> str:
     """Тот же экран из УЖЕ собранных карточек.
 
     Утренняя сводка идёт веером по админ-чатам с разными языками: список дня
-    для неё один, а рендеров столько, сколько языков у получателей."""
+    для неё один, а рендеров столько, сколько языков у получателей.
+
+    `now` — момент, на который решается, кого ещё ждём (⏳): у сводки это её
+    собственные 08:30, один на весь веер, а не время рендера каждого языка.
+    """
     if not cards:
         return at("today_empty", lang)
+    moment = now or datetime.now(tz)
     lines = [at("today_header", lang, date=f"{day:%d.%m}", count=len(cards))]
     silent = 0
     for card in cards:
-        mark = _mark(card)
+        mark = _mark(card, moment)
         if mark == _SILENT:
             silent += 1
         lines.append(mark + at(
@@ -60,11 +67,14 @@ def render_day(cards, day: date, lang: str, tz: ZoneInfo) -> str:
     return "\n".join(lines)
 
 
-def _mark(card) -> str:
+def _mark(card, now: datetime) -> str:
     """Значок состояния перед временем: подтвердил / молчит / не спрашивали.
 
-    Пустой значок — напоминание ещё не уходило: звонить такому пациенту
-    незачем, он просто не получал вопроса."""
+    Пустой значок — звонить незачем: либо напоминание ещё не уходило (пациент
+    не получал вопроса), либо приём уже начался. ⏳ значит «ещё ждём ответа»,
+    а по начавшемуся приёму ждать нечего — и счётчик «стоит позвонить» считает
+    ровно эти строки. ✅ на прошедшем приёме остаётся: это факт, а не просьба
+    о действии."""
     if card.confirm_status == "confirmed":
         return _CONFIRMED
-    return _SILENT if card.reminder_sent else ""
+    return _SILENT if card.reminder_sent and card.start > now else ""
