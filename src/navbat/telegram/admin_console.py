@@ -38,6 +38,9 @@ BTN_RESUME = TEMPLATES["btn_resume"]["ru"]
 PRICE_MAX = 1_000_000_000
 FAQ_MAX = 500
 DUR_MIN, DUR_MAX = 5, 480
+# Интервалы повторного визита: не свободный ввод, а три ходовых срока
+# (гигиена — полгода, осмотр — год). Владелец выбирает одним тапом
+RECALL_CHOICES = (3, 6, 12)
 BUF_MIN, BUF_MAX = 0, 120
 NAME_MAX = 80
 
@@ -411,6 +414,9 @@ class AdminConsole:
             onboard.activate_service(self._sf, self._cid, key)
             r = self._services_menu(lang, notice=at("svc_shown_notice", lang))
             self._edit_or_send(chat_id, message_id, r)
+        elif action is not None and action.startswith("recall:"):
+            self._apply_recall(chat_id, message_id, key,
+                               action[len("recall:"):])
         elif action == "del":
             r = self._service_card(key, lang,
                                    notice=at("svc_delete_confirm", lang),
@@ -462,6 +468,7 @@ class AdminConsole:
                          name=self._service_label(key, lang),
                          price=price_txt,
                          duration=at("minutes", lang, value=row.duration_min),
+                         recall=self._recall_value(row.recall_months, lang),
                          badge=_status_badge(row.is_active, True, lang))
         toggle_btn = (
             Button(at("btn_hide", lang), f"adm:svc:{key}:deact")
@@ -475,6 +482,11 @@ class AdminConsole:
         btn_rows_list = [
             (Button(at("btn_price_edit", lang), f"adm:svc:{key}:price"),
              Button(at("btn_dur_edit", lang), f"adm:svc:{key}:dur")),
+            # повторный визит — один тап без ввода: значение сразу на кнопке
+            (Button(at("btn_recall_off", lang), f"adm:svc:{key}:recall:off"),)
+            + tuple(Button(at("recall_value", lang, value=months),
+                           f"adm:svc:{key}:recall:{months}")
+                    for months in RECALL_CHOICES),
             (toggle_btn,),
         ]
         # Кнопка физического удаления — только деактивированной и без ссылок
@@ -484,6 +496,33 @@ class AdminConsole:
         btn_rows_list.append(
             (Button(at("btn_services_back", lang), "adm:services"),))
         return Reply(text, button_rows=tuple(btn_rows_list))
+
+    @staticmethod
+    def _recall_value(months: int | None, lang: str) -> str:
+        """Интервал повторного визита словами: «6 мес» или «выкл» (NULL)."""
+        if not months:
+            return at("recall_off", lang)
+        return at("recall_value", lang, value=months)
+
+    def _apply_recall(self, chat_id: int, message_id: int | None, key: str,
+                      raw: str) -> None:
+        """`adm:svc:<ключ>:recall:off|3|6|12` — интервал повторного визита."""
+        lang = self._lang(chat_id)
+        if raw == "off":
+            months = None
+        elif raw.isdigit() and int(raw) in RECALL_CHOICES:
+            months = int(raw)
+        else:
+            # значения приходят с наших же кнопок; чужой callback ничего не
+            # меняет и просто перерисовывает карточку
+            self._edit_or_send(chat_id, message_id,
+                               self._service_card(key, lang))
+            return
+        onboard.set_service_recall(self._sf, self._cid, key, months)
+        self._edit_or_send(chat_id, message_id, self._service_card(
+            key, lang, notice=at("recall_saved", lang,
+                                 label=self._service_label(key, lang),
+                                 value=self._recall_value(months, lang))))
 
     def _begin_dur_edit(self, chat_id: int, key: str, message_id: int | None) -> None:
         lang = self._lang(chat_id)

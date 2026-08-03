@@ -55,8 +55,8 @@ def service_price(session: Session, key: str) -> int | None:
 
 def service_list_all(session: Session) -> list[Row]:
     """ВСЕ услуги (вкл. деактивированные) для админ-консоли:
-    (name, duration_min, price, is_active), по алфавиту."""
+    (name, duration_min, price, is_active, recall_months), по алфавиту."""
     return list(session.execute(
-        text("SELECT name, duration_min, price, is_active FROM service "
-             "ORDER BY name")
+        text("SELECT name, duration_min, price, is_active, recall_months "
+             "FROM service ORDER BY name")
     ).all())

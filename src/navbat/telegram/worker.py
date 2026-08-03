@@ -482,8 +482,14 @@ class UpdateWorker:
             anchors = session.execute(
                 text("DELETE FROM admin_relay WHERE patient_chat_id = :chat"),
                 {"chat": target}).rowcount
+            # журнал recall-приглашений хранит СВОЮ копию tg_chat_id и живёт
+            # полгода (retention.RECALL_RETENTION_DAYS): обезличивание записи
+            # его не затрагивает, и забытый чат оставался бы в нём до срока
+            recalls = session.execute(
+                text("DELETE FROM recall_outreach WHERE tg_chat_id = :chat"),
+                {"chat": target}).rowcount
         if not any((reminders, patients, appointments, dialogs, messages,
-                    waiting, anchors)):
+                    waiting, anchors, recalls)):
             return Reply(at("forget_not_found", lang, chat=target))
         return Reply(at("forget_ok", lang, chat=target))
 

@@ -4,9 +4,10 @@
 статусах, протухшие контексты диалогов (conversation) — включая escalated:
 мёртвый лид старше 90 дней — это PII без операционной ценности, — вопросы
 без ответа (unanswered_question) и терминальные строки листа ожидания
-(waitlist). Особняком якоря свайп-ответов (admin_relay): у них свой,
-недельный срок. pending в очереди не трогаем (подберёт reclaim); записи
-и аудит — операционная история клиники, не чистятся.
+(waitlist). Особняком сроки у якорей свайп-ответов (admin_relay) — неделя —
+и у журнала recall-приглашений (recall_outreach) — полгода. pending в очереди
+не трогаем (подберёт reclaim); записи и аудит — операционная история клиники,
+не чистятся.
 """
 from __future__ import annotations
 
@@ -28,6 +29,11 @@ RETENTION_DAYS = int(os.environ.get("NAVBAT_RETENTION_DAYS", 90))
 # пара chat_id, зато после протухания он лишь мешает (реплай на древний алерт
 # уводит ответ пациенту, который давно ушёл из разговора).
 RELAY_RETENTION_DAYS = 7
+# Журнал recall-приглашений: окно конверсии к полугоду закрыто (пациент либо
+# вернулся по приглашению, либо нет), а в строке — chat_id пациента, поэтому
+# вечно она не живёт. Срок свой, длиннее общего: 90 дней обрезали бы витрину
+# по услугам с годовым интервалом.
+RECALL_RETENTION_DAYS = 180
 
 _HAS_UPCOMING_VISIT = (
     "EXISTS (SELECT 1 FROM appointment a WHERE a.tg_chat_id = c.tg_chat_id "
@@ -87,11 +93,18 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "AND created_at < now() - make_interval(days => :days)"),
             {"days": days},
         ).rowcount
+        # приглашения на повторный визит: срок свой, полугодовой
+        recalls = session.execute(
+            text("DELETE FROM recall_outreach "
+                 "WHERE sent_at < now() - make_interval(days => :days)"),
+            {"days": RECALL_RETENTION_DAYS},
+        ).rowcount
         relays = relay_repo.cleanup_old(session, RELAY_RETENTION_DAYS)
-    if messages or dialogs or questions or waitlist or relays:
+    if messages or dialogs or questions or waitlist or relays or recalls:
         log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов, "
                  "%d записей очереди старше %d дней; %d якорей свайп-ответа "
-                 "старше %d дней",
+                 "старше %d дней; %d recall-приглашений старше %d дней",
                  messages, dialogs, questions, waitlist, days,
-                 relays, RELAY_RETENTION_DAYS)
+                 relays, RELAY_RETENTION_DAYS,
+                 recalls, RECALL_RETENTION_DAYS)
     return messages, dialogs

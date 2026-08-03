@@ -43,6 +43,10 @@ class DailyStats:
     top_doctors: tuple[tuple[str, int, int], ...] = ()  # (имя, записей, сумма)
     hit_service: tuple[str, int] | None = None          # (ключ услуги, записей)
     waitlist_waiting: int = 0  # «сейчас в очереди ожидания» (снимок, не за период)
+    # recall (инкремент 4): приглашения на повторный визит и возвраты по ним
+    recalls_sent: int = 0
+    recalls_returned: int = 0
+    recalls_saved: int = 0
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -170,6 +174,28 @@ def collect_stats(session: Session, first: date, last: date,
         (names.get(row.doctor_id) or "Врач", row.cnt, int(row.revenue))
         for row in doctor_rows)
 
+    # Recall: приглашение ушло — «приглашений», пациент записался по нему —
+    # «вернулось». Деньги считаем по цене услуги ИСХОДНОГО приёма: приглашение
+    # зовёт на неё же, а новая запись к журналу не привязана и джойнить её
+    # было бы догадкой. NULL-цены в сумму не входят — неизвестную выручку не
+    # выдумываем (то же правило, что у prevented)
+    recall = session.execute(
+        text("""
+            SELECT
+                count(*) FILTER (WHERE (r.sent_at AT TIME ZONE :tz)::date
+                                       BETWEEN :first AND :last) AS sent,
+                count(*) FILTER (WHERE (r.booked_at AT TIME ZONE :tz)::date
+                                       BETWEEN :first AND :last) AS returned,
+                COALESCE(sum(s.price) FILTER (
+                    WHERE (r.booked_at AT TIME ZONE :tz)::date
+                          BETWEEN :first AND :last), 0) AS saved
+            FROM recall_outreach r
+            LEFT JOIN appointment a ON a.id = r.appointment_id
+            LEFT JOIN service s ON s.id = a.service_id
+        """),
+        span,
+    ).one()
+
     # В: хит-услуга — максимум confirm'ов периода по ключу услуги
     hit = session.execute(
         text("""
@@ -206,6 +232,9 @@ def collect_stats(session: Session, first: date, last: date,
         waitlist_waiting=session.execute(text(
             "SELECT count(*) FROM waitlist WHERE status IN "
             "('waiting', 'notified')")).scalar_one(),
+        recalls_sent=recall.sent,
+        recalls_returned=recall.returned,
+        recalls_saved=int(recall.saved),
     )
 
 
@@ -291,6 +320,11 @@ def render_stats(stats: DailyStats, day: date, last: date | None = None,
     if stats.waitlist_waiting:
         sections.append(at("stats_waitlist", lang,
                            count=stats.waitlist_waiting))
+    if stats.recalls_sent:
+        # рассылка не работала — строки нет: витрина владельца без нулей
+        sections.append(at("stats_recall", lang, sent=stats.recalls_sent,
+                           returned=stats.recalls_returned,
+                           money=_money(stats.recalls_saved)))
     middle = "".join(f"{section}\n" for section in sections)
 
     return (f"{header}\n"

@@ -284,6 +284,20 @@ def set_service_duration(session_factory, clinic_id: uuid.UUID, name: str,
         raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
 
 
+def set_service_recall(session_factory, clinic_id: uuid.UUID, name: str,
+                       months: int | None) -> None:
+    """Через сколько месяцев после визита звать на повторный; None — рассылка
+    по этой услуге выключена (умолчание)."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE service SET recall_months = :m WHERE name = :n "
+                 "RETURNING id"),
+            {"m": months, "n": name},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+
+
 def rename_doctor(session_factory, clinic_id: uuid.UUID, doctor_id: uuid.UUID,
                   name: str) -> None:
     with tenant_transaction(session_factory, clinic_id) as session:

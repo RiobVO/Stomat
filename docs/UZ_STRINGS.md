@@ -463,10 +463,14 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `services_title` | 💊 <b>Услуги</b> ⏎ Выберите услугу 👇 | **💊 <b>Xizmatlar</b> ⏎ Xizmatni tanlang 👇** | |
 | `btn_svc_add` | + Добавить услугу | **+ Xizmat qo'shish** | |
 | `svc_hidden_item` | ⚪ {name} (скрыта) | **⚪ {name} (yashirilgan)** | |
-| `svc_card` | {emoji} <b>{name}</b> ⏎  ⏎ 💰 Цена: {price} ⏎ ⏱ Длительность: {duration} ⏎ {badge} | **{emoji} <b>{name}</b> ⏎  ⏎ 💰 Narxi: {price} ⏎ ⏱ Davomiyligi: {duration} ⏎ {badge}** | |
+| `svc_card` | {emoji} <b>{name}</b> ⏎  ⏎ 💰 Цена: {price} ⏎ ⏱ Длительность: {duration} ⏎ 🔁 Повторный визит: {recall} ⏎ {badge} | **{emoji} <b>{name}</b> ⏎  ⏎ 💰 Narxi: {price} ⏎ ⏱ Davomiyligi: {duration} ⏎ 🔁 Takroriy tashrif: {recall} ⏎ {badge}** | |
 | `price_unset` | не задана | **kiritilmagan** | |
 | `sum` | {value} сум | **{value} so'm** | |
 | `minutes` | {value} мин | **{value} daqiqa** | |
+| `recall_value` | {value} мес | **{value} oy** | |
+| `recall_off` | выкл | **o'chiq** | |
+| `btn_recall_off` | 🔁 Выкл | **🔁 O'chirish** | |
+| `recall_saved` | ✅ Повторный визит «{label}»: {value} | **✅ «{label}» takroriy tashrifi: {value}** | |
 | `btn_price_edit` | 💰 Изм. цену | **💰 Narxi** | |
 | `btn_dur_edit` | ⏱ Изм. длит. | **⏱ Davomiyligi** | |
 | `svc_hidden_notice` | ⛔ Услуга скрыта | **⛔ Xizmat yashirildi** | |
@@ -598,6 +602,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `stats_doctor_line` | • {name} — {count} зап. (≈ {money} сум) | **• {name} — {count} ta yozuv (≈ {money} so'm)** | |
 | `stats_hit_service` | ✨ Хит-услуга ⏎ • {service} — {count} зап. | **✨ Eng ommabop xizmat ⏎ • {service} — {count} ta yozuv** | |
 | `stats_waitlist` | 🔔 Очередь ожидания ⏎ • сейчас ждут слота: {count} | **🔔 Kutish navbati ⏎ • hozir vaqt kutayotganlar: {count}** | |
+| `stats_recall` | 🔁 Возврат пациентов ⏎ • приглашений: {sent} · вернулось: {returned} (≈ {money} сум) | **🔁 Bemorlarning qaytishi ⏎ • takliflar: {sent} · qaytdi: {returned} (≈ {money} so'm)** | |
 | `stats_tech` | ⚙️ Служебное ⏎ • напоминаний: {reminders} · LLM: {requests} запросов, {tokens} токенов, сбоев: {failures}, repair: {repairs} | **⚙️ Texnik ⏎ • eslatmalar: {reminders} · LLM: {requests} so'rov, {tokens} token, xato: {failures}, repair: {repairs}** | |
 | `stats_p95` | · p95 ответа: {seconds} с (SLA &lt; 5 с) | **· javob p95: {seconds} s (SLA &lt; 5 s)** | |
 | `digest_title` | 📊 <b>Итог дня</b> | **📊 <b>Kun yakuni</b>** | |
