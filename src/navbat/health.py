@@ -23,9 +23,10 @@ from navbat.dialog.escalation import system_alert
 
 log = logging.getLogger("navbat.health")
 
-QUEUE_STALL_SEC = 120   # pending старше — очередь стоит
-CERT_WARN_DAYS = 14     # cert истекает раньше — degraded
-SYNC_AGE_FACTOR = 3     # возраст синка > N интервалов — синк мёртв
+QUEUE_STALL_SEC = 120     # pending старше — очередь стоит
+CERT_WARN_DAYS = 14       # cert истекает раньше — degraded
+SYNC_AGE_FACTOR = 3       # возраст синка > N интервалов — синк мёртв
+BACKUP_AGE_FACTOR = 2     # последний бэкап старше N интервалов — sidecar мёртв
 
 
 def days_until_cert_expiry(cert_path: str) -> int | None:
@@ -44,13 +45,18 @@ class HealthChecker:
 
     def __init__(self, session_factory: sessionmaker[Session],
                  clinic_id: uuid.UUID, *, sync_interval_sec: int = 60,
-                 cert_path: str | None = None, notifier=None) -> None:
+                 cert_path: str | None = None, notifier=None,
+                 backup_dir: str | None = None,
+                 backup_interval_sec: int = 7200) -> None:
         self._session_factory = session_factory
         self._clinic_id = clinic_id
         self._sync_interval_sec = sync_interval_sec
         self._cert_path = cert_path
         self._notifier = notifier
-        self._cert_alerted_on: date | None = None  # алерт раз в день
+        self._backup_dir = backup_dir
+        self._backup_interval_sec = backup_interval_sec
+        self._cert_alerted_on: date | None = None  # алерты раз в день
+        self._backup_alerted_on: date | None = None
 
     def snapshot(self, light: bool = False) -> tuple[bool, dict]:
         checks: dict = {}
@@ -60,6 +66,7 @@ class HealthChecker:
         ok = self._check_queue(checks) and ok
         ok = self._check_calendar(checks) and ok
         ok = self._check_cert(checks) and ok
+        ok = self._check_backups(checks) and ok
         self._report_llm(checks)
         self._report_p95(checks)
         return ok, checks
@@ -119,6 +126,51 @@ class HealthChecker:
                     f"TLS-cert истекает через {days} дн. — проверьте certbot "
                     f"(renewal каждые 12 ч в compose)", {})
         return days >= CERT_WARN_DAYS
+
+    def _check_backups(self, checks: dict) -> bool:
+        """Тихая смерть backup-sidecar: каталоги именованы UTC-штампом,
+        свежайший старше BACKUP_AGE_FACTOR интервалов → degraded + алерт."""
+        if not self._backup_dir:
+            checks["backups"] = "not-configured"
+            return True
+        try:
+            stamps = sorted(
+                entry.name for entry in Path(self._backup_dir).iterdir()
+                if entry.is_dir())
+        except OSError as e:
+            checks["backups"] = f"fail: {str(e)[:120]}"
+            return self._backup_alert("каталог бэкапов нечитаем")
+        if not stamps:
+            checks["backups"] = "empty"
+            return self._backup_alert("ни одного бэкапа в каталоге")
+        try:
+            newest = datetime.strptime(stamps[-1], "%Y%m%d-%H%M%S").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            checks["backups"] = f"fail: чужое имя каталога {stamps[-1]!r}"
+            return self._backup_alert("в каталоге бэкапов посторонние каталоги")
+        age = int((datetime.now(timezone.utc) - newest).total_seconds())
+        limit = self._backup_interval_sec * BACKUP_AGE_FACTOR
+        if age > limit:
+            checks["backups"] = f"stale: последний {age}s назад (порог {limit}s)"
+            return self._backup_alert(
+                f"последний бэкап снят {age // 3600} ч назад "
+                f"(порог {limit // 3600} ч)")
+        checks["backups"] = f"ok: последний {age}s назад"
+        return True
+
+    def _backup_alert(self, detail: str) -> bool:
+        """Алерт раз в день; всегда False — статус degraded."""
+        if self._notifier is not None:
+            today = datetime.now(timezone.utc).date()
+            if self._backup_alerted_on != today:
+                self._backup_alerted_on = today
+                system_alert(
+                    self._notifier,
+                    f"бэкапы БД не снимаются: {detail}. Проверьте "
+                    f"backup-контейнер: docker compose logs backup. "
+                    f"Без бэкапов смерть диска = потеря всех данных.", {})
+        return False
 
     def _report_llm(self, checks: dict) -> None:
         """Информационно: ключи и доля сбоев NLU за сегодня (не валит статус —
