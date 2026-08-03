@@ -18,6 +18,10 @@ from navbat.dialog.replies import service_label
 from navbat.telegram import feed_repo
 from navbat.telegram.admin_texts import at
 
+# значки состояния подтверждения перед временем строки
+_CONFIRMED = "✅ "
+_SILENT = "⏳ "
+
 
 def render_today(session: Session, lang: str, tz: ZoneInfo) -> str:
     """День клиники на СЕГОДНЯ: шапка с датой и числом приёмов + строки."""
@@ -33,8 +37,12 @@ def render_day(cards, day: date, lang: str, tz: ZoneInfo) -> str:
     if not cards:
         return at("today_empty", lang)
     lines = [at("today_header", lang, date=f"{day:%d.%m}", count=len(cards))]
+    silent = 0
     for card in cards:
-        lines.append(at(
+        mark = _mark(card)
+        if mark == _SILENT:
+            silent += 1
+        lines.append(mark + at(
             "today_line", lang,
             time=f"{card.start.astimezone(tz):%H:%M}",
             # пациента может не быть (приём с улицы, /forget), телефона —
@@ -45,4 +53,18 @@ def render_day(cards, day: date, lang: str, tz: ZoneInfo) -> str:
                      else at("feed_no_service", lang)),
             doctor=card.doctor_name or at("doc_noname", lang),
         ))
+    if silent:
+        # сразу под шапкой, а не в конце: список дня длинный, и главное
+        # действие владельца («позвонить троим») не должно ждать прокрутки
+        lines.insert(1, at("today_call_hint", lang, count=silent))
     return "\n".join(lines)
+
+
+def _mark(card) -> str:
+    """Значок состояния перед временем: подтвердил / молчит / не спрашивали.
+
+    Пустой значок — напоминание ещё не уходило: звонить такому пациенту
+    незачем, он просто не получал вопроса."""
+    if card.confirm_status == "confirmed":
+        return _CONFIRMED
+    return _SILENT if card.reminder_sent else ""

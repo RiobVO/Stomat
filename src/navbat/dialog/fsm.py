@@ -32,7 +32,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.crypto import encrypt_text
 from navbat.db.base import tenant_transaction
-from navbat.dialog import clinic_repo, doctors_repo, questions_repo, services_repo
+from navbat.dialog import (
+    appointments_repo, clinic_repo, doctors_repo, questions_repo, services_repo)
 from navbat.dialog.booking_flow import _BookingFlowMixin
 from navbat.dialog.calendar_flow import _CalendarFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
@@ -503,11 +504,26 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         lang = self._lang(conv)
         kind, _, rest = action.partition(":")
         if kind == "attend":
-            # «Приду» из напоминания — чистое подтверждение, состояние не
-            # меняет; работает и в escalated (живой тест 12.06: пациент позвал
-            # человека, потом пришло напоминание — тап не должен отвечать
-            # «передаю администратору»)
-            return Reply(t("attend_ok", lang))
+            # «Приду» из напоминания — подтверждение визита, состояние диалога
+            # не меняет; работает и в escalated (живой тест 12.06: пациент
+            # позвал человека, потом пришло напоминание — тап не должен
+            # отвечать «передаю администратору»)
+            try:
+                # id приходит из callback_data, то есть от клиента: мусор не
+                # должен падать в приведении типа и уводить сообщение в dead
+                # letter (тот же урок, что у remind_cancel)
+                uuid.UUID(rest)
+            except ValueError:
+                confirmed = False
+            else:
+                confirmed = appointments_repo.confirm_attendance(
+                    session, rest, conv.chat_id)
+            if confirmed:
+                return Reply(t("attend_ok", lang))
+            # чужая или уже отменённая запись ничего не подтверждает: кнопка
+            # висит в чате до приёма и переживает и отмену, и смену сценария
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
         if kind == "unfreeze":
             # выход из заморозки тапом = ровно то, что делает /start
             # (BRIEF 14.A): hold отпущен, счётчик сбоев в ноль, меню на экран.

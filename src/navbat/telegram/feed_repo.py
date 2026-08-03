@@ -33,6 +33,9 @@ class Card:
     tg_chat_id: int | None
     created_at: datetime
     status: str
+    confirm_status: str | None  # 'confirmed' — пациент нажал «Приду»
+    # напоминание по записи уже ушло: «молчит» = отправлено, но не подтверждено
+    reminder_sent: bool
 
 
 # Проекция карточки: одна на обоих потребителей (событие ленты и день
@@ -52,7 +55,13 @@ class Card:
 # по pt.id, и он верен: пациент у чата ровно один, только что созданный.
 _CARD_QUERY = """
     SELECT lower(a.time_range) AS start, a.created_at, a.status,
-           a.tg_chat_id, s.name AS service,
+           a.tg_chat_id, s.name AS service, a.confirm_status,
+           -- «молчит» не хранится, а выводится: напоминание ушло, отметки нет.
+           -- Отдельное поле состояния пришлось бы поддерживать фоном, и оно
+           -- расходилось бы с фактом отправки
+           EXISTS (SELECT 1 FROM reminder r
+                   WHERE r.appointment_id = a.id AND r.status = 'sent'
+                  ) AS reminder_sent,
            d.name_encrypted AS doctor_encrypted,
            p.name_encrypted AS patient_encrypted, p.phone_encrypted
     FROM appointment a
@@ -118,6 +127,8 @@ def _card(row) -> Card:
         tg_chat_id=row.tg_chat_id,
         created_at=row.created_at,
         status=row.status,
+        confirm_status=row.confirm_status,
+        reminder_sent=row.reminder_sent,
     )
 
 

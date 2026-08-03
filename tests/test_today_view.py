@@ -53,17 +53,21 @@ def add_patient(app_session_factory, clinic_id):
 def seed_today(admin_engine, clinic_id, doctor_id, service_id, hhmm,
                patient_id=None, chat_id=None):
     """Приём на сегодня прямым INSERT: движок не даёт занять прошедший час,
-    а «сегодня» в тестах — любое время суток и любой день недели."""
+    а «сегодня» в тестах — любое время суток и любой день недели.
+
+    Возвращает id — тестам статусов подтверждения нужна конкретная запись."""
     start = at_tashkent(today_local(), hhmm)
+    appointment_id = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(
             text("INSERT INTO appointment (id, clinic_id, doctor_id, "
                  "service_id, patient_id, time_range, status, tg_chat_id) "
                  "VALUES (:i, :c, :d, :s, :p, tstzrange(:lo, :hi, '[)'), "
                  "'booked', :chat)"),
-            {"i": uuid.uuid4(), "c": clinic_id, "d": doctor_id,
+            {"i": appointment_id, "c": clinic_id, "d": doctor_id,
              "s": service_id, "p": patient_id, "lo": start,
              "hi": start + timedelta(minutes=30), "chat": chat_id})
+    return appointment_id
 
 
 def set_admin_lang(app_session_factory, clinic_id, lang, chat_id=ADMIN_CHAT):
@@ -227,3 +231,106 @@ def test_morning_summary_goes_out_once_a_day(
 
     assert service.maybe_send_morning_summary(now_local=moment) is False
     assert len(api.sent) == delivered, api.sent[delivered:]
+
+
+# ── Статусы подтверждения визита (инкремент 3) ─────────────────────────────
+
+def mark_confirmed(admin_engine, appointment_id):
+    """Пациент нажал «Приду» — то же, что пишет ветка attend."""
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE appointment SET confirm_status = 'confirmed', "
+                 "confirmed_at = now() WHERE id = :id"), {"id": appointment_id})
+
+
+def mark_reminded(admin_engine, clinic_id, appointment_id):
+    """Напоминание по записи уже ушло: «молчит» — это отправленное
+    напоминание без отметки, отдельного состояния у записи нет."""
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO reminder (clinic_id, appointment_id, kind, "
+                 "send_at, status, sent_at) "
+                 "VALUES (:c, :a, '120m', now(), 'sent', now())"),
+            {"c": clinic_id, "a": appointment_id})
+
+
+def line_for(body, hhmm):
+    return next(line for line in body.splitlines() if hhmm in line)
+
+
+def three_states(admin_engine, clinic_a, doctor_id, service_id):
+    """День из трёх записей: подтвердил / молчит / напоминание ещё не ушло."""
+    confirmed = seed_today(admin_engine, clinic_a, doctor_id, service_id,
+                           "09:00", chat_id=CHAT)
+    silent = seed_today(admin_engine, clinic_a, doctor_id, service_id,
+                        "10:00", chat_id=CHAT + 1)
+    seed_today(admin_engine, clinic_a, doctor_id, service_id,
+               "11:00", chat_id=CHAT + 2)  # напоминание ещё не уходило
+    # подтвердивший тоже получил напоминание: отметка обязана перебивать ⏳
+    mark_reminded(admin_engine, clinic_a, confirmed)
+    mark_confirmed(admin_engine, confirmed)
+    mark_reminded(admin_engine, clinic_a, silent)
+
+
+def test_today_marks_confirmation_state_of_every_line(
+        app_session_factory, admin_engine, clinic_a, doctor_named,
+        service_cleaning):
+    """Ради этого экран и делался: видно, кому звонить.
+
+    Три состояния — подтвердил, молчит после напоминания, напоминание ещё
+    не уходило — обязаны различаться в строке, иначе владелец обзванивает
+    всех подряд, включая тех, кого ещё и не спрашивали."""
+    three_states(admin_engine, clinic_a, doctor_named, service_cleaning)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+
+    send_admin(worker, app_session_factory, clinic_a, "/today")
+
+    body = last_to(api, ADMIN_CHAT)
+    assert line_for(body, "09:00").startswith("✅"), body
+    assert line_for(body, "10:00").startswith("⏳"), body
+    assert line_for(body, "11:00").startswith("11:00"), \
+        f"запись без напоминания помечена как молчун: {body}"
+    assert at("today_call_hint", "ru", count=1) in body, \
+        f"владельцу не сказано, сколько человек не ответили: {body}"
+
+
+def test_today_without_silent_patients_has_no_call_hint(
+        app_session_factory, admin_engine, clinic_a, doctor_named,
+        service_cleaning):
+    """Все подтвердили — звонить некому: строка «стоит позвонить» в такой
+    день только шумит, и ⏳ в списке взяться неоткуда."""
+    first = seed_today(admin_engine, clinic_a, doctor_named, service_cleaning,
+                       "09:00", chat_id=CHAT)
+    second = seed_today(admin_engine, clinic_a, doctor_named, service_cleaning,
+                        "10:00", chat_id=CHAT + 1)
+    for appointment_id in (first, second):
+        mark_reminded(admin_engine, clinic_a, appointment_id)
+        mark_confirmed(admin_engine, appointment_id)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+
+    send_admin(worker, app_session_factory, clinic_a, "/today")
+
+    body = last_to(api, ADMIN_CHAT)
+    assert line_for(body, "09:00").startswith("✅"), body
+    assert line_for(body, "10:00").startswith("✅"), body
+    assert "⏳" not in body, body
+    assert "⚠️" not in body, f"подсказка о звонках осталась в полном дне: {body}"
+
+
+def test_morning_summary_carries_the_call_hint(
+        app_session_factory, admin_engine, clinic_a, doctor_named,
+        service_cleaning):
+    """Сводка в 08:30 — единственный экран, который владелец видит ДО начала
+    приёма: молчуны обязаны доехать в ней, а не только в /today по запросу."""
+    three_states(admin_engine, clinic_a, doctor_named, service_cleaning)
+    api = FakeTelegramAPI()
+    service = morning_service(app_session_factory, clinic_a, api)
+    moment = datetime.now(TASHKENT).replace(hour=8, minute=31)
+
+    assert service.maybe_send_morning_summary(now_local=moment) is True
+
+    for _, body, _ in api.sent:
+        assert at("today_call_hint", "ru", count=1) in body, body
+        assert line_for(body, "09:00").startswith("✅"), body
