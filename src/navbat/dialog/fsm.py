@@ -15,7 +15,9 @@ DialogEngine — роутер: входные точки, перехват /star
 - book↔question бэкстоп: вопрос с date_ref/time_ref («есть время сегодня?») —
   это вопрос о наличии, отвечаем ВСЕГДА слотами (известная дыра NLU);
 - is_medical=true → медицинский дисклеймер код-слоем, один раз за диалог;
-- 2 кривых ответа NLU подряд → эскалация и стоп-состояние escalated.
+- эскалация (стоп-состояние escalated) — только по прямой просьбе человека
+  или при двойном сбое подтверждения записи (П-2а); кривые ответы NLU и
+  вопросы вне компетенции дают «не понял» + кнопки, админа не дёргают.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
     Conversation, load_conversation, save_conversation)
 from navbat.dialog.dialog_common import (
-    MAX_NLU_FAILURES, SlotGuard, mentions_availability)
+    MAX_NLU_FAILURES, SlotGuard, mentions_availability, mentions_human_request)
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import phone_to_hash
 from navbat.dialog.replies import (
@@ -192,6 +194,8 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
     def _on_menu(self, session: Session, conv: Conversation, key: str) -> Reply:
         """Диспетчер нажатий reply-кнопок главного меню."""
+        # меню = пациент сориентировался: серия «не понял» прервана (П-2а)
+        conv.context.nlu_failures = 0
         if key == "btn_menu_book":
             self._abort_pending(conv)
             return self._advance_booking(session, conv)
@@ -225,7 +229,14 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
         if conv.state == "awaiting_name":
+            # детектор просьбы человека здесь выключен: любой текст может
+            # быть именем («Оператор Умаров» — редкое, но имя)
             return self._on_name(session, conv, message)
+        if mentions_human_request(message):
+            # прямая просьба позвать человека — единственный текстовый путь
+            # к эскалации (П-2а); ловится ДО NLU: ноль токенов и работает
+            # даже при лежащем LLM
+            return self._escalate_on_request(session, conv)
         if conv.state == "awaiting_phone":
             return self._on_phone(session, conv, message)
 
@@ -236,7 +247,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # счётчик сбоев не трогаем (это режим, не сбой)
             return Reply(t("llm_off_menu", lang), menu=menu_rows(lang))
         except ExtractionError:
-            return self._on_nlu_failure(conv)
+            return self._on_nlu_failure(session, conv)
         conv.context.nlu_failures = 0
         lang = "ru" if extraction.language == "mixed" else extraction.language
         conv.context.lang = lang
@@ -309,15 +320,30 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             conv.state = "booking_collect"
         return Reply(t("ask_date", lang), self._date_buttons(session, lang))
 
-    def _on_nlu_failure(self, conv: Conversation) -> Reply:
+    def _escalate_on_request(self, session: Session, conv: Conversation) -> Reply:
+        """Эскалация по прямой просьбе пациента: заморозка + алерт.
+
+        notify ДО _abort_pending — контекст сценария должен доехать до
+        админа целым; висящий hold отпускаем, бронь просьбу не переживает."""
+        self._notifier.notify(conv.chat_id, "пациент просит администратора",
+                              self._escalation_context(conv))
+        self._abort_pending(conv)
+        conv.state = "escalated"
+        # вне рабочего окна честно говорим «утром» — иначе пациент ждёт
+        # ответа ночью
+        key = "escalated_closed" if self._closed_now(session) else "escalated"
+        return Reply(t(key, self._lang(conv)))
+
+    def _on_nlu_failure(self, session: Session, conv: Conversation) -> Reply:
         lang = self._lang(conv)
         failures = conv.context.nlu_failures + 1
         conv.context.nlu_failures = failures
         if failures >= MAX_NLU_FAILURES:
-            self._notifier.notify(conv.chat_id, "2 кривых ответа NLU подряд",
-                                  self._escalation_context(conv))
-            conv.state = "escalated"
-            return Reply(t("escalated", lang))
+            # NLU лежит или текст нечитаем — НЕ эскалируем (П-2а): повторяем
+            # текущий шаг кнопками, кнопочный путь работает без LLM (C-4);
+            # человека пациент зовёт сам («позовите администратора»)
+            note = Reply(t("not_understood", lang), menu=menu_rows(lang))
+            return self._with_reprompt(session, conv, note)
         # не понятому пациенту всегда доступны кнопки самообслуживания (M7)
         return Reply(t("reask", lang), menu=menu_rows(lang))
 
@@ -396,7 +422,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
     def _answer_question(self, session: Session, conv: Conversation,
                          extraction: Extraction) -> Reply:
-        """Цена — из каталога; всё прочее (адрес, часы…) — администратору.
+        """Цена — из каталога; на прочее бот честно отвечает «не понял».
         Состояние диалога вопрос не меняет."""
         lang = self._lang(conv)
         if extraction.service:
@@ -406,9 +432,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 return Reply(t("price_unknown", lang, service=label))
             formatted = f"{int(price):,}".replace(",", " ")
             return Reply(t("price_answer", lang, service=label, price=formatted))
-        self._notifier.notify(conv.chat_id, "вопрос вне компетенции бота",
-                              self._escalation_context(conv))
-        return Reply(t("faq_fallback", lang))
+        # вопрос вне компетенции: «не понял» + меню, БЕЗ алерта (П-2а) —
+        # админа зовёт только сам пациент; тексты неотвеченных вопросов
+        # попадут владельцу в вечерний дайджест (П-2б)
+        return Reply(t("not_understood", lang), menu=menu_rows(lang))
 
     def _with_reprompt(self, session: Session, conv: Conversation,
                        answer: Reply) -> Reply:

@@ -4,6 +4,7 @@ god-object DialogEngine (R4); общие хелперы и роутер — че
 from __future__ import annotations
 
 import uuid
+from contextlib import suppress
 from dataclasses import replace
 from datetime import date, datetime
 
@@ -196,6 +197,22 @@ class _BookingFlowMixin:
         except HoldExpiredError:
             ctx.appointment_id = None
             return self._offer_slots(session, conv, note="hold_expired")
+        except Exception:
+            # технический сбой подтверждения (БД/engine ведёт СВОИ транзакции —
+            # диалоговая сессия цела): первый раз отпускаем hold и предлагаем
+            # слоты заново; второй подряд — пациент доведён до конца и теряет
+            # запись, это честный аварийный минимум эскалации (П-2а)
+            failures = ctx.confirm_failures + 1
+            ctx.confirm_failures = failures
+            with suppress(Exception):
+                self._sched.cancel(appointment_id)
+            ctx.appointment_id = None
+            if failures >= 2:
+                self._notifier.notify(conv.chat_id, "сбой подтверждения записи",
+                                      self._escalation_context(conv))
+                conv.state = "escalated"
+                return Reply(t("escalated", lang))
+            return self._offer_slots(session, conv, note="confirm_retry")
         local = datetime.fromisoformat(ctx.slot_start).astimezone(self._clinic_tz(session))
         doctor = f", {ctx.slot_doctor}" if ctx.slot_doctor else ""
         reply = Reply(t("booked", lang, service=service_label(ctx.service, lang),

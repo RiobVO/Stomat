@@ -156,13 +156,14 @@ def test_price_question_with_marker_still_prices(
     assert notifier.calls == []
 
 
-def test_unrelated_question_keeps_current_path(
+def test_unrelated_question_not_availability(
         app_session_factory, admin_engine, clinic_a, doctor_a):
-    # вне контекста и без маркеров — штатный путь «вне компетенции»
-    # (П-2а заменит его на «не понял» + меню, этот тест тогда перепишется)
+    # вне контекста и без маркеров — это НЕ вопрос о наличии: «не понял»
+    # + меню (П-2а), кнопок дат нет, админа не дёргаем
     engine, notifier = make(app_session_factory, clinic_a,
                             [extr(intent="question")])
     reply = engine.handle_text(CHAT, "вы принимаете карты?")
 
     assert not date_actions(reply)
-    assert notifier.calls  # пока — алерт админу, как раньше
+    assert reply.menu
+    assert notifier.calls == []

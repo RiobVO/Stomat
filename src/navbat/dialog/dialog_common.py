@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Protocol
 
-MAX_NLU_FAILURES = 2     # подряд; дальше — эскалация
+MAX_NLU_FAILURES = 2     # подряд; дальше — «не понял» + повтор шага кнопками
 SLOTS_PER_REPLY = 4      # кнопок со временем в одном ответе
 NEAREST_DAY_SCAN = 14    # дней вперёд при поиске свободного дня
 
@@ -24,13 +24,34 @@ _AVAILABILITY_RE = re.compile(
 )
 _APOSTROPHES = ("ʻ", "’", "`")
 
+# Прямая просьба позвать человека — единственный текстовый путь к эскалации
+# (П-2а). «человек»/«odam» — только в биграммах: «запишите двух человек» и
+# «ikki odamga» — это количество пациентов, не просьба оператора.
+_HUMAN_REQUEST_RE = re.compile(
+    r"\b(администратор\w*|оператор\w*|менеджер\w*"
+    r"|позов\w*|позвать|соедин\w*"
+    r"|жив(?:ой|ым)\s+человек\w*|нужен\s+человек|дайте\s+человека"
+    r"|с\s+человеком"
+    r"|administrator\w*|operator\w*|menejer\w*|chaqir\w*"
+    r"|odam\s+kerak|odam\s+bilan|jonli\s+odam)\b",
+)
 
-def mentions_availability(message: str) -> bool:
-    """Текст содержит явный маркер вопроса о наличии слотов (ru/uz)."""
+
+def _normalize(message: str) -> str:
     norm = message.casefold()
     for apo in _APOSTROPHES:
         norm = norm.replace(apo, "'")
-    return _AVAILABILITY_RE.search(norm) is not None
+    return norm
+
+
+def mentions_availability(message: str) -> bool:
+    """Текст содержит явный маркер вопроса о наличии слотов (ru/uz)."""
+    return _AVAILABILITY_RE.search(_normalize(message)) is not None
+
+
+def mentions_human_request(message: str) -> bool:
+    """Пациент прямо просит позвать человека (ru/uz)."""
+    return _HUMAN_REQUEST_RE.search(_normalize(message)) is not None
 
 
 def _looks_like_question(message: str) -> bool:

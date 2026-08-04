@@ -150,10 +150,26 @@ TEMPLATES = {
         "ru": "Цену на «{service}» уточнит администратор.",
         "uz": "«{service}» narxini administrator aniqlashtiradi.",
     },
-    "faq_fallback": {
-        "ru": "Это уточнит администратор — я передал ему ваш вопрос.",
-        "uz": "Buni administrator aniqlashtiradi — savolingizni unga "
-              "yubordim.",
+    "not_understood": {
+        "ru": "Я не понял. Помогу записаться, перенести или отменить приём — "
+              "выберите действие в меню. Нужен человек — напишите "
+              "«позовите администратора».",
+        "uz": "Tushunmadim. Qabulga yozilish, uni ko'chirish yoki bekor "
+              "qilishda yordam beraman — menyudan amalni tanlang. "
+              "Administrator kerak bo'lsa — «administratorni chaqiring» "
+              "deb yozing.",
+    },
+    "escalated_closed": {
+        "ru": "Передаю администратору. Клиника сейчас закрыта — он ответит "
+              "вам здесь утром.",
+        "uz": "Administratorga uzataman. Klinika hozir yopiq — u sizga "
+              "ertalab shu yerda javob beradi.",
+    },
+    "confirm_retry": {
+        "ru": "Техническая заминка — подтвердить запись не получилось. "
+              "Пожалуйста, выберите время ещё раз:",
+        "uz": "Texnik nosozlik — qabulni tasdiqlab bo'lmadi. Iltimos, "
+              "vaqtni yana tanlang:",
     },
     "cancel_confirm_q": {
         "ru": "Отменить вашу запись на {when}?",

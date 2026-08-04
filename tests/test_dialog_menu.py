@@ -182,11 +182,9 @@ def test_menu_cancel_mid_booking_cancels_hold_directly(
 
 def test_menu_in_escalated_state_stays_blocked(app_session_factory, admin_engine,
                                                clinic_a):
-    engine, _ = counting_engine(
-        app_session_factory, clinic_a,
-        script=[ExtractionError("кривой JSON"), ExtractionError("кривой JSON")])
-    engine.handle_text(CHAT, "абракадабра")
-    engine.handle_text(CHAT, "абракадабра ещё раз")
+    # эскалация — по прямой просьбе человека (П-2а), NLU не дёргается
+    engine, _ = counting_engine(app_session_factory, clinic_a, script=[])
+    engine.handle_text(CHAT, "позовите администратора")
     assert fsm_state(admin_engine) == "escalated"
 
     reply = engine.handle_text(CHAT, TEMPLATES["btn_menu_book"]["ru"])

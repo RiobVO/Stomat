@@ -24,16 +24,16 @@
 - Create: `tests/test_availability_question.py`
 - Modify: `src/navbat/dialog/dialog_common.py`, `src/navbat/dialog/fsm.py`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_availability_question.py`: чистый детектор (параметризованные позитив/негатив, включая uz-апострофы U+02BB/U+2019 и негатив «мой друг посоветовал»); idle + маркер → 3 кнопки `date:` + state `booking_collect` + notifier пуст; контекст после показа слотов (фраза БЕЗ маркеров) → кнопки дат, без алерта; resched_offer_slots + вопрос наличия → state остаётся resched; question+service → прайс как раньше; вопрос без маркеров вне контекста → старый путь (алерт, до П-2а); выбранная дата после availability-ответа → слоты по checkup (end-to-end без тупика).
-- [ ] **Step 2: Run** → FAIL (нет mentions_availability / ветки маршрутизации)
-- [ ] **Step 3: Код** — `dialog_common.py`: `mentions_availability` (casefold + нормализация апострофов + word-boundary regex: ещё|еще|друго\w*|други\w*|свободн\w*|окошк\w*|мест\w*|слот\w*|вариант\w*|попозже|пораньше|boshqa|yana|bo'sh\w*|joy\w*|vaqt\w*). `fsm.py`: `_route_intent(..., message)`; ветка наличия; `_asks_availability(conv, message)` (контекст ИЛИ словарь); `_availability_reply` (дефолт checkup вне resched → `_ask_date`); ветка `ask_date` в `_process_action` → `self._ask_date(session, conv)`.
-- [ ] **Step 4: Run** новый файл + test_dialog_booking + test_dialog_question + test_dialog_menu + test_dialog_reschedule_cancel → PASS
-- [ ] **Step 5:** полный сьют `python -m pytest -q` → зелёный
-- [ ] **Step 6: Commit** `feat(dialog): availability questions get date picker, not escalation (P1)` + push
+- [x] **Step 1: Write the failing tests** — `tests/test_availability_question.py`: чистый детектор (параметризованные позитив/негатив, включая uz-апострофы U+02BB/U+2019 и негатив «мой друг посоветовал»); idle + маркер → 3 кнопки `date:` + state `booking_collect` + notifier пуст; контекст после показа слотов (фраза БЕЗ маркеров) → кнопки дат, без алерта; resched_offer_slots + вопрос наличия → state остаётся resched; question+service → прайс как раньше; вопрос без маркеров вне контекста → старый путь (алерт, до П-2а); выбранная дата после availability-ответа → слоты по checkup (end-to-end без тупика).
+- [x] **Step 2: Run** → FAIL (нет mentions_availability / ветки маршрутизации)
+- [x] **Step 3: Код** — `dialog_common.py`: `mentions_availability` (casefold + нормализация апострофов + word-boundary regex: ещё|еще|друго\w*|други\w*|свободн\w*|окошк\w*|мест\w*|слот\w*|вариант\w*|попозже|пораньше|boshqa|yana|bo'sh\w*|joy\w*|vaqt\w*). `fsm.py`: `_route_intent(..., message)`; ветка наличия; `_asks_availability(conv, message)` (контекст ИЛИ словарь); `_availability_reply` (дефолт checkup вне resched → `_ask_date`); ветка `ask_date` в `_process_action` → `self._ask_date(session, conv)`.
+- [x] **Step 4: Run** новый файл + test_dialog_booking + test_dialog_question + test_dialog_menu + test_dialog_reschedule_cancel → PASS
+- [x] **Step 5:** полный сьют `python -m pytest -q` → зелёный
+- [x] **Step 6: Commit** `feat(dialog): availability questions get date picker, not escalation (P1)` + push
 
 ## Definition of Done (П-1)
 
-- [ ] «а больше слотов нету?» (и uz-аналоги) → кнопки дат, notifier.calls == [].
-- [ ] Контекст предложения слотов делает ЛЮБОЙ вопрос без услуги вопросом наличия.
-- [ ] Прайс (question+service) и бэкстоп question+date_ref не задеты.
-- [ ] Полный сьют зелёный; коммит в origin/master.
+- [x] «а больше слотов нету?» (и uz-аналоги) → кнопки дат, notifier.calls == [].
+- [x] Контекст предложения слотов делает ЛЮБОЙ вопрос без услуги вопросом наличия.
+- [x] Прайс (question+service) и бэкстоп question+date_ref не задеты.
+- [x] Полный сьют зелёный; коммит в origin/master.

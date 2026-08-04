@@ -51,9 +51,6 @@ REVIEWED_UZ = {
     "escalated": (
         "Administratorga ulab berdim — u tez orada shu yerda javob beradi."
     ),
-    "faq_fallback": (
-        "Buni administrator aniqlashtiradi — savolingizni unga yubordim."
-    ),
     "stale_button": "Bu tugma endi faol emas.",
     "btn_remind_cancel": "Qabulni bekor qilish",
 }
