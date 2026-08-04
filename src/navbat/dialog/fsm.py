@@ -34,7 +34,8 @@ from navbat.dialog.booking_flow import _BookingFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
     Conversation, load_conversation, save_conversation)
-from navbat.dialog.dialog_common import MAX_NLU_FAILURES, SlotGuard
+from navbat.dialog.dialog_common import (
+    MAX_NLU_FAILURES, SlotGuard, mentions_availability)
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import phone_to_hash
 from navbat.dialog.replies import (
@@ -240,11 +241,11 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         lang = "ru" if extraction.language == "mixed" else extraction.language
         conv.context.lang = lang
 
-        reply = self._route_intent(session, conv, extraction)
+        reply = self._route_intent(session, conv, extraction, message)
         return self._with_medical_disclaimer(conv, extraction, reply)
 
     def _route_intent(self, session: Session, conv: Conversation,
-                      extraction: Extraction) -> Reply:
+                      extraction: Extraction, message: str) -> Reply:
         # бэкстоп: «есть время сегодня?» NLU уводит в question — но вопрос
         # с привязкой ко времени == вопрос о наличии, отвечаем слотами
         booking_like = extraction.intent == "book" or (
@@ -262,6 +263,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 # наличие спрашивают без услуги — сетку считаем по осмотру
                 conv.context.service = "checkup"
             return self._continue_booking(session, conv, extraction)
+        if extraction.intent in ("question", "other") and not extraction.service \
+                and self._asks_availability(conv, message):
+            # вопрос о наличии без даты («а ещё?», «другой день?») — выбор
+            # дня, не эскалация: на вопрос о наличии бот ВСЕГДА отвечает
+            # слотами (П-1, та же философия, что и book↔question бэкстоп)
+            return self._availability_reply(session, conv)
         if extraction.intent == "question":
             answer = self._answer_question(session, conv, extraction)
             return self._with_reprompt(session, conv, answer)
@@ -272,6 +279,35 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         lang = self._lang(conv)
         # off-topic не оставляет пациента без выхода — кнопки меню под рукой (M7)
         return Reply(t("other_fallback", lang), menu=menu_rows(lang))
+
+    def _asks_availability(self, conv: Conversation, message: str) -> bool:
+        """Это вопрос о наличии? Контекст ИЛИ словарь (П-1).
+
+        Контекст: бот только что предлагал слоты (или услуга/дата уже
+        в работе) — любое уточнение без услуги трактуем как «а ещё?»,
+        повторить предложение безопасно всегда. Вне контекста — только
+        явные маркеры наличия (узкий словарь ru/uz)."""
+        if conv.state in ("booking_collect", "booking_offer_slots",
+                          "resched_offer_slots"):
+            return True
+        if conv.context.service or conv.context.date:
+            return True
+        return mentions_availability(message)
+
+    def _availability_reply(self, session: Session, conv: Conversation) -> Reply:
+        # без услуги сетку после выбора дня считаем по осмотру — тот же
+        # дефолт, что в book-бэкстопе; перенос услугу не трогает
+        if not conv.context.resched_id and not conv.context.service \
+                and self._service_id(session, "checkup") is not None:
+            conv.context.service = "checkup"
+        return self._ask_date(session, conv)
+
+    def _ask_date(self, session: Session, conv: Conversation) -> Reply:
+        """Выбор дня (кнопка «Другое время» и вопросы о наличии)."""
+        lang = self._lang(conv)
+        if not conv.context.resched_id:
+            conv.state = "booking_collect"
+        return Reply(t("ask_date", lang), self._date_buttons(session, lang))
 
     def _on_nlu_failure(self, conv: Conversation) -> Reply:
         lang = self._lang(conv)
@@ -318,9 +354,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 return self._offer_resched_slots(session, conv)
             return self._advance_booking(session, conv)
         if kind == "ask_date":
-            if not conv.context.resched_id:
-                conv.state = "booking_collect"
-            return Reply(t("ask_date", lang), self._date_buttons(session, lang))
+            return self._ask_date(session, conv)
         if kind == "slot":
             doctor_id, _, start_iso = rest.partition(":")
             return self._on_slot_chosen(session, conv, doctor_id, start_iso)
