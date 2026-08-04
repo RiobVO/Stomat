@@ -51,12 +51,9 @@ class _RescheduleFlowMixin:
         day, slots = self._collect_slots(session, doctors, service_id, asked,
                                          ctx.time_ref)
         if not slots:
-            self._notifier.notify(conv.chat_id,
-                                  "перенос: нет слотов на 2 недели вперёд",
-                                  self._escalation_context(conv))
-            self._clear_booking(conv)
-            conv.state = "idle"
-            return Reply(t("no_slots_at_all", lang))
+            # П-5: календарь вместо «передаю администратору» (FYI раз в день)
+            return self._no_slots_calendar(session, conv,
+                                           "перенос: нет слотов на 2 недели вперёд")
         buttons = [
             Button(self._slot_label(start, doctor_name, tz, multi_doctor=False),
                    f"reslot:{start.isoformat()}")

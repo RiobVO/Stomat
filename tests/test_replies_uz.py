@@ -21,9 +21,6 @@ REVIEWED_UZ = {
         "yoki bekor qilishda yordam beraman. Tibbiy savollarga shifokor "
         "javob beradi."
     ),
-    "no_slots_at_all": (
-        "Yaqin ikki haftada bo'sh vaqt yo'q — sizni administratorga ulayman."
-    ),
     "hold_expired": (
         "Tanlangan vaqtni band qilish muddati tugadi. Mana yangi variantlar:"
     ),
