@@ -17,17 +17,23 @@ class Button:
 
 @dataclass(frozen=True)
 class Reply:
-    """contact_request, buttons и menu взаимоисключающие:
+    """contact_request, buttons/button_rows и menu взаимоисключающие:
     в Telegram reply_markup один.
 
     contact_request — label кнопки «Поделиться контактом» (ReplyKeyboardMarkup,
     request_contact=True); menu — ряды label'ов постоянной reply-клавиатуры
-    главного меню.
+    главного меню. button_rows — многорядная inline-клавиатура (П-4, сетка
+    календаря); flat buttons — одна колонка, как раньше. edit — адаптер
+    редактирует сообщение-источник callback'а вместо отправки нового;
+    toast — текст answerCallbackQuery (text=='' → сообщение не шлётся).
     """
     text: str
     buttons: tuple[Button, ...] = ()
     contact_request: str | None = None
     menu: tuple[tuple[str, ...], ...] | None = None
+    button_rows: tuple[tuple[Button, ...], ...] = ()
+    edit: bool = False
+    toast: str | None = None
 
 
 MEDICAL_DISCLAIMER = {

@@ -28,12 +28,15 @@ class FakeTelegramAPI:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str, tuple]] = []
         self.keyboards: list[tuple] = []  # (contact_request, menu)
+        self.row_keyboards: list[tuple] = []  # button_rows последней отправки
+        self.edited: list[tuple] = []  # (chat, message_id, text, rows)
         self.answered: list[str] = []
+        self.toasts: list[str] = []
         self.send_failures = 0  # сколько ближайших send уронить
         self.chat_gone = False  # пациент заблокировал бота / удалил чат
 
     def send_message(self, chat_id, text, buttons=(),
-                     contact_request=None, menu=None):
+                     contact_request=None, menu=None, button_rows=()):
         if self.chat_gone:
             raise ChatUnavailableError("Forbidden: bot was blocked by the user")
         if self.send_failures > 0:
@@ -41,10 +44,18 @@ class FakeTelegramAPI:
             raise TelegramAPIError("эмуляция падения сети")
         self.sent.append((chat_id, text, tuple(buttons)))
         self.keyboards.append((contact_request, menu))
+        self.row_keyboards.append(tuple(button_rows))
         return {"message_id": len(self.sent)}
 
-    def answer_callback_query(self, callback_query_id):
+    def edit_message_text(self, chat_id, message_id, text, buttons=(),
+                          button_rows=()):
+        self.edited.append((chat_id, message_id, text, tuple(button_rows)))
+        return {"message_id": message_id}
+
+    def answer_callback_query(self, callback_query_id, text=None):
         self.answered.append(callback_query_id)
+        if text:
+            self.toasts.append(text)
         return True
 
 
@@ -76,7 +87,8 @@ def put_callback(app_session_factory, clinic_id, data, chat_id=CHAT):
     update_id = next(UPDATE_SEQ)
     payload = {"update_id": update_id,
                "callback_query": {"id": f"cq{update_id}", "data": data,
-                                  "message": {"chat": {"id": chat_id}}}}
+                                  "message": {"chat": {"id": chat_id},
+                                              "message_id": 77}}}
     with tenant_transaction(app_session_factory, clinic_id) as session:
         enqueue(session, update_id, chat_id, payload)
 

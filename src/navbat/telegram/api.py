@@ -22,6 +22,16 @@ _HTTP_TIMEOUT = httpx.Timeout(LONG_POLL_TIMEOUT + 5, connect=5)
 _RETRY_DELAYS = (1, 2, 4)
 
 
+def _inline_keyboard(buttons: Sequence[Button],
+                     button_rows: Sequence[Sequence[Button]]) -> dict:
+    """inline_keyboard: ряды как заданы (button_rows) либо одна колонка."""
+    rows = button_rows or [(b,) for b in buttons]
+    return {"inline_keyboard": [
+        [{"text": b.label, "callback_data": b.action} for b in row]
+        for row in rows
+    ]}
+
+
 class TelegramAPIError(Exception):
     """Ответ ok:false либо исчерпанные повторы."""
 
@@ -55,7 +65,8 @@ class TelegramAPI:
     def send_message(self, chat_id: int, text: str,
                      buttons: Sequence[Button] = (),
                      contact_request: str | None = None,
-                     menu: Sequence[Sequence[str]] | None = None) -> dict:
+                     menu: Sequence[Sequence[str]] | None = None,
+                     button_rows: Sequence[Sequence[Button]] = ()) -> dict:
         params: dict = {"chat_id": chat_id, "text": text}
         if contact_request:
             # one_time_keyboard: клавиатура прячется после нажатия сама
@@ -64,12 +75,8 @@ class TelegramAPI:
                 "resize_keyboard": True,
                 "one_time_keyboard": True,
             }
-        elif buttons:
-            params["reply_markup"] = {
-                "inline_keyboard": [
-                    [{"text": b.label, "callback_data": b.action}] for b in buttons
-                ]
-            }
+        elif buttons or button_rows:
+            params["reply_markup"] = _inline_keyboard(buttons, button_rows)
         elif menu:
             # постоянное главное меню; держится до следующей reply-клавиатуры
             params["reply_markup"] = {
@@ -79,8 +86,30 @@ class TelegramAPI:
             }
         return self._call("sendMessage", **params)
 
-    def answer_callback_query(self, callback_query_id: str) -> bool:
-        return self._call("answerCallbackQuery", callback_query_id=callback_query_id)
+    def edit_message_text(self, chat_id: int, message_id: int, text: str,
+                          buttons: Sequence[Button] = (),
+                          button_rows: Sequence[Sequence[Button]] = ()):
+        """Редактирование сообщения на месте (П-4): календарь листается без
+        спама в чат. «message is not modified» (повторный клик по той же
+        сетке) — не ошибка, гасится тихо."""
+        params: dict = {"chat_id": chat_id, "message_id": message_id,
+                        "text": text}
+        if buttons or button_rows:
+            params["reply_markup"] = _inline_keyboard(buttons, button_rows)
+        try:
+            return self._call("editMessageText", **params)
+        except TelegramAPIError as e:
+            if "message is not modified" in str(e):
+                return None
+            raise
+
+    def answer_callback_query(self, callback_query_id: str,
+                              text: str | None = None) -> bool:
+        """text — toast на кнопке (П-4): короткий отклик без сообщения."""
+        params: dict = {"callback_query_id": callback_query_id}
+        if text:
+            params["text"] = text
+        return self._call("answerCallbackQuery", **params)
 
     def get_me(self) -> dict:
         return self._call("getMe")
