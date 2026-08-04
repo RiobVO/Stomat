@@ -76,8 +76,8 @@ def appt_status(admin_engine) -> str:
 def test_escalation_context_omits_patient_name(
         app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
     # имя лежит в context['pending_name'] между шагом имени и подтверждением;
-    # при эскалации (не-узбекский номер) весь context уходит админу — имя
-    # пациента не должно утечь персоналу
+    # при эскалации (просьба человека на шаге телефона) весь context уходит
+    # админу — имя пациента не должно утечь персоналу
     day = next_monday()
     notifier = RecordingNotifier()
     engine = DialogEngine(app_session_factory, clinic_a,
@@ -87,9 +87,9 @@ def test_escalation_context_omits_patient_name(
     offer = engine.handle_text(CHAT, "чистка в понедельник")
     engine.handle_action(CHAT, slot_buttons(offer)[0].action)
     engine.handle_text(CHAT, "Гульнора")  # → context['pending_name']
-    engine.handle_contact(CHAT, "79991234567", own=True)  # рос. номер → эскалация
+    engine.handle_text(CHAT, "позовите администратора")  # → эскалация
 
-    assert any("не-узбек" in reason for _, reason in notifier.calls)
+    assert any("администратора" in reason for _, reason in notifier.calls)
     assert all("Гульнора" not in str(ctx) for ctx in notifier.contexts), \
         "имя пациента не должно попадать в контекст эскалации"
 

@@ -26,13 +26,17 @@ class PatientRecord:
 
 
 def normalize_phone(raw: str) -> str:
-    """«+998 90 123-45-67» / «90 123 45 67» -> 998901234567."""
+    """«+998 90 123-45-67» / «90 123 45 67» -> 998901234567.
+
+    Номер любой страны принимается как есть (П-2в): из кнопки Telegram
+    приходит подлинный номер аккаунта, страна — не повод для отказа.
+    9 цифр — локальный узбекский без кода; 7–15 цифр (E.164) — как есть."""
     digits = _DIGITS_RE.sub("", raw)
     if len(digits) == 9:
         return "998" + digits
-    if len(digits) == 12 and digits.startswith("998"):
+    if 7 <= len(digits) <= 15:
         return digits
-    raise ValueError(f"не похоже на узбекский номер: {raw!r}")
+    raise ValueError(f"не похоже на телефонный номер: {raw!r}")
 
 
 def contact_hash(phone: str, salt: str) -> str:

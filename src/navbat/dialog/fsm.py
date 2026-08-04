@@ -131,14 +131,14 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             try:
                 phone_hash: str | None = phone_to_hash(session, phone)
             except ValueError:
-                phone_hash = None  # не-узбекский номер → лид администратору
+                phone_hash = None  # номер не распознан → повтор кнопки
         return self.handle_contact_hashed(chat_id, phone_hash, own)
 
     def handle_contact_hashed(self, chat_id: int, phone_hash: str | None,
                               own: bool) -> Reply:
         """Контакт из кнопки «Поделиться»: телефон уже хэширован (открытый номер
-        в очередь не попал). phone_hash=None — номер не приводится к 998;
-        own — собственный контакт отправителя."""
+        в очередь не попал). Принимается номер любой страны (П-2в);
+        phone_hash=None — номер не распознан; own — собственный контакт."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             conv = load_conversation(session, chat_id)
             reply = self._process_contact(session, conv, phone_hash, own)
