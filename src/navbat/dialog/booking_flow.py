@@ -93,7 +93,8 @@ class _BookingFlowMixin:
             prefix = t(note, lang) + "\n" + prefix
         ctx.date = day.isoformat()
         conv.state = "booking_offer_slots"
-        return Reply(prefix + self._offer_body(session, lang, asked, day),
+        return Reply(prefix + self._offer_body(session, lang, asked, day,
+                                               ctx.time_ref),
                      tuple(buttons))
 
     def _on_slot_chosen(self, session: Session, conv: Conversation,

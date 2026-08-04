@@ -129,16 +129,49 @@ class _SharedHelpersMixin:
         local = start.astimezone(tz).time()
         return local.hour * 60 + local.minute
 
-    def _offer_body(self, session: Session, lang: str, asked: date, day: date) -> str:
+    def _offer_body(self, session: Session, lang: str, asked: date, day: date,
+                    time_ref: str | None = None) -> str:
         today = self._today(session)
         if max(asked, today) == today and self._closed_now(session):
             # пациент метит в «сегодня», а клиника вне рабочего окна: говорим
             # прямо «закрыто» — иначе ответ читается как «всё занято» (P0 BRIEF)
             return t("closed_now_slots", lang, date=f"{day:%d.%m}")
+        prefix = self._outside_hours_line(session, lang, max(asked, today),
+                                          time_ref)
         if day == asked:
-            return t("offer_slots", lang, date=f"{day:%d.%m}")
-        return t("offer_slots_other_day", lang, asked=f"{asked:%d.%m}",
-                 date=f"{day:%d.%m}")
+            return prefix + t("offer_slots", lang, date=f"{day:%d.%m}")
+        return prefix + t("offer_slots_other_day", lang, asked=f"{asked:%d.%m}",
+                          date=f"{day:%d.%m}")
+
+    def _outside_hours_line(self, session: Session, lang: str, day: date,
+                            time_ref: str | None) -> str:
+        """Точное запрошенное время вне рабочего окна дня → честная строка
+        «Клиника работает с X до Y» перед слотами (П-3). Окна morning/evening
+        не считаются; день целиком закрыт — существующий скан и так уводит
+        на ближайший рабочий день."""
+        target = exact_time_ref(time_ref)
+        if target is None:
+            return ""
+        window = self._day_window(session, day)
+        if window is None:
+            return ""
+        lo, hi = window
+        if lo.time() <= target < hi.time():
+            return ""
+        return t("outside_hours", lang,
+                 open=f"{lo:%H:%M}", close=f"{hi:%H:%M}") + "\n"
+
+    def _day_window(self, session: Session, day: date):
+        """Рабочее окно дня (union графиков врачей) в локальном времени
+        клиники; None — день целиком закрыт."""
+        tz = self._clinic_tz(session)
+        schedules = doctors_repo.working_intervals(session)
+        holidays = clinic_repo.holidays_on(session, day)
+        bounds = open_bounds(schedules, day, tz, holidays)
+        if bounds is None:
+            return None
+        lo, hi = bounds
+        return lo.astimezone(tz), hi.astimezone(tz)
 
     def _closed_now(self, session: Session) -> bool:
         """Клиника вне рабочего окна прямо сейчас (выходной/праздник — тоже)."""
