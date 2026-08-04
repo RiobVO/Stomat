@@ -24,20 +24,27 @@ from __future__ import annotations
 import uuid
 from contextlib import suppress
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
-from navbat.dialog import services_repo
+from navbat.dialog import clinic_repo, doctors_repo, questions_repo, services_repo
 from navbat.dialog.booking_flow import _BookingFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
     Conversation, load_conversation, save_conversation)
 from navbat.dialog.dialog_common import (
-    MAX_NLU_FAILURES, SlotGuard, mentions_availability, mentions_human_request)
+    MAX_NLU_FAILURES,
+    NEAREST_DAY_SCAN,
+    SlotGuard,
+    mentions_address_question,
+    mentions_availability,
+    mentions_hours_question,
+    mentions_human_request,
+)
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import phone_to_hash
 from navbat.dialog.replies import (
@@ -53,6 +60,8 @@ from navbat.dialog.reschedule_flow import _RescheduleFlowMixin
 from navbat.dialog.shared_helpers import _SharedHelpersMixin
 from navbat.nlu.extractor import ExtractionError, Extractor, LLMDisabledError
 from navbat.nlu.schema import Extraction
+from navbat.nlu.wrappers import redact_phones
+from navbat.scheduling.calendar_rules import open_bounds
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import AppointmentNotFoundError
 
@@ -274,6 +283,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 # наличие спрашивают без услуги — сетку считаем по осмотру
                 conv.context.service = "checkup"
             return self._continue_booking(session, conv, extraction)
+        if extraction.intent in ("question", "other"):
+            # FAQ-слой (П-2б) ДО детектора наличия: «ish vaqti?» содержит
+            # маркер «vaqt», но это вопрос о часах, не о слотах
+            faq = self._faq_answer(session, conv, message)
+            if faq is not None:
+                return self._with_reprompt(session, conv, faq)
         if extraction.intent in ("question", "other") and not extraction.service \
                 and self._asks_availability(conv, message):
             # вопрос о наличии без даты («а ещё?», «другой день?») — выбор
@@ -281,7 +296,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # слотами (П-1, та же философия, что и book↔question бэкстоп)
             return self._availability_reply(session, conv)
         if extraction.intent == "question":
-            answer = self._answer_question(session, conv, extraction)
+            answer = self._answer_question(session, conv, extraction, message)
             return self._with_reprompt(session, conv, answer)
         if extraction.intent == "reschedule":
             return self._start_reschedule(session, conv, extraction)
@@ -421,7 +436,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         return Reply(t("price_header", lang) + "\n" + "\n".join(lines))
 
     def _answer_question(self, session: Session, conv: Conversation,
-                         extraction: Extraction) -> Reply:
+                         extraction: Extraction, message: str) -> Reply:
         """Цена — из каталога; на прочее бот честно отвечает «не понял».
         Состояние диалога вопрос не меняет."""
         lang = self._lang(conv)
@@ -433,9 +448,45 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             formatted = f"{int(price):,}".replace(",", " ")
             return Reply(t("price_answer", lang, service=label, price=formatted))
         # вопрос вне компетенции: «не понял» + меню, БЕЗ алерта (П-2а) —
-        # админа зовёт только сам пациент; тексты неотвеченных вопросов
-        # попадут владельцу в вечерний дайджест (П-2б)
+        # админа зовёт только сам пациент; текст вопроса копится анонимно
+        # (телефоны замаскированы) и придёт владельцу в дайджесте (П-2б)
+        questions_repo.add(session, redact_phones(message))
         return Reply(t("not_understood", lang), menu=menu_rows(lang))
+
+    def _faq_answer(self, session: Session, conv: Conversation,
+                    message: str) -> Reply | None:
+        """Бытовые вопросы (часы/адрес) — ответ без LLM и без админа (П-2б).
+
+        None — не FAQ (или адрес не задан): путь идёт дальше штатно."""
+        if mentions_hours_question(message):
+            return self._hours_reply(session, conv)
+        if mentions_address_question(message):
+            address = clinic_repo.clinic_address(session)
+            if address:
+                return Reply(t("clinic_address", self._lang(conv),
+                               address=address))
+        return None
+
+    def _hours_reply(self, session: Session, conv: Conversation) -> Reply | None:
+        """Рабочее окно сегодня (union графиков врачей); сегодня закрыто —
+        ближайший рабочий день в горизонте двух недель."""
+        lang = self._lang(conv)
+        tz = self._clinic_tz(session)
+        schedules = doctors_repo.working_intervals(session)
+        today = self._today(session)
+        for offset in range(NEAREST_DAY_SCAN + 1):
+            day = today + timedelta(days=offset)
+            bounds = open_bounds(schedules, day, tz,
+                                 clinic_repo.holidays_on(session, day))
+            if bounds is None:
+                continue
+            lo, hi = (b.astimezone(tz) for b in bounds)
+            if offset == 0:
+                return Reply(t("hours_today", lang,
+                               open=f"{lo:%H:%M}", close=f"{hi:%H:%M}"))
+            return Reply(t("hours_next", lang, date=f"{day:%d.%m}",
+                           open=f"{lo:%H:%M}", close=f"{hi:%H:%M}"))
+        return None  # графиков нет вообще — честное «не понял» дальше
 
     def _with_reprompt(self, session: Session, conv: Conversation,
                        answer: Reply) -> Reply:

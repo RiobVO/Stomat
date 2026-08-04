@@ -117,6 +117,19 @@ def render_stats(stats: DailyStats, day: date) -> str:
             + p95_line)
 
 
+QUESTIONS_IN_DIGEST = 10  # cap: дайджест — сводка, не лог
+
+
+def render_questions(questions: list[str]) -> str:
+    """Блок «вопросы без ответа» для дайджеста (П-2б): владелец видит
+    спрос, не дёргаясь днём. Тексты уже анонимны (телефоны замаскированы)."""
+    shown = questions[:QUESTIONS_IN_DIGEST]
+    lines = "\n".join(f"• {q}" for q in shown)
+    tail = len(questions) - len(shown)
+    suffix = f"\n… и ещё {tail}" if tail > 0 else ""
+    return f"❓ Вопросы без ответа ({len(questions)}):\n{lines}{suffix}"
+
+
 def should_send_digest(now_local: datetime, last_digest: date | None,
                        hour: int = DIGEST_HOUR) -> bool:
     if now_local.hour < hour:
