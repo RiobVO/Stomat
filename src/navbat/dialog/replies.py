@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 
 
@@ -55,27 +56,39 @@ SERVICE_LABELS = {
     "xray": {"ru": "Снимок", "uz": "Rentgen"},
 }
 
+# эмодзи — ТОЛЬКО в кнопках выбора услуги (П-7); в текстах label чистый,
+# иначе карточка записи получает двойной эмодзи («🦷 ✨ Чистка»)
+SERVICE_EMOJI = {
+    "cleaning": "✨", "filling": "🩹", "extraction": "🦷", "implant": "🔩",
+    "crown": "👑", "whitening": "🌟", "braces": "😁", "checkup": "🔍",
+    "xray": "🩻",
+}
+
 TEMPLATES = {
     "ask_service": {
-        "ru": "На какую услугу вас записать?",
-        "uz": "Qaysi xizmatga yozib qo'yay?",
+        "ru": "🦷 <b>На какую услугу вас записать?</b>",
+        "uz": "🦷 <b>Qaysi xizmatga yozib qo'yay?</b>",
     },
     "ask_date": {
-        "ru": "На какой день вам удобно?",
-        "uz": "Qaysi kun sizga qulay?",
+        "ru": "📅 <b>На какой день вам удобно?</b>",
+        "uz": "📅 <b>Qaysi kun sizga qulay?</b>",
     },
     "offer_slots": {
-        "ru": "Свободное время на {date}:",
-        "uz": "{date} kuni bo'sh vaqtlar:",
+        "ru": "📅 <b>Свободное время на {date}</b>\nВыберите удобное 👇",
+        "uz": "📅 <b>{date} kuni bo'sh vaqtlar</b>\nQulayini tanlang 👇",
     },
     "offer_slots_other_day": {
-        "ru": "На {asked} свободного времени нет. Ближайшее — {date}:",
-        "uz": "{asked} kuni bo'sh vaqt yo'q. Eng yaqini — {date}:",
+        "ru": "На {asked} свободного времени нет.\n"
+              "📅 <b>Ближайшее — {date}</b> 👇",
+        "uz": "{asked} kuni bo'sh vaqt yo'q.\n"
+              "📅 <b>Eng yaqini — {date}</b> 👇",
     },
     # запрос «на сегодня» вне рабочего окна: не врать «всё занято» (P0)
     "closed_now_slots": {
-        "ru": "Сейчас клиника закрыта.\nБлижайшее свободное время — {date}:",
-        "uz": "Hozir klinika yopiq.\nEng yaqin bo'sh vaqt — {date}:",
+        "ru": "🌙 Сейчас клиника закрыта.\n"
+              "📅 <b>Ближайшее свободное время — {date}</b> 👇",
+        "uz": "🌙 Hozir klinika yopiq.\n"
+              "📅 <b>Eng yaqin bo'sh vaqt — {date}</b> 👇",
     },
     "no_slots_calendar": {
         "ru": "В ближайшие две недели свободного времени нет — "
@@ -105,16 +118,18 @@ TEMPLATES = {
         "uz": "Bunday ismli shifokor topilmadi, barcha bo'sh vaqtlarni ko'rsataman.",
     },
     "ask_name": {
-        "ru": "Как вас зовут?",
-        "uz": "Ismingiz nima?",
+        "ru": "👤 Как вас зовут?",
+        "uz": "👤 Ismingiz nima?",
     },
     "ask_phone": {
-        "ru": "Нажмите кнопку ниже — она отправит ваш номер телефона:",
-        "uz": "Pastdagi tugmani bosing — u telefon raqamingizni yuboradi:",
+        "ru": "📱 Остался один шаг: нажмите кнопку ниже — она отправит "
+              "ваш номер телефона.",
+        "uz": "📱 Bitta qadam qoldi: pastdagi tugmani bosing — u telefon "
+              "raqamingizni yuboradi.",
     },
     "press_contact_button": {
-        "ru": "Чтобы оставить номер, нажмите кнопку ниже:",
-        "uz": "Raqam qoldirish uchun pastdagi tugmani bosing:",
+        "ru": "📱 Чтобы оставить номер, нажмите кнопку ниже:",
+        "uz": "📱 Raqam qoldirish uchun pastdagi tugmani bosing:",
     },
     "foreign_contact": {
         "ru": "Это контакт другого человека. Нажмите кнопку — она отправит "
@@ -126,9 +141,14 @@ TEMPLATES = {
         "ru": "📱 Отправить мой номер",
         "uz": "📱 Raqamimni yuborish",
     },
+    # {doctor} — либо пустой, либо готовая строка «\n👨‍⚕️ Имя» (booking_flow)
     "booked": {
-        "ru": "Записал: {service}, {when}{doctor}. Ждём вас!",
-        "uz": "Yozib qo'ydim: {service}, {when}{doctor}. Sizni kutamiz!",
+        "ru": "✅ <b>ЗАПИСЬ ПОДТВЕРЖДЕНА</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}\n\n"
+              "🔔 Напомним заранее. Ждём вас!",
+        "uz": "✅ <b>YOZILDINGIZ</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}\n\n"
+              "🔔 Oldindan eslatamiz. Sizni kutamiz!",
     },
     "hold_expired": {
         "ru": "Бронь на выбранное время истекла. Вот свежие варианты:",
@@ -158,8 +178,9 @@ TEMPLATES = {
               "qiling yoki keyinroq urinib ko'ring.",
     },
     "escalated": {
-        "ru": "Передаю администратору — он ответит вам здесь в ближайшее время.",
-        "uz": "Administratorga ulab berdim — u tez orada shu yerda "
+        "ru": "👤 Передаю администратору — он ответит вам здесь "
+              "в ближайшее время.",
+        "uz": "👤 Administratorga ulab berdim — u tez orada shu yerda "
               "javob beradi.",
     },
     "other_fallback": {
@@ -179,32 +200,32 @@ TEMPLATES = {
         "uz": "Klinika {open} dan {close} gacha ishlaydi.",
     },
     "hours_today": {
-        "ru": "Сегодня клиника работает с {open} до {close}.",
-        "uz": "Bugun klinika {open} dan {close} gacha ishlaydi.",
+        "ru": "🕐 Сегодня клиника работает с {open} до {close}.",
+        "uz": "🕐 Bugun klinika {open} dan {close} gacha ishlaydi.",
     },
     "hours_next": {
-        "ru": "Сегодня клиника не работает. Ближайший рабочий день — {date}: "
-              "с {open} до {close}.",
-        "uz": "Bugun klinika ishlamaydi. Eng yaqin ish kuni — {date}: "
+        "ru": "🕐 Сегодня клиника не работает. Ближайший рабочий день — "
+              "{date}: с {open} до {close}.",
+        "uz": "🕐 Bugun klinika ishlamaydi. Eng yaqin ish kuni — {date}: "
               "{open} dan {close} gacha.",
     },
     "clinic_address": {
-        "ru": "Наш адрес: {address}.",
-        "uz": "Manzilimiz: {address}.",
+        "ru": "📍 Наш адрес: {address}",
+        "uz": "📍 Manzilimiz: {address}",
     },
     "not_understood": {
-        "ru": "Я не понял. Помогу записаться, перенести или отменить приём — "
-              "выберите действие в меню. Нужен человек — напишите "
+        "ru": "🤔 Я не понял. Помогу записаться, перенести или отменить "
+              "приём — выберите действие в меню. Нужен человек — напишите "
               "«позовите администратора».",
-        "uz": "Tushunmadim. Qabulga yozilish, uni ko'chirish yoki bekor "
+        "uz": "🤔 Tushunmadim. Qabulga yozilish, uni ko'chirish yoki bekor "
               "qilishda yordam beraman — menyudan amalni tanlang. "
               "Administrator kerak bo'lsa — «administratorni chaqiring» "
               "deb yozing.",
     },
     "escalated_closed": {
-        "ru": "Передаю администратору. Клиника сейчас закрыта — он ответит "
+        "ru": "👤 Передаю администратору. Клиника сейчас закрыта — он ответит "
               "вам здесь утром.",
-        "uz": "Administratorga uzataman. Klinika hozir yopiq — u sizga "
+        "uz": "👤 Administratorga uzataman. Klinika hozir yopiq — u sizga "
               "ertalab shu yerda javob beradi.",
     },
     "confirm_retry": {
@@ -214,12 +235,12 @@ TEMPLATES = {
               "vaqtni yana tanlang:",
     },
     "cancel_confirm_q": {
-        "ru": "Отменить вашу запись на {when}?",
-        "uz": "{when} dagi qabulni bekor qilaymi?",
+        "ru": "❌ Отменить вашу запись на {when}?",
+        "uz": "❌ {when} dagi qabulni bekor qilaymi?",
     },
     "cancel_done": {
-        "ru": "Запись отменена. Будем рады записать вас снова.",
-        "uz": "Qabul bekor qilindi. Sizni yana kutib qolamiz.",
+        "ru": "✅ Запись отменена. Будем рады записать вас снова.",
+        "uz": "✅ Qabul bekor qilindi. Sizni yana kutib qolamiz.",
     },
     "cancel_kept": {
         "ru": "Хорошо, запись остаётся в силе.",
@@ -235,8 +256,8 @@ TEMPLATES = {
               "Yozilishni xohlaysizmi?",
     },
     "resched_done": {
-        "ru": "Перенёс вашу запись на {when}. Ждём вас!",
-        "uz": "Qabulni {when} ga ko'chirdim. Sizni kutamiz!",
+        "ru": "✅ <b>ПЕРЕНЕСЕНО</b>\n\n📅 {when}\n\nЖдём вас!",
+        "uz": "✅ <b>KO'CHIRILDI</b>\n\n📅 {when}\n\nSizni kutamiz!",
     },
     "btn_other_time": {"ru": "Другое время", "uz": "Boshqa vaqt"},
     "btn_today": {"ru": "Сегодня", "uz": "Bugun"},
@@ -245,29 +266,32 @@ TEMPLATES = {
     "btn_yes": {"ru": "Да, отменить", "uz": "Ha, bekor qilish"},
     "btn_no": {"ru": "Нет, оставить", "uz": "Yo'q, qoldirish"},
     "reminder": {
-        "ru": "Напоминаем: вы записаны на {service} {when}. Ждём вас!",
-        "uz": "Eslatamiz: siz {service} uchun {when} ga yozilgansiz. "
-              "Sizni kutamiz!",
+        "ru": "🔔 <b>Напоминание</b>\n\n🦷 {service}\n📅 {when}\n\nЖдём вас!",
+        "uz": "🔔 <b>Eslatma</b>\n\n🦷 {service}\n📅 {when}\n\nSizni kutamiz!",
     },
     "btn_attend": {"ru": "✓ Приду", "uz": "✓ Kelaman"},
     "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Qabulni bekor qilish"},
     "attend_ok": {
-        "ru": "Отлично, ждём вас!",
-        "uz": "Ajoyib, sizni kutamiz!",
+        "ru": "👍 Отлично, ждём вас!",
+        "uz": "👍 Ajoyib, sizni kutamiz!",
     },
     "rate_limited": {
         "ru": "Слишком много сообщений подряд — сделайте небольшую паузу, "
               "и я отвечу.",
         "uz": "Juda ko'p xabar yubordingiz — biroz kuting, javob beraman.",
     },
+    # подзаголовок «виртуальный администратор» — честность P0 BRIEF:
+    # пациент должен понимать, что говорит с ботом
     "greeting": {
-        "ru": "Здравствуйте! Я виртуальный администратор клиники «{clinic}»: "
-              "помогу записаться, перенести или отменить приём. "
-              "По медицинским вопросам ответит врач.",
-        "uz": "Assalomu alaykum! Men «{clinic}» klinikasining virtual "
-              "administratoriman: qabulga yozilish, uni boshqa vaqtga "
-              "ko'chirish yoki bekor qilishda yordam beraman. "
-              "Tibbiy savollarga shifokor javob beradi.",
+        "ru": "🦷 <b>{clinic}</b>\nВиртуальный администратор · запись 24/7\n\n"
+              "Помогу записаться, перенести или отменить приём — и напомню "
+              "накануне визита. По медицинским вопросам ответит врач.\n\n"
+              "Начнём? 👇",
+        "uz": "🦷 <b>{clinic}</b>\nVirtual administrator · yozilish 24/7\n\n"
+              "Qabulga yozilish, uni boshqa vaqtga ko'chirish yoki bekor "
+              "qilishda yordam beraman — tashrif oldidan eslatib qo'yaman. "
+              "Tibbiy savollarga shifokor javob beradi.\n\n"
+              "Boshlaymizmi? 👇",
     },
     "stale_button": {
         "ru": "Эта кнопка устарела.",
@@ -296,14 +320,14 @@ TEMPLATES = {
         "uz": "Tilni tanlang / Выберите язык:",
     },
     "menu_hint": {
-        "ru": "Выберите действие или напишите своими словами:",
-        "uz": "Amalni tanlang yoki o'z so'zlaringiz bilan yozing:",
+        "ru": "Выберите действие или напишите своими словами 👇",
+        "uz": "Amalni tanlang yoki o'z so'zlaringiz bilan yozing 👇",
     },
     "lang_changed": {
         "ru": "Язык переключён на русский.",
         "uz": "Til o'zbek tiliga o'zgartirildi.",
     },
-    "price_header": {"ru": "Наши цены:", "uz": "Narxlarimiz:"},
+    "price_header": {"ru": "💰 <b>Наши цены</b>", "uz": "💰 <b>Narxlarimiz</b>"},
     "price_line": {
         "ru": "• {service} — {price} сум",
         "uz": "• {service} — {price} so'm",
@@ -328,8 +352,13 @@ TEMPLATES = {
 
 
 def t(key: str, lang: str, **kwargs) -> str:
-    """Шаблон по ключу и языку; mixed заранее сведён к ru на уровне FSM."""
-    return TEMPLATES[key][lang].format(**kwargs)
+    """Шаблон по ключу и языку; mixed заранее сведён к ru на уровне FSM.
+
+    Подстановки экранируются (П-7): пациентские ответы уходят с
+    parse_mode=HTML — имя клиники/врача/адрес с «<&>» не должны ломать
+    парсер Telegram. Эмодзи и \\n экранирование не трогает."""
+    safe = {k: html.escape(str(v), quote=False) for k, v in kwargs.items()}
+    return TEMPLATES[key][lang].format(**safe)
 
 
 def service_label(key: str, lang: str) -> str:

@@ -192,7 +192,7 @@ class ReminderService:
             digest += "\n\n" + render_questions(questions)
         try:
             for chat in self._digest_chat_ids:  # сводка всем админ-чатам (M4)
-                self._tg_api.send_message(chat, digest)
+                self._tg_api.send_message(chat, digest, parse_mode="HTML")
         except Exception as e:
             log.warning("вечерняя сводка не доставлена: %s", e)
             return False

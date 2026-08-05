@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -153,10 +154,10 @@ def _after_hours_confirms(session: Session, first: date, last: date,
 def render_stats(stats: DailyStats, day: date, last: date | None = None) -> str:
     """Рендер владельца (П-6): ценность сверху, техника одной строкой внизу."""
     if last is None or last == day:
-        header = f"📊 Сводка за {day:%d.%m}:"
+        header = f"📊 <b>Сводка за {day:%d.%m}</b>"
     else:
         days = (last - day).days + 1
-        header = f"📊 Сводка за {days} дн. ({day:%d.%m}–{last:%d.%m}):"
+        header = f"📊 <b>Сводка за {days} дн. ({day:%d.%m}–{last:%d.%m})</b>"
     saved = f"{stats.saved_revenue:,}".replace(",", " ")
     after = (f" (из них {stats.after_hours_booked} — вне рабочих часов)"
              if stats.after_hours_booked else "")
@@ -181,12 +182,14 @@ QUESTIONS_IN_DIGEST = 10  # cap: дайджест — сводка, не лог
 
 def render_questions(questions: list[str]) -> str:
     """Блок «вопросы без ответа» для дайджеста (П-2б): владелец видит
-    спрос, не дёргаясь днём. Тексты уже анонимны (телефоны замаскированы)."""
+    спрос, не дёргаясь днём. Тексты уже анонимны (телефоны замаскированы);
+    экранируем — дайджест уходит с parse_mode=HTML, пациентский «<» не
+    должен ломать парсер (П-7)."""
     shown = questions[:QUESTIONS_IN_DIGEST]
-    lines = "\n".join(f"• {q}" for q in shown)
+    lines = "\n".join(f"• {html.escape(q, quote=False)}" for q in shown)
     tail = len(questions) - len(shown)
     suffix = f"\n… и ещё {tail}" if tail > 0 else ""
-    return f"❓ Вопросы без ответа ({len(questions)}):\n{lines}{suffix}"
+    return f"❓ <b>Вопросы без ответа ({len(questions)})</b>\n{lines}{suffix}"
 
 
 def should_send_digest(now_local: datetime, last_digest: date | None,
