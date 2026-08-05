@@ -335,8 +335,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             conv.state = "booking_collect"
         today = self._today(session)
         buttons = self._date_buttons(session, lang) + (
-            Button(t("btn_pick_date", lang),
-                   f"cal:nav:{today.year:04d}-{today.month:02d}"),)
+            Button(t("btn_pick_date", lang), f"cal:nav:{today.isoformat()}"),)
         return Reply(t("ask_date", lang), buttons)
 
     def _escalate_on_request(self, session: Session, conv: Conversation) -> Reply:

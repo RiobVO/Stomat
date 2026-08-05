@@ -1,8 +1,9 @@
-"""Инлайн-календарь (П-5): эмодзи-сетка месяца, day-view, навигация.
+"""Выбор даты списком доступных дней (П-5/П-5б) + day-view слотов.
 
-Чистый month_view — без БД; сценарные тесты — DialogEngine с
-инжектированными часами. Кликабельны только дни со слотами; сообщение
-календаря живёт долго — устаревшие клики валидируются, не падают.
+Редизайн по живому тыку 11.06 (паттерн маникюр-бота): кнопки — ТОЛЬКО
+дни с реальными слотами, «11 июн · чт», никаких пустых ячеек. Чистый
+dates_view — без БД; сценарии — DialogEngine с инжектированными часами.
+Сообщение с датами живёт долго — устаревшие клики не падают.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from datetime import date, timedelta
 from sqlalchemy import text
 
 from conftest import at_tashkent, make_service, next_monday
-from navbat.dialog.calendar_view import BLANK, month_view
+from navbat.dialog.calendar_view import dates_view, day_label
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
@@ -32,62 +33,51 @@ def flat(rows):
     return [b for row in rows for b in row]
 
 
-def day_actions(reply):
-    return [b.action for b in flat(reply.button_rows)
-            if b.action.startswith("cal:day:")]
+def page_days(reply):
+    return [date.fromisoformat(b.action.split(":")[2])
+            for b in flat(reply.button_rows) if b.action.startswith("cal:day:")]
 
 
-# ── Чистый month_view ────────────────────────────────────────────────────────
+# ── Чистый dates_view ────────────────────────────────────────────────────────
 
 TODAY = date(2026, 6, 11)  # четверг
 
 
-def test_month_view_header_and_padding():
-    # июль 2026: 1.07 — среда, паддинг Пн+Вт пустой и некликабельный
-    caption, rows = month_view(2026, 7, set(), TODAY, "ru")
+def test_dates_view_two_columns_real_days_only():
+    days = [TODAY + timedelta(days=i) for i in (0, 1, 2, 4, 5)]  # вс пропущено
+    caption, rows = dates_view(days, TODAY, TODAY, has_more=False, lang="ru")
 
-    assert "Июль 2026" in caption and "🟢" in caption
-    assert [b.label for b in rows[0]] == ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    first_week = rows[1]
-    assert first_week[0].label == BLANK and first_week[0].action == "cal:noop"
-    assert first_week[1].action == "cal:noop"
-
-
-def test_month_view_marks_available_today_and_empty():
-    available = {date(2026, 6, 11), date(2026, 6, 15)}
-    _, rows = month_view(2026, 6, available, TODAY, "ru")
-    cells = {b.label: b.action for b in flat(rows)}
-
-    assert cells["📍11"] == "cal:day:2026-06-11", "сегодня со слотами — 📍"
-    assert cells["🟢15"] == "cal:day:2026-06-15"
-    # будущий день без слотов: пустая ячейка, клик даёт toast (cal:none)
-    future_blank = [b for b in flat(rows)
-                    if b.label == BLANK and b.action == "cal:none"]
-    assert future_blank, "будущие дни без слотов кликаются в toast"
-    # прошедшие дни месяца — глухие
-    week_with_first = rows[1]
-    assert all(b.action == "cal:noop" for b in week_with_first[:4])
+    assert "Выберите день" in caption
+    assert [len(row) for row in rows] == [2, 2, 1], "по 2 в ряд, без заглушек"
+    first = rows[0][0]
+    assert first.label == "11 июн · чт"
+    assert first.action == "cal:day:2026-06-11"
+    actions = [b.action for b in flat(rows)]
+    assert all(a.startswith("cal:day:") for a in actions), "ни одной мёртвой кнопки"
 
 
-def test_month_view_nav_first_middle_last():
-    _, rows_first = month_view(2026, 6, set(), TODAY, "ru")
-    nav = [b.action for b in rows_first[-1]]
-    assert nav == ["cal:nav:2026-07"], "на текущем месяце нет ◀"
+def test_dates_view_pagination_buttons():
+    days = [TODAY + timedelta(days=i) for i in range(10)]
+    _, first_page = dates_view(days, TODAY, TODAY, has_more=True, lang="ru")
+    nav = [b for b in flat(first_page) if b.action.startswith("cal:nav:")]
+    assert [b.label for b in nav] == [TEMPLATES["btn_more_dates"]["ru"]], \
+        "на первой странице нет «◀ Ближайшие»"
+    following = max(days) + timedelta(days=1)
+    assert nav[0].action == f"cal:nav:{following.isoformat()}"
 
-    _, rows_mid = month_view(2026, 7, set(), TODAY, "ru")
-    assert [b.action for b in rows_mid[-1]] == \
-        ["cal:nav:2026-06", "cal:nav:2026-08"]
+    _, last_page = dates_view(days, TODAY + timedelta(days=30), TODAY,
+                              has_more=False, lang="ru")
+    nav = [b for b in flat(last_page) if b.action.startswith("cal:nav:")]
+    assert [b.label for b in nav] == [TEMPLATES["btn_first_dates"]["ru"]], \
+        "на последней странице нет «Ещё даты»"
+    assert nav[0].action == f"cal:nav:{TODAY.isoformat()}"
 
-    _, rows_last = month_view(2026, 8, set(), TODAY, "ru")
-    assert [b.action for b in rows_last[-1]] == ["cal:nav:2026-07"], \
-        "на последнем месяце горизонта нет ▶"
 
-
-def test_month_view_uzbek():
-    caption, rows = month_view(2026, 6, {date(2026, 6, 15)}, TODAY, "uz")
-    assert "Iyun 2026" in caption and "bo'sh" in caption
-    assert [b.label for b in rows[0]] == ["Du", "Se", "Cho", "Pa", "Ju", "Sha", "Ya"]
-    assert any("Iyul ▶" == b.label for b in rows[-1])
+def test_dates_view_uzbek_labels():
+    caption, rows = dates_view([TODAY], TODAY, TODAY, has_more=False, lang="uz")
+    assert "Kunni tanlang" in caption
+    assert rows[0][0].label == "11 iyn · pa"
+    assert day_label(date(2026, 7, 5), "uz") == "5 iyl · ya"
 
 
 # ── Вход: «📅 Выбрать дату» в ask_date ───────────────────────────────────────
@@ -101,7 +91,7 @@ def test_ask_date_has_calendar_button(app_session_factory, admin_engine,
 
     cal_buttons = [b for b in reply.buttons if b.action.startswith("cal:nav:")]
     assert cal_buttons and cal_buttons[0].label == TEMPLATES["btn_pick_date"]["ru"]
-    assert cal_buttons[0].action == f"cal:nav:{monday:%Y-%m}"
+    assert cal_buttons[0].action == f"cal:nav:{monday.isoformat()}"
 
 
 def test_booking_date_step_has_calendar_button(
@@ -133,34 +123,65 @@ def test_reschedule_date_step_has_calendar_button(
     assert fsm_state(admin_engine) == "resched_offer_slots"
 
 
-# ── Навигация и сетка ────────────────────────────────────────────────────────
+# ── Страницы дат ─────────────────────────────────────────────────────────────
 
-def test_nav_renders_month_with_working_days_only(
-        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+def test_nav_lists_only_working_days(app_session_factory, admin_engine,
+                                     clinic_a, doctor_a, service_cleaning):
     make_service(admin_engine, clinic_a, "checkup", 30)  # дефолт без услуги
     monday = next_monday()
     engine, notifier = make(app_session_factory, clinic_a, [],
                             clock=lambda: at_tashkent(monday, "08:00"))
-    reply = engine.handle_action(CHAT, f"cal:nav:{monday:%Y-%m}")
+    reply = engine.handle_action(CHAT, f"cal:nav:{monday.isoformat()}")
 
-    assert reply.edit, "навигация редактирует сообщение, не шлёт новое"
-    days = [date.fromisoformat(a.split(":")[2]) for a in day_actions(reply)]
-    assert days, "в месяце есть кликабельные дни"
-    assert all(d.weekday() != 6 for d in days), "воскресений нет в графике"
-    assert all(d >= monday for d in days)
+    assert reply.edit, "страница дат редактирует сообщение"
+    days = page_days(reply)
+    assert len(days) == 10, "страница из 10 доступных дней"
+    assert all(d.weekday() != 6 for d in days), "воскресений нет в списке"
+    assert days == sorted(days) and days[0] >= monday
     assert notifier.calls == []
 
 
-def test_nav_outside_horizon_redraws_current(app_session_factory, admin_engine,
-                                             clinic_a, doctor_a, service_cleaning):
+def test_more_dates_paginates_forward_and_back(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a, service_cleaning):
+    make_service(admin_engine, clinic_a, "checkup", 30)
+    monday = next_monday()
+    engine, _ = make(app_session_factory, clinic_a, [],
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    first = engine.handle_action(CHAT, f"cal:nav:{monday.isoformat()}")
+    more = [b for b in flat(first.button_rows)
+            if b.label == TEMPLATES["btn_more_dates"]["ru"]]
+    assert more, "есть «Ещё даты ▶»"
+
+    second = engine.handle_action(CHAT, more[0].action)
+    assert min(page_days(second)) > max(page_days(first)), "вторая страница дальше"
+    back = [b for b in flat(second.button_rows)
+            if b.label == TEMPLATES["btn_first_dates"]["ru"]]
+    assert back, "со второй страницы можно вернуться"
+
+    again = engine.handle_action(CHAT, back[0].action)
+    assert page_days(again) == page_days(first)
+
+
+def test_nav_outside_horizon_resets_to_first_page(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    make_service(admin_engine, clinic_a, "checkup", 30)
     monday = next_monday()
     engine, _ = make(app_session_factory, clinic_a, [],
                      clock=lambda: at_tashkent(monday, "08:00"))
     far = monday + timedelta(days=200)
-    reply = engine.handle_action(CHAT, f"cal:nav:{far:%Y-%m}")
-    # за горизонтом — перерисовываем текущий месяц
-    assert f"{monday.year}" in reply.text
-    assert reply.edit
+    reply = engine.handle_action(CHAT, f"cal:nav:{far.isoformat()}")
+    assert page_days(reply)[0] >= monday, "за горизонтом — первая страница"
+
+
+def test_legacy_month_nav_still_works(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a, service_cleaning):
+    # старые сообщения с месячной сеткой (П-5) шлют cal:nav:YYYY-MM
+    make_service(admin_engine, clinic_a, "checkup", 30)
+    monday = next_monday()
+    engine, _ = make(app_session_factory, clinic_a, [],
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    reply = engine.handle_action(CHAT, f"cal:nav:{monday:%Y-%m}")
+    assert page_days(reply), "legacy-формат не падает и даёт страницу дат"
 
 
 def test_nav_garbage_is_stale(app_session_factory, admin_engine, clinic_a,
@@ -172,8 +193,9 @@ def test_nav_garbage_is_stale(app_session_factory, admin_engine, clinic_a,
     assert TEMPLATES["stale_button"]["ru"] in reply.text
 
 
-def test_noop_and_none_cells(app_session_factory, admin_engine, clinic_a,
-                             doctor_a, service_cleaning):
+def test_noop_and_none_cells_legacy(app_session_factory, admin_engine, clinic_a,
+                                    doctor_a, service_cleaning):
+    # заглушки старых сообщений с сеткой: молча / toast
     monday = next_monday()
     engine, _ = make(app_session_factory, clinic_a, [],
                      clock=lambda: at_tashkent(monday, "08:00"))
@@ -203,7 +225,8 @@ def test_day_click_shows_all_slots_in_grid(app_session_factory, admin_engine,
     assert len(slot_btns) == 16
     assert all(len(row) <= 4 for row in reply.button_rows)
     back = flat(reply.button_rows)[-1]
-    assert back.action == f"cal:nav:{monday:%Y-%m}"
+    assert back.label == TEMPLATES["btn_back_calendar"]["ru"]
+    assert back.action == f"cal:nav:{monday.isoformat()}"
     assert fsm_state(admin_engine) == "booking_offer_slots"
 
     # дальше — штатный путь: выбор слота берёт hold
@@ -221,7 +244,7 @@ def test_past_day_click_toasts_and_redraws(app_session_factory, admin_engine,
     reply = engine.handle_action(CHAT, f"cal:day:{past.isoformat()}")
 
     assert reply.toast == TEMPLATES["cal_past_day"]["ru"]
-    assert reply.edit and day_actions(reply), "перерисован свежий месяц"
+    assert reply.edit and page_days(reply), "перерисована свежая страница дат"
 
 
 def test_day_click_in_reschedule_keeps_resched(app_session_factory, admin_engine,
@@ -243,14 +266,14 @@ def test_day_click_in_reschedule_keeps_resched(app_session_factory, admin_engine
     assert fsm_state(admin_engine) == "resched_offer_slots"
 
 
-# ── «Нет слотов на 2 недели» → календарь + FYI раз в день ───────────────────
+# ── «Нет слотов на 2 недели» → даты/честный текст + FYI раз в день ───────────
 
 def _drop_schedule(admin_engine):
     with admin_engine.begin() as conn:
         conn.execute(text("UPDATE doctor SET working_intervals = '{}'"))
 
 
-def test_no_slots_offers_calendar_not_escalation(
+def test_no_slots_anywhere_honest_text_no_dead_buttons(
         app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
     _drop_schedule(admin_engine)
     monday = next_monday()
@@ -261,9 +284,8 @@ def test_no_slots_offers_calendar_not_escalation(
         clock=lambda: at_tashkent(monday, "08:00"))
 
     reply = engine.handle_text(CHAT, "чистка в понедельник")
-    assert TEMPLATES["no_slots_calendar"]["ru"] in reply.text
-    assert any(b.action.startswith("cal:nav:") for b in flat(reply.button_rows)), \
-        "календарь листается даже пустой"
+    assert TEMPLATES["no_slots_horizon"]["ru"] in reply.text
+    assert not reply.button_rows, "мёртвых кнопок нет"
     assert fsm_state(admin_engine) == "booking_collect", "диалог жив"
     assert len(notifier.calls) == 1, "владельцу FYI"
 
