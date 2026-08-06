@@ -274,10 +274,11 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
     def _route_intent(self, session: Session, conv: Conversation,
                       extraction: Extraction, message: str) -> Reply:
-        # бэкстоп: «есть время сегодня?» NLU уводит в question — но вопрос
-        # с привязкой ко времени == вопрос о наличии, отвечаем слотами
+        # бэкстоп: дыра NLU book↔{question,other} — «есть время сегодня?»
+        # уходит в question, голое «на завтра» в other (живой пример);
+        # реплика с привязкой ко времени == про запись, ведём сценарий
         booking_like = extraction.intent == "book" or (
-            extraction.intent == "question"
+            extraction.intent in ("question", "other")
             and (extraction.date_ref or extraction.time_ref)
         )
         if booking_like and conv.state == "resched_offer_slots":
