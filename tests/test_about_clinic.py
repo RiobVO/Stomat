@@ -46,6 +46,9 @@ def set_clinic_field(admin_engine, clinic_id, field, value):
     "karta bilan to'lasa bo'ladimi?",
     "naqd olasizmi?",
     "to'lov qanday?",
+    "можно по карте?",
+    "Payme bormi?",
+    "naqdmi?",
 ])
 def test_payment_detector_positive(text_):
     assert mentions_payment_question(text_)
