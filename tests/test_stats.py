@@ -323,6 +323,15 @@ def test_render_stats_v2_sections():
         "пустые секции не показываем"
 
 
+def test_render_stats_cancelled_trend():
+    """Тренд отмен реально подставляется в строку (ловит опечатку подстановки)."""
+    from navbat.stats import render_stats
+
+    out = render_stats(mk_stats(cancelled=20), date(2026, 6, 5),
+                       date(2026, 6, 11), prev=mk_stats(cancelled=10))
+    assert "отмен: 20 ↑100%" in out
+
+
 def test_render_digest_short():
     from navbat.stats import render_digest_short
 

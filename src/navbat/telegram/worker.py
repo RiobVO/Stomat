@@ -16,7 +16,6 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -430,10 +429,6 @@ class UpdateWorker:
             days = int(args[0])
         return self._stats_view(days)
 
-    def _stats_edit_reply(self, days: int) -> Reply:
-        """Кнопка периода (В): тот же рендер, но редактируем на месте."""
-        return replace(self._stats_view(days), edit=True)
-
     def _stats_view(self, days: int) -> Reply:
         from navbat.stats import collect_stats, render_stats
 
@@ -464,7 +459,7 @@ class UpdateWorker:
         message_id = callback["message"].get("message_id")
         if suffix.isdigit() and 1 <= int(suffix) <= 90 and message_id is not None:
             edit_reply(self._api, self._session_factory, self._clinic_id,
-                       chat_id, message_id, self._stats_edit_reply(int(suffix)))
+                       chat_id, message_id, self._stats_view(int(suffix)))
 
     def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
         """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).

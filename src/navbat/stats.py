@@ -113,6 +113,8 @@ def collect_stats(session: Session, first: date, last: date,
     # пациента (демо, ручной онбординг) — tg_chat_id; у patient нет created_at,
     # «первый визит» считаем по appointment.created_at (без новой миграции).
     # Голый hold/expired — не визит; cancelled — визит (человек обращался).
+    # 'done' в enum appt_status с 0001 — на будущую ручную отметку визита,
+    # engine его пока не ставит.
     clients = session.execute(
         text("""
             WITH visits AS (
