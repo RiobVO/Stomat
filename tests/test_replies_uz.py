@@ -52,6 +52,8 @@ REVIEWED_UZ = {
     ),
     "stale_button": "Bu tugma endi faol emas.",
     "btn_remind_cancel": "Qabulni bekor qilish",
+    # полировка-2: кнопка явного выхода к человеку в фоллбэках
+    "btn_call_admin": "👤 Administratorni chaqirish",
 }
 
 # сэмплы всех подстановок: str.format игнорирует лишние именованные аргументы

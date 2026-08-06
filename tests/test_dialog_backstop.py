@@ -58,8 +58,8 @@ def test_general_question_not_understood_without_alert(
                           extractor=FakeExtractor(script=[extr(intent="question")]),
                           notifier=notifier)
     reply = engine.handle_text(CHAT, "а где вы находитесь?")
-    assert not reply.buttons
-    assert reply.menu, "кнопки самообслуживания в ответе"
+    # полировка-2: фоллбэк отдаёт кнопку явного выхода к человеку
+    assert [b.action for b in reply.buttons] == ["call_admin"]
     assert notifier.calls == []
     # вопрос без записи — не эскалация диалога, бот продолжает работать
     assert fsm_state(admin_engine) == "idle"

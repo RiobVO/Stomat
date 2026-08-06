@@ -178,7 +178,8 @@ def test_address_question_without_address_falls_to_not_understood(
                             [extr(intent="question")])
     reply = engine.handle_text(CHAT, "какой у вас адрес?")
 
-    assert reply.menu, "адрес не задан — честное «не понял» с меню"
+    assert [b.action for b in reply.buttons] == ["call_admin"], \
+        "адрес не задан — честное «не понял» с кнопкой к человеку"
     assert notifier.calls == []
     assert len(saved_questions(admin_engine)) == 1, \
         "вопрос без ответа копится для владельца"
