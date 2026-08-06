@@ -376,3 +376,67 @@ def test_three_rapid_messages_keep_fsm_consistent(app_session_factory, admin_eng
     with admin_engine.begin() as conn:
         state = conn.execute(text("SELECT fsm_state FROM conversation")).scalar_one()
     assert state == "booking_offer_slots"
+
+
+# ── /stats v2 (полировка-2, В): stats:-callback'и админ-чата ─────────────────
+
+ADMIN_CHAT = 777
+
+
+def test_stats_callback_edits_in_place(app_session_factory, admin_engine,
+                                       clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_callback(app_session_factory, clinic_a, "stats:7", chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    assert api.answered, "callback подтверждён"
+    chat_id, message_id, text_, _rows = api.edited[-1]
+    assert (chat_id, message_id) == (ADMIN_CHAT, 77)
+    assert "7 дн." in text_, "заголовок периода"
+    assert not api.sent, "edit на месте, без нового сообщения"
+
+
+def test_stats_callback_alive_when_paused(app_session_factory, admin_engine,
+                                          clinic_a):
+    # конвенция C-4: админ-поверхность живёт при паузе бота
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET bot_paused = true WHERE id = :c"),
+                     {"c": clinic_a})
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_callback(app_session_factory, clinic_a, "stats:1", chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    assert api.edited and "Сводка" in api.edited[-1][2]
+
+
+def test_stats_callback_from_patient_goes_usual_path(app_session_factory,
+                                                     admin_engine, clinic_a):
+    # пациентский чат жмёт stats:7 (форвард/подделка) — админ-ветка молчит,
+    # callback идёт штатным путём (stale → повтор шага), без эскалаций
+    worker, api, notifier = make_worker(app_session_factory, clinic_a, [],
+                                        admin_chat_id=ADMIN_CHAT)
+    put_callback(app_session_factory, clinic_a, "stats:7", chat_id=CHAT)
+    worker.process_one()
+
+    assert not api.edited, "сводка не показана"
+    assert all("Сводка" not in m[1] for m in api.sent)
+    assert notifier.calls == [], "штатный путь, без эскалаций"
+
+
+def test_stats_full_sends_new_message(app_session_factory, admin_engine,
+                                      clinic_a):
+    # «📊 Подробнее» из дайджеста: полная сводка дня НОВЫМ сообщением,
+    # дайджест с вопросами остаётся на экране
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_callback(app_session_factory, clinic_a, "stats:full",
+                 chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    assert not api.edited, "дайджест не отредактирован"
+    assert api.sent[-1][0] == ADMIN_CHAT
+    assert "Сводка за" in api.sent[-1][1]
+    assert [b.action for b in api.row_keyboards[-1][0]] == \
+        ["stats:1", "stats:7", "stats:30"], "кнопки периодов как у /stats"
