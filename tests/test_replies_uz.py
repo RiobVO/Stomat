@@ -54,6 +54,10 @@ REVIEWED_UZ = {
     "btn_remind_cancel": "Qabulni bekor qilish",
     # полировка-2: кнопка явного выхода к человеку в фоллбэках
     "btn_call_admin": "👤 Administratorni chaqirish",
+    # полировка-2: FAQ оплата/телефон + кнопка «О клинике»
+    "clinic_payment": "💳 To'lov: {info}",
+    "clinic_phone": "📞 Telefon: {phone}",
+    "btn_menu_about": "ℹ️ Klinika haqida",
 }
 
 # сэмплы всех подстановок: str.format игнорирует лишние именованные аргументы
@@ -70,6 +74,8 @@ SAMPLE_VALUES = {
     "open": "09:00",
     "close": "18:00",
     "address": "Toshkent, Navoiy ko'chasi 10",
+    "info": "naqd / karta / bo'lib to'lash",
+    "phone": "+998 71 200-00-00",
 }
 
 

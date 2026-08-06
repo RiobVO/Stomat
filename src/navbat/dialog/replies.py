@@ -213,6 +213,20 @@ TEMPLATES = {
         "ru": "📍 Наш адрес: {address}",
         "uz": "📍 Manzilimiz: {address}",
     },
+    "clinic_payment": {
+        "ru": "💳 Оплата: {info}",
+        "uz": "💳 To'lov: {info}",
+    },
+    "clinic_phone": {
+        "ru": "📞 Телефон: {phone}",
+        "uz": "📞 Telefon: {phone}",
+    },
+    # шапка карточки «О клинике»; намеренно одинакова в обоих языках —
+    # имя клиники локализации не требует
+    "about_header": {
+        "ru": "ℹ️ <b>{clinic}</b>",
+        "uz": "ℹ️ <b>{clinic}</b>",
+    },
     "not_understood": {
         "ru": "🤔 Я не понял. Помогу записаться, перенести или отменить "
               "приём — выберите действие в меню. Нужен человек — напишите "
@@ -349,6 +363,7 @@ TEMPLATES = {
     "btn_menu_resched": {"ru": "🔄 Перенести", "uz": "🔄 Ko'chirish"},
     "btn_menu_cancel": {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"},
     "btn_menu_prices": {"ru": "💰 Цены", "uz": "💰 Narxlar"},
+    "btn_menu_about": {"ru": "ℹ️ О клинике", "uz": "ℹ️ Klinika haqida"},
     "btn_menu_lang": {"ru": "🌐 Til / Язык", "uz": "🌐 Til / Язык"},
     # кнопки экрана выбора языка (inline, не reply-меню)
     "btn_lang_uz": {"ru": "O'zbekcha", "uz": "O'zbekcha"},
@@ -376,5 +391,6 @@ def menu_rows(lang: str) -> tuple[tuple[str, ...], ...]:
     return (
         (t("btn_menu_book", lang),),
         (t("btn_menu_resched", lang), t("btn_menu_cancel", lang)),
-        (t("btn_menu_prices", lang), t("btn_menu_lang", lang)),
+        (t("btn_menu_prices", lang), t("btn_menu_about", lang)),
+        (t("btn_menu_lang", lang),),
     )
