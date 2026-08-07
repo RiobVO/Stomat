@@ -210,6 +210,13 @@ class UpdateWorker:
                 # админ-консоль (сырой префикс, мимо tg_actions-map); до паузы
                 self._admin.handle_callback(callback, chat_id, data)
                 return
+            if chat_id in self._admin_chat_ids:
+                # админ-чат = чистая консоль и для callback'ов: нераспознанная
+                # (например, старая пациентская a:N) кнопка НЕ уходит в
+                # пациентский диалог — подтверждаем и показываем админ-меню
+                self._api.answer_callback_query(callback["id"])
+                self._send(chat_id, self._admin.main_menu())
+                return
             if self._bot_paused():
                 self._api.answer_callback_query(callback["id"])
                 self._send(chat_id, self._paused_reply(chat_id))
