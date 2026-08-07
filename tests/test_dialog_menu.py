@@ -66,6 +66,26 @@ def test_start_repeat_skips_language_choice(app_session_factory, clinic_a):
     assert not again.buttons, "язык уже выбран — сразу меню"
 
 
+def test_explicit_lang_survives_nlu_misdetection(app_session_factory, admin_engine,
+                                                 clinic_a, doctor_a,
+                                                 service_cleaning):
+    # пациент явно выбрал узбекский кнопкой; NLU на узбекской кириллице
+    # массово ошибается language='ru' (eval 12.06.2026) — явный выбор
+    # пациента главнее самого слабого поля модели
+    engine, _ = counting_engine(
+        app_session_factory, clinic_a,
+        script=[extr(service="cleaning", language="ru")])  # ← ошибка модели
+    engine.handle_text(CHAT, "/start")
+    engine.handle_action(CHAT, "lang:uz")
+    reply = engine.handle_text(CHAT, "Тиш тозалашга ёзилмоқчиман")
+    with admin_engine.begin() as conn:
+        lang = conn.execute(text(
+            "SELECT context ->> 'lang' FROM conversation WHERE tg_chat_id = :c"
+        ), {"c": CHAT}).scalar_one()
+    assert lang == "uz", "явный выбор языка не перебивается детектом NLU"
+    assert "Qaysi kun" in reply.text, "ответ остаётся на узбекском"
+
+
 def test_start_after_text_dialog_keeps_detected_lang(app_session_factory, clinic_a,
                                                      doctor_a, service_cleaning):
     # пациент начал текстом (язык детектнут NLU) — /start не переспрашивает язык

@@ -279,8 +279,14 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return Reply(t("llm_off_menu", lang), menu=menu_rows(lang))
         except ExtractionError:
             return self._on_nlu_failure(session, conv)
-        lang = "ru" if extraction.language == "mixed" else extraction.language
-        conv.context.lang = lang
+        if conv.context.lang is None:
+            # язык ещё не выбран (первый контакт свободным текстом) — берём
+            # детект NLU; дальше язык меняет ТОЛЬКО кнопка «Til / Язык»:
+            # явный выбор пациента главнее самого слабого поля модели
+            # (узбекскую кириллицу NLU массово зовёт ru — eval 12.06.2026)
+            conv.context.lang = ("ru" if extraction.language == "mixed"
+                                 else extraction.language)
+        lang = self._lang(conv)
 
         failures_before = conv.context.nlu_failures
         reply = self._route_intent(session, conv, extraction, message)
