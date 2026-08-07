@@ -8,8 +8,9 @@
   в extendedProperties) — наоборот: истина в БД, ручная правка
   откатывается с алертом админу.
 
-Имя пациента в событие не пишем — только услуга: GCal-событие не
-должно расширять поверхность PII.
+Событие несёт услугу по-русски, имя и телефон пациента (решение владельца
+11.06: он живёт в календаре, событие должно отвечать «кто и зачем») —
+ПД уходит в Google-аккаунт клиники, зафиксировано в docs/PRIVACY.md.
 """
 from __future__ import annotations
 
@@ -23,10 +24,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.calendar.api import ResyncRequired
+from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
-from navbat.dialog.replies import Button, Reply, t
+from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.telegram.worker import send_reply
 
@@ -74,9 +76,11 @@ class CalendarSync:
                 text("""
                     SELECT a.id, lower(a.time_range) AS start, upper(a.time_range) AS finish,
                            a.status, a.gcal_event_id,
-                           s.name AS service
+                           s.name AS service,
+                           p.name_encrypted, p.phone_encrypted
                     FROM appointment a
                     LEFT JOIN service s ON s.id = a.service_id
+                    LEFT JOIN patient p ON p.id = a.patient_id
                     WHERE a.doctor_id = :doctor AND a.source != 'gcal_import'
                       AND ((a.status = 'booked'
                             AND (a.gcal_event_id IS NULL
@@ -104,12 +108,23 @@ class CalendarSync:
 
     @staticmethod
     def _event_body(appointment) -> dict:
-        return {
-            "summary": f"{appointment.service or 'Приём'} (Navbat)",
+        # услуга по-русски + имя/телефон пациента (решение владельца 11.06);
+        # NULL-поля (gcal_import, старые пациенты, /forget) — строки пропускаются
+        service = (service_label(appointment.service, "ru")
+                   if appointment.service else "Приём")
+        name = (decrypt_text(appointment.name_encrypted)
+                if appointment.name_encrypted else None)
+        body = {
+            "summary": (f"{service} — {name} (Navbat)" if name
+                        else f"{service} (Navbat)"),
             "start": {"dateTime": _iso(appointment.start)},
             "end": {"dateTime": _iso(appointment.finish)},
             "extendedProperties": {"private": {"navbat_id": str(appointment.id)}},
         }
+        if appointment.phone_encrypted:
+            # нормализованный номер хранится без «+» — отдаём в E.164
+            body["description"] = f"Телефон: +{decrypt_text(appointment.phone_encrypted)}"
+        return body
 
     def _mark_synced(self, appointment_id, event_id: str | None, synced: bool) -> None:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -152,8 +167,11 @@ class CalendarSync:
                 text("""
                     SELECT a.id, a.status, a.gcal_event_id, a.tg_chat_id,
                            lower(a.time_range) AS start, upper(a.time_range) AS finish,
-                           s.name AS service
-                    FROM appointment a LEFT JOIN service s ON s.id = a.service_id
+                           s.name AS service,
+                           p.name_encrypted, p.phone_encrypted
+                    FROM appointment a
+                    LEFT JOIN service s ON s.id = a.service_id
+                    LEFT JOIN patient p ON p.id = a.patient_id
                     WHERE a.id = CAST(:navbat_id AS uuid)
                 """),
                 {"navbat_id": _own_marker(event)},

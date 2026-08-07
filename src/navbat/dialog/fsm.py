@@ -137,14 +137,18 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         хэш-пути. В боевом потоке телефон хэшируется и шифруется на границе
         enqueue и открытым сюда не попадает; этот вход остаётся для каналов
         без durable-очереди."""
+        try:
+            normalized: str | None = normalize_phone(phone)
+        except ValueError:
+            normalized = None  # номер не распознан → повтор кнопки
+        if normalized is None:
+            return self.handle_contact_hashed(chat_id, None, None, own)
+        # hash/encrypt вне except-зоны: binascii.Error от кривого NAVBAT_ENC_KEY
+        # (подкласс ValueError) не должен маскироваться под «номер не распознан»
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
-            try:
-                phone_hash: str | None = phone_to_hash(session, phone)
-                phone_encrypted: str | None = encrypt_text(normalize_phone(phone))
-            except ValueError:
-                phone_hash = None  # номер не распознан → повтор кнопки
-                phone_encrypted = None
-        return self.handle_contact_hashed(chat_id, phone_hash, phone_encrypted, own)
+            phone_hash = phone_to_hash(session, normalized)
+        return self.handle_contact_hashed(chat_id, phone_hash,
+                                          encrypt_text(normalized), own)
 
     def handle_contact_hashed(self, chat_id: int, phone_hash: str | None,
                               phone_encrypted: str | None, own: bool) -> Reply:

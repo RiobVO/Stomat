@@ -84,11 +84,14 @@ def test_create_and_find_patient(app_session_factory, admin_engine, clinic_a):
     # в БД — шифртекст и хеш, не плейнтекст (смотрим админом мимо RLS)
     with admin_engine.begin() as conn:
         row = conn.execute(
-            text("SELECT name_encrypted, contact_hash FROM patient WHERE id = :id"),
+            text("SELECT name_encrypted, contact_hash, phone_encrypted "
+                 "FROM patient WHERE id = :id"),
             {"id": pid},
         ).one()
     assert "Алишер" not in row.name_encrypted
     assert "998901234567" not in row.contact_hash
+    # сырой путь create_patient шифрует номер сам (пересмотр 11.06)
+    assert decrypt_text(row.phone_encrypted) == "998901234567"
 
 
 def test_find_patient_missing_chat(app_session_factory, clinic_a):
