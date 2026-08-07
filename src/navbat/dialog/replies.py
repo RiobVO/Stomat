@@ -103,8 +103,10 @@ TEMPLATES = {
     },
     "btn_pick_date": {"ru": "📅 Выбрать дату", "uz": "📅 Sanani tanlash"},
     "btn_back_calendar": {"ru": "◀ К датам", "uz": "◀ Sanalarga"},
-    "btn_more_dates": {"ru": "Ещё даты ▶", "uz": "Yana sanalar ▶"},
-    "btn_first_dates": {"ru": "◀ Ближайшие", "uz": "◀ Eng yaqinlari"},
+    "cal_no_free_days_month": {
+        "ru": "В этом месяце свободных дней нет",
+        "uz": "Bu oyda bo'sh kunlar yo'q",
+    },
     "cal_no_slots": {
         "ru": "Свободного времени нет",
         "uz": "Bo'sh vaqt yo'q",

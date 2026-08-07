@@ -58,6 +58,8 @@ REVIEWED_UZ = {
     "clinic_payment": "💳 To'lov: {info}",
     "clinic_phone": "📞 Telefon: {phone}",
     "btn_menu_about": "ℹ️ Klinika haqida",
+    # полировка-3: месячная сетка дат (возврат варианта B)
+    "cal_no_free_days_month": "Bu oyda bo'sh kunlar yo'q",
 }
 
 # сэмплы всех подстановок: str.format игнорирует лишние именованные аргументы
