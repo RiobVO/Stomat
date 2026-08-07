@@ -42,7 +42,8 @@ def test_forget_anonymizes_patient_and_wipes_dialog(app_session_factory,
 
     with admin_engine.begin() as conn:
         patient = conn.execute(text(
-            "SELECT name_encrypted, contact_hash, tg_chat_id FROM patient")).one()
+            "SELECT name_encrypted, contact_hash, phone_encrypted, tg_chat_id "
+            "FROM patient")).one()
         conv_count = conn.execute(
             text("SELECT count(*) FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).scalar_one()
@@ -55,7 +56,7 @@ def test_forget_anonymizes_patient_and_wipes_dialog(app_session_factory,
             text("SELECT status FROM reminder")).scalar_one()
 
     assert (patient.name_encrypted, patient.contact_hash,
-            patient.tg_chat_id) == (None, None, None)
+            patient.phone_encrypted, patient.tg_chat_id) == (None,) * 4
     assert conv_count == 0 and msg_count == 0
     assert appointment.tg_chat_id is None and appointment.status == "booked", \
         "история приёма жива, но обезличена"

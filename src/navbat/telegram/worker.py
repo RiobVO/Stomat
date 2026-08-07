@@ -123,13 +123,15 @@ class UpdateWorker:
                     return
                 # телефон кнопкой request_contact; принимаем только собственный
                 # контакт отправителя. Rate-limit не нужен: NLU не дёргается.
-                # Номер уже хэширован на enqueue (открытым в очередь не попал);
-                # phone_hash=None — не-узбекский номер, воркер эскалирует.
+                # Номер уже хэширован и зашифрован на enqueue (открытым
+                # в очередь не попал); phone_hash=None — номер не распознан,
+                # диалог повторит кнопку.
                 contact = message["contact"]
                 own = (contact.get("user_id") is not None
                        and contact["user_id"] == message.get("from", {}).get("id"))
                 reply = self._dialog.handle_contact_hashed(
-                    chat_id, contact.get("phone_hash"), own)
+                    chat_id, contact.get("phone_hash"),
+                    contact.get("phone_encrypted"), own)
                 self._send(chat_id, reply)
                 return
             if "text" in message:
@@ -312,7 +314,8 @@ class UpdateWorker:
                 {"chat": target}).rowcount
             patients = session.execute(
                 text("UPDATE patient SET name_encrypted = NULL, "
-                     "contact_hash = NULL, tg_chat_id = NULL "
+                     "contact_hash = NULL, phone_encrypted = NULL, "
+                     "tg_chat_id = NULL "
                      "WHERE tg_chat_id = :chat"), {"chat": target}).rowcount
             appointments = session.execute(
                 text("UPDATE appointment SET tg_chat_id = NULL "

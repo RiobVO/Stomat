@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from conftest import make_service, next_monday
+from navbat.crypto import decrypt_text, encrypt_text
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.patients import contact_hash, normalize_phone
 from navbat.dialog.replies import TEMPLATES, menu_rows
@@ -160,6 +161,21 @@ def test_own_contact_foreign_number_books(app_session_factory, admin_engine,
         "иностранный номер хэшируется как есть (без 998-префикса)"
 
 
+def test_raw_contact_stores_encrypted_phone(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a, service_cleaning):
+    """Сырой вход (демо/каналы без очереди) шифрует номер сам — паритет
+    с именем (пересмотр 11.06: номер нужен владельцу в календаре)."""
+    engine = make_engine(app_session_factory, clinic_a, booking_script())
+    to_phone_step(engine)
+
+    engine.handle_contact(CHAT, "+998 90 123-45-67", own=True)
+    with admin_engine.begin() as conn:
+        stored = conn.execute(
+            text("SELECT phone_encrypted FROM patient")).scalar_one()
+    assert decrypt_text(stored) == "998901234567", \
+        "шифруется нормализованный номер — расшифровка возвращает исходный"
+
+
 def test_contact_in_idle_is_fallback(app_session_factory, admin_engine,
                                      clinic_a, doctor_a, service_cleaning):
     engine = make_engine(app_session_factory, clinic_a, [])
@@ -172,17 +188,22 @@ def test_contact_in_idle_is_fallback(app_session_factory, admin_engine,
 
 def test_hashed_contact_books_with_same_hash(app_session_factory, admin_engine,
                                              clinic_a, doctor_a, service_cleaning):
-    """Воркер передаёт хэш из payload — пациент создан с тем же хэшем."""
+    """Воркер передаёт хэш и шифртекст из payload — пациент создан с обоими."""
     engine = make_engine(app_session_factory, clinic_a, booking_script())
     to_phone_step(engine)
 
     phone_hash = contact_hash(normalize_phone("998901234567"), "test-salt")
-    engine.handle_contact_hashed(CHAT, phone_hash, own=True)
+    phone_encrypted = encrypt_text("998901234567")
+    engine.handle_contact_hashed(CHAT, phone_hash, phone_encrypted, own=True)
 
     assert fsm_state(admin_engine) == "idle"
     with admin_engine.begin() as conn:
-        stored = conn.execute(text("SELECT contact_hash FROM patient")).scalar_one()
-    assert stored == phone_hash, "в patient ушёл тот же хэш, что вырезан в очереди"
+        stored = conn.execute(text(
+            "SELECT contact_hash, phone_encrypted FROM patient")).one()
+    assert stored.contact_hash == phone_hash, \
+        "в patient ушёл тот же хэш, что вырезан в очереди"
+    assert decrypt_text(stored.phone_encrypted) == "998901234567", \
+        "шифртекст из payload лёг в колонку как есть"
 
 
 def test_hashed_contact_none_reasks_button(app_session_factory, admin_engine,
@@ -195,7 +216,7 @@ def test_hashed_contact_none_reasks_button(app_session_factory, admin_engine,
                           notifier=notifier)
     to_phone_step(engine)
 
-    reply = engine.handle_contact_hashed(CHAT, None, own=True)
+    reply = engine.handle_contact_hashed(CHAT, None, None, own=True)
     assert reply.contact_request, "кнопка контакта предложена снова"
     assert fsm_state(admin_engine) == "awaiting_phone"
     assert notifier.calls == []

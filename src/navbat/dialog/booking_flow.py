@@ -153,7 +153,8 @@ class _BookingFlowMixin:
                      contact_request=t("btn_share_contact", lang))
 
     def _process_contact(self, session: Session, conv: Conversation,
-                         phone_hash: str | None, own: bool) -> Reply:
+                         phone_hash: str | None, phone_encrypted: str | None,
+                         own: bool) -> Reply:
         lang = self._lang(conv)
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
@@ -170,7 +171,8 @@ class _BookingFlowMixin:
                          contact_request=t("btn_share_contact", lang))
 
         patient_id = create_patient_with_hash(session, conv.chat_id,
-                                              conv.context.pending_name, phone_hash)
+                                              conv.context.pending_name,
+                                              phone_hash, phone_encrypted)
         conv.patient_id = str(patient_id)
         appointment_id = uuid.UUID(conv.context.appointment_id)
         reply = self._confirm_and_finish(session, conv, appointment_id)

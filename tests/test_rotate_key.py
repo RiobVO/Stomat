@@ -20,7 +20,7 @@ NEW_KEY = base64.b64encode(b"new-key-32-bytes-padded-0000000!").decode()
 
 
 def _seed(admin_engine, clinic_id) -> uuid.UUID:
-    """Клиника с токенами + пациент, всё шифровано OLD_KEY."""
+    """Клиника с токенами + пациент (имя и телефон), всё шифровано OLD_KEY."""
     patient_id = uuid.uuid4()
     with admin_engine.begin() as conn:
         conn.execute(text(
@@ -30,10 +30,11 @@ def _seed(admin_engine, clinic_id) -> uuid.UUID:
              "secret": encrypt_text("hook-secret", key=OLD_KEY),
              "id": clinic_id})
         conn.execute(text(
-            "INSERT INTO patient (id, clinic_id, name_encrypted) "
-            "VALUES (:id, :cid, :name)"),
+            "INSERT INTO patient (id, clinic_id, name_encrypted, phone_encrypted) "
+            "VALUES (:id, :cid, :name, :phone)"),
             {"id": patient_id, "cid": clinic_id,
-             "name": encrypt_text("Алишер", key=OLD_KEY)})
+             "name": encrypt_text("Алишер", key=OLD_KEY),
+             "phone": encrypt_text("998901234567", key=OLD_KEY)})
     return patient_id
 
 
@@ -60,11 +61,17 @@ def test_rotate_reencrypts_all_columns(admin_engine, clinic_a):
     assert counts["clinic.gcal_refresh_token_encrypted"] == 0  # NULL — пропуск
     assert counts["doctor.name_encrypted"] == 1
     assert counts["patient.name_encrypted"] == 1
+    assert counts["patient.phone_encrypted"] == 1
 
     token = _patient_name(admin_engine, patient_id)
     assert decrypt_text(token, key=NEW_KEY) == "Алишер"
     with pytest.raises(ValueError):
         decrypt_text(token, key=OLD_KEY)  # старый ключ больше не читает
+    with admin_engine.begin() as conn:
+        phone_token = conn.execute(text(
+            "SELECT phone_encrypted FROM patient WHERE id = :id"),
+            {"id": patient_id}).scalar_one()
+    assert decrypt_text(phone_token, key=NEW_KEY) == "998901234567"
 
 
 def test_rotate_is_idempotent(admin_engine, clinic_a):
