@@ -31,6 +31,7 @@ from navbat.dialog.escalation import (
 )
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
+from navbat.telegram.admin_console import AdminConsole
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
@@ -65,6 +66,7 @@ class UpdateWorker:
         self._api = api
         self._notifier = notifier or LoggingEscalation()
         self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
+        self._admin = AdminConsole(session_factory, clinic_id, api, self)
 
     def process_one(self) -> bool:
         """Обрабатывает один апдейт; False — очередь пуста."""
@@ -167,6 +169,14 @@ class UpdateWorker:
                         and chat_id in self._admin_chat_ids):
                     self._send(chat_id, self._llm_reply(message["text"]))
                     return
+                if chat_id in self._admin_chat_ids:
+                    # админ-чат = чистая консоль: владелец НИКОГДА не попадает
+                    # в пациентский диалог. Перехват ДО паузы (как /stats) —
+                    # консоль живёт и при /pause (C-4). Слэш-команды выше по
+                    # коду остаются аварийным выходом даже посреди ввода.
+                    self._send(chat_id,
+                               self._admin.handle_text(chat_id, message["text"]))
+                    return
                 if self._bot_paused():
                     # пауза (/pause): вежливый ответ вместо диалога; команды
                     # админа выше по коду продолжают работать
@@ -195,6 +205,10 @@ class UpdateWorker:
                 # кнопки сводки (В) до проверки паузы: админ-поверхность
                 # живёт и при /pause (конвенция C-4)
                 self._handle_stats_callback(callback, chat_id, data)
+                return
+            if data.startswith("adm:") and chat_id in self._admin_chat_ids:
+                # админ-консоль (сырой префикс, мимо tg_actions-map); до паузы
+                self._admin.handle_callback(callback, chat_id, data)
                 return
             if self._bot_paused():
                 self._api.answer_callback_query(callback["id"])
@@ -488,6 +502,10 @@ class UpdateWorker:
     def _send(self, chat_id: int, reply: Reply) -> None:
         send_reply(self._api, self._session_factory, self._clinic_id, chat_id, reply)
 
+    def _edit(self, chat_id: int, message_id: int, reply: Reply) -> None:
+        edit_reply(self._api, self._session_factory, self._clinic_id,
+                   chat_id, message_id, reply)
+
     def _lookup_action(self, chat_id: int, data: str) -> str | None:
         if not data.startswith("a:"):
             return None
@@ -519,7 +537,7 @@ def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID
     for row in rows:
         out_row = []
         for b in row:
-            if b.action.startswith(("cal:", "stats:")):
+            if b.action.startswith(("cal:", "stats:", "adm:")):
                 out_row.append(b)
             else:
                 index = str(len(mapping) + 1)
