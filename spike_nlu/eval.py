@@ -283,9 +283,32 @@ async def run_model(
 
 # ── Скоринг ──────────────────────────────────────────────────────────────────
 
+# Поля, которыми живёт диалог (slot-filling FSM): language в сценариях
+# не участвует — после фикса fsm 12.06.2026 язык меняет только кнопка,
+# детект NLU заполняет его лишь при первом контакте свободным текстом.
+CORE_FIELDS = ("intent", "service", "doctor", "date_ref", "time_ref")
+
+# Узбекская кириллица → латиница: модель транслитерирует имена врачей
+# («Акмал ака» ↔ «Akmal aka») — без нормализации substring-скоринг doctor
+# считает верный ответ ошибкой (поймано прогоном 12.06.2026).
+_UZ_CYR2LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo",
+    "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "x", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sh",
+    "ъ": "'", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    "қ": "q", "ғ": "g'", "ў": "o'", "ҳ": "h",
+}
+
+
+def _translit(s: str) -> str:
+    return "".join(_UZ_CYR2LAT.get(ch, ch) for ch in s.lower())
+
+
 def score_fields(gold: dict, got: Optional[dict]) -> dict[str, bool]:
     """Поля сравниваются строго; doctor — substring case-insensitive
-    (gold хранит каноничное упоминание, модель может вернуть словоформу)."""
+    после транслит-нормализации (gold хранит каноничное упоминание,
+    модель может вернуть словоформу и/или другую письменность)."""
     if got is None:
         return {f: False for f in FIELDS}
     scores = {}
@@ -295,7 +318,7 @@ def score_fields(gold: dict, got: Optional[dict]) -> dict[str, bool]:
             if g is None or p is None:
                 scores[f] = g is None and p is None
             else:
-                gl, pl = g.lower(), p.lower()
+                gl, pl = _translit(g), _translit(p)
                 scores[f] = gl in pl or pl in gl
         else:
             scores[f] = gold[f] == got[f]
@@ -309,14 +332,16 @@ def _pct(part: int, total: int) -> str:
 
 
 def _accuracy_block(results: list[dict], key: str) -> list[str]:
-    """Strict accuracy в разрезе category или source."""
-    groups: dict[str, list[bool]] = defaultdict(list)
+    """Strict и core-5 accuracy в разрезе category или source."""
+    groups: dict[str, list[dict]] = defaultdict(list)
     for r in results:
-        groups[r[key]].append(r["strict"])
-    lines = [f"| {key} | n | strict |", "|---|---|---|"]
+        groups[r[key]].append(r)
+    lines = [f"| {key} | n | strict | core-5 |", "|---|---|---|---|"]
     for name in sorted(groups):
-        vals = groups[name]
-        lines.append(f"| {name} | {len(vals)} | {_pct(sum(vals), len(vals))} |")
+        rs = groups[name]
+        lines.append(
+            f"| {name} | {len(rs)} | {_pct(sum(r['strict'] for r in rs), len(rs))} "
+            f"| {_pct(sum(r['core'] for r in rs), len(rs))} |")
     return lines
 
 
@@ -325,11 +350,14 @@ def build_model_report(model: str, results: list[dict]) -> tuple[list[str], dict
     for r in results:
         r["fields_ok"] = score_fields(r["gold"], r["got"])
         r["strict"] = all(r["fields_ok"].values())
+        r["core"] = all(r["fields_ok"][f] for f in CORE_FIELDS)
 
     errors = [r for r in results if r["error"]]
     repairs = sum(r["repairs"] for r in results)
     strict_n = sum(r["strict"] for r in results)
     strict_acc = strict_n / n if n else 0.0
+    core_n = sum(r["core"] for r in results)
+    core_acc = core_n / n if n else 0.0
 
     in_tok = sum(r["in_tokens"] for r in results)
     out_tok = sum(r["out_tokens"] for r in results)
@@ -353,6 +381,7 @@ def build_model_report(model: str, results: list[dict]) -> tuple[list[str], dict
         ok = sum(r["fields_ok"][f] for r in results)
         lines.append(f"| {f} | {_pct(ok, n)} |")
     lines.append(f"| **strict (все 6)** | **{_pct(strict_n, n)}** |")
+    lines.append(f"| **core-5 (поля диалога)** | **{_pct(core_n, n)}** |")
     lines.append("")
 
     lines += _accuracy_block(results, "category") + [""]
@@ -413,15 +442,19 @@ def build_model_report(model: str, results: list[dict]) -> tuple[list[str], dict
         lines.append(f"Latency: p50 {p50:.0f} ms, p95 {p95:.0f} ms")
     lines.append("")
 
-    verdict_ok = strict_acc >= STRICT_THRESHOLD
+    # вердикт — по core-5: language в диалоге не участвует (см. CORE_FIELDS),
+    # strict-6 остаётся информативной строкой
+    verdict_ok = core_acc >= STRICT_THRESHOLD
     lines.append(
-        f"{'[OK]' if verdict_ok else '[FAIL]'} strict accuracy "
-        f"{strict_acc:.1%} {'≥' if verdict_ok else '<'} {STRICT_THRESHOLD:.0%}"
+        f"{'[OK]' if verdict_ok else '[FAIL]'} core-5 accuracy "
+        f"{core_acc:.1%} {'≥' if verdict_ok else '<'} {STRICT_THRESHOLD:.0%} "
+        f"(strict-6: {strict_acc:.1%})"
     )
     lines.append("")
 
     summary = {
         "model": model, "n": n, "errors": len(errors), "strict_acc": strict_acc,
+        "core_acc": core_acc,
         "fields": {f: sum(r["fields_ok"][f] for r in results) / n if n else 0 for f in FIELDS},
         "cost_usd": cost_usd, "verdict_ok": verdict_ok,
     }
@@ -448,12 +481,13 @@ def build_report(all_results: dict[str, list[dict]], records: list[dict]) -> tup
         summaries.append(summary)
 
     # сводная таблица сверху
-    lines += ["| модель | strict | intent | service | date_ref | time_ref | $/прогон |",
-              "|---|---|---|---|---|---|---|"]
+    lines += ["| модель | core-5 | strict | intent | service | date_ref | time_ref | $/прогон |",
+              "|---|---|---|---|---|---|---|---|"]
     for s in summaries:
         cost = f"${s['cost_usd']:.4f}" if s["cost_usd"] is not None else "?"
         lines.append(
-            f"| {s['model']} | **{s['strict_acc']:.1%}** | {s['fields']['intent']:.1%} "
+            f"| {s['model']} | **{s['core_acc']:.1%}** | {s['strict_acc']:.1%} "
+            f"| {s['fields']['intent']:.1%} "
             f"| {s['fields']['service']:.1%} | {s['fields']['date_ref']:.1%} "
             f"| {s['fields']['time_ref']:.1%} | {cost} |"
         )
