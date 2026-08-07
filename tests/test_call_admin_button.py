@@ -103,8 +103,8 @@ def test_unanswerable_question_offers_button_and_saves_question(
 def test_mid_booking_second_failure_repeats_step_buttons(
         app_session_factory, admin_engine, clinic_a, doctor_a,
         service_cleaning):
-    # посреди оформления шаг важнее кнопки: _with_reprompt отдаёт кнопки
-    # шага, выживание call_admin не требуется
+    # пересмотр 11.06: посреди оформления 2-й сбой повторяет шаг И даёт
+    # явный выход к человеку — call_admin дополняет кнопки шага
     day = next_monday()
     engine, notifier = make(
         app_session_factory, clinic_a,
@@ -117,5 +117,6 @@ def test_mid_booking_second_failure_repeats_step_buttons(
     reply = engine.handle_text(CHAT, "опять абракадабра")
 
     assert slot_buttons(reply), "повтор шага: кнопки слотов в ответе"
+    assert call_admin_buttons(reply), "выход к человеку не теряется"
     assert notifier.calls == []
     assert fsm_state(admin_engine) == "booking_offer_slots"

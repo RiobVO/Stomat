@@ -58,8 +58,11 @@ def test_valid_extraction_resets_failure_counter(app_session_factory, admin_engi
 
     assert not notifier.calls
     assert fsm_state(admin_engine) != "escalated"
-    assert reply.text == TEMPLATES["reask"]["ru"], \
+    # пересмотр 11.06: посреди сценария 1-й сбой = reask + повтор текущего
+    # шага (не голый reask); главное — счётчик сброшен и это НЕ «не понял»
+    assert TEMPLATES["reask"]["ru"] in reply.text, \
         "после сброса счётчика одиночный сбой — мягкий переспрос (reask)"
+    assert TEMPLATES["not_understood"]["ru"] not in reply.text
 
 
 # ── Выход из escalated: /start пациентом (Ф1.5, BRIEF разд. 14.A) ────────────

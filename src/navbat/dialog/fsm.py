@@ -74,6 +74,10 @@ _MENU_KEYS = ("btn_menu_book", "btn_menu_resched", "btn_menu_cancel",
 _MENU_ACTIONS = {
     TEMPLATES[key][lang]: key for key in _MENU_KEYS for lang in ("ru", "uz")
 }
+# шаги сценария, где у бота «на руках» конкретный вопрос (услуга/день/слот):
+# непонятый текст здесь повторяет текущий шаг, а не прыгает по сценарию
+_SCENARIO_STATES = ("booking_collect", "booking_offer_slots",
+                    "resched_offer_slots")
 
 
 class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
@@ -265,11 +269,16 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return Reply(t("llm_off_menu", lang), menu=menu_rows(lang))
         except ExtractionError:
             return self._on_nlu_failure(session, conv)
-        conv.context.nlu_failures = 0
         lang = "ru" if extraction.language == "mixed" else extraction.language
         conv.context.lang = lang
 
+        failures_before = conv.context.nlu_failures
         reply = self._route_intent(session, conv, extraction, message)
+        if conv.context.nlu_failures == failures_before:
+            # сброс ПОСЛЕ маршрутизации: валидный intent у мусора («уыкп» →
+            # other) — ещё не понимание; непонятое посреди сценария копит
+            # счётчик той же машинерией, что ExtractionError (пересмотр 11.06)
+            conv.context.nlu_failures = 0
         return self._with_medical_disclaimer(conv, extraction, reply)
 
     def _route_intent(self, session: Session, conv: Conversation,
@@ -304,6 +313,13 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # дня, не эскалация: на вопрос о наличии бот ВСЕГДА отвечает
             # слотами (П-1, та же философия, что и book↔question бэкстоп)
             return self._availability_reply(session, conv)
+        if extraction.intent in ("question", "other") and not extraction.service \
+                and conv.state in _SCENARIO_STATES:
+            # пересмотр 11.06 (живой тест): непонятое посреди сценария
+            # («привет», мусор) — не вопрос о наличии и не повод терять шаг:
+            # повтор текущего шага машинерией сбоев (2-й раз — кнопка к
+            # человеку); в копилку вопросов не пишем — это не вопрос владельцу
+            return self._on_nlu_failure(session, conv)
         if extraction.intent == "question":
             answer = self._answer_question(session, conv, extraction, message)
             return self._with_reprompt(session, conv, answer)
@@ -316,15 +332,15 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         return Reply(t("other_fallback", lang), menu=menu_rows(lang))
 
     def _asks_availability(self, conv: Conversation, message: str) -> bool:
-        """Это вопрос о наличии? Контекст ИЛИ словарь (П-1).
+        """Это вопрос о наличии? Только явные сигналы (П-1, пересмотр 11.06).
 
-        Контекст: бот только что предлагал слоты (или услуга/дата уже
-        в работе) — любое уточнение без услуги трактуем как «а ещё?»,
-        повторить предложение безопасно всегда. Вне контекста — только
-        явные маркеры наличия (узкий словарь ru/uz)."""
-        if conv.state in ("booking_collect", "booking_offer_slots",
-                          "resched_offer_slots"):
-            return True
+        Посреди сценария — ТОЛЬКО словарный маркер: старое правило «любой
+        текст после показа слотов = про наличие» живой тест опроверг (мусор
+        и «привет» прыгали на выбор дня с дефолтным осмотром); дату/время
+        прикрывает бэкстоп booking_like. Вне сценария: услуга/дата ещё
+        в контексте (доуточнение после показа слотов) ИЛИ словарь."""
+        if conv.state in _SCENARIO_STATES:
+            return mentions_availability(message)
         if conv.context.service or conv.context.date:
             return True
         return mentions_availability(message)
@@ -369,9 +385,16 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # reply-меню у пациента и так на экране (is_persistent)
             note = Reply(t("not_understood", lang),
                          (Button(t("btn_call_admin", lang), "call_admin"),))
-            return self._with_reprompt(session, conv, note)
-        # не понятому пациенту всегда доступны кнопки самообслуживания (M7)
-        return Reply(t("reask", lang), menu=menu_rows(lang))
+            reply = self._with_reprompt(session, conv, note)
+            if not any(b.action == "call_admin" for b in reply.buttons):
+                # посреди сценария _with_reprompt отдал кнопки шага — выход
+                # к человеку дополняет их, а не теряется (пересмотр 11.06)
+                reply = replace(reply, buttons=reply.buttons + note.buttons)
+            return reply
+        # 1-й сбой посреди сценария — повтор текущего шага (пересмотр 11.06);
+        # вне сценария не понятому пациенту — кнопки самообслуживания (M7)
+        return self._with_reprompt(session, conv,
+                                   Reply(t("reask", lang), menu=menu_rows(lang)))
 
     def _with_medical_disclaimer(self, conv: Conversation, extraction: Extraction,
                                  reply: Reply) -> Reply:
