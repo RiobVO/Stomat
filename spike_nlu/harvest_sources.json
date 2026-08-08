@@ -1,11 +1,23 @@
 {
   "_help": [
-    "Источники харвеста — ТОЛЬКО публичные группы/каналы. kind:",
-    "  group            — публичная группа: читаем сообщения участников",
-    "  channel_comments — канал (напр., клиники): читаем КОММЕНТАРИИ к постам",
-    "name — @username без собаки или t.me-слаг.",
-    "Кандидатов искать: python harvest_telegram.py --discover \"stomatologiya\"",
-    "(печатает список, в конфиг добавлять руками после вычитки)."
+    "Источники харвеста — ТОЛЬКО публичные группы/каналы. kind: group |",
+    "channel_comments. topic: dental (нужна стомат-лексика) | general",
+    "(узбекская речь без стомат-фильтра, для сленг-референса).",
+    "Кандидаты: python harvest_telegram.py --discover \"<слово>\"."
   ],
-  "sources": []
+  "sources": [
+    {"name": "kapital_dent", "kind": "group", "topic": "dental"},
+    {"name": "Tish_shifokori_Shahboz", "kind": "group", "topic": "dental"},
+    {"name": "tish_shifokori_stomotolog", "kind": "group", "topic": "dental"},
+    {"name": "toshkent_stomatolog", "kind": "group", "topic": "dental"},
+    {"name": "Toshkent_Stomatologiyaa", "kind": "group", "topic": "dental"},
+    {"name": "tish_shifokorim", "kind": "group", "topic": "dental"},
+    {"name": "koronagurux", "kind": "group", "topic": "dental"},
+    {"name": "vatan_tibbiyot_urolog_ginekolog", "kind": "group", "topic": "general"},
+    {"name": "ixlosmedicalcenter", "kind": "group", "topic": "general"},
+    {"name": "shifokorga_savol_javob", "kind": "group", "topic": "general"},
+    {"name": "shifokorga_savollarr", "kind": "group", "topic": "general"},
+    {"name": "shifokorgasavol", "kind": "group", "topic": "general"},
+    {"name": "chorshanbe_lor", "kind": "group", "topic": "general"}
+  ]
 }
