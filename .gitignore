@@ -6,3 +6,5 @@ spike_nlu/data/*backup*.jsonl
 .venv/
 .superpowers/
 .recon_group_c.md
+spike_nlu/data/inbox/
+spike_nlu/.harvest.session*
