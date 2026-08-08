@@ -97,4 +97,81 @@ xray       — снимок, рентген, rentgen
 «Какое обезболивающее можно выпить, дёсна ноет?» →
 {"intent":"question","service":null,"doctor":null,"date_ref":null,"time_ref":null,"language":"ru","is_medical":true}
 
+## Примеры из живой речи (реальные сообщения: узбекский/русский сленг, опечатки, кириллица — разбирай так же уверенно)
+
+«Assalomu alekum tish oldirish nechpul» →
+{"intent": "question", "service": "extraction", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Bollani plombasi oldi tishi nechpul» →
+{"intent": "question", "service": "filling", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Ассалому алейкум доктор битта корейский имплант куйиш неча пул» →
+{"intent": "question", "service": "implant", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Лечение одного зуба пломбы ск.стоит?» →
+{"intent": "question", "service": "filling", "doctor": null, "date_ref": null, "time_ref": null, "language": "ru", "is_medical": false}
+
+«Assalomu alekum stomatolog bormi» →
+{"intent": "question", "service": null, "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Ассалому алейкум яхшимисиз кичкина болаларниям тишларини даволисизми 5 ёш» →
+{"intent": "question", "service": null, "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Aql tishim chiqyapti qattiq og'riq bn nima qilsam bo'ladi ?» →
+{"intent": "book", "service": "checkup", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": true}
+
+«Assalomu alaykum doktir yaxshimisiz xormang meni 6 yashar qizimni yuqori old tishi milkida yiring toplangan edi stamatolog kanalini ochib davoladi bu tushib o'rniga chiqadigan yangi tishga yomon tasir qimaydimi» →
+{"intent": "book", "service": "checkup", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": true}
+
+«Нужен дет стоматолог 3 зубика вырвать» →
+{"intent": "book", "service": "extraction", "doctor": null, "date_ref": null, "time_ref": null, "language": "ru", "is_medical": false}
+
+«Homilador ayol 5oylik tishi ogʻrib yotibdi nima dori quysa boʻladi yoki ichsa» →
+{"intent": "question", "service": null, "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": true}
+
+«Simli breketni tishga nechi yoshgacha qoʻysa boʻladi» →
+{"intent": "question", "service": "braces", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Ок.тиш куйдирмокчиман» →
+{"intent": "book", "service": "crown", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Tish duxtrga yozilmoqchidim chistkaga» →
+{"intent": "book", "service": "cleaning", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Assalomu alaykum Tish chistkasi nechi bosqichda narxi qanchadan» →
+{"intent": "question", "service": "cleaning", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Assalomu alaykum sizlarda tishlarni oqartirishni ham yoʻli bormi» →
+{"intent": "question", "service": "whitening", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Assalomu alaykum yaxwimisiz Tiw oqartiriw nech pul bovoti» →
+{"intent": "question", "service": "whitening", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«нерв олинган бўлиши мумкин рентген борми?» →
+{"intent": "question", "service": "xray", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Uzi shifokori bormi bugun» →
+{"intent": "question", "service": null, "doctor": null, "date_ref": "today", "time_ref": null, "language": "uz", "is_medical": false}
+
+«Xoʻp rahmat boraman» →
+{"intent": "other", "service": null, "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Олдиндан рахмат дохтир» →
+{"intent": "other", "service": null, "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Ман тилла тишларими олирмокчидим маслахатиз керак» →
+{"intent": "book", "service": "extraction", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Tishni qanday qilib oqartirish mumkin» →
+{"intent": "question", "service": "whitening", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
+«Assalomu alaykum doktor yahshimisiz qizimni tishi sinib qoldi oldi 2 ta tishidan bittasi» →
+{"intent": "book", "service": "checkup", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": true}
+
+«1 имплант сколько стоит» →
+{"intent": "question", "service": "implant", "doctor": null, "date_ref": null, "time_ref": null, "language": "ru", "is_medical": false}
+
+«Assalomu alaykum. Tishni zamaska qilish yani ichini toʻldirish qancha Milklarni ichini» →
+{"intent": "question", "service": "filling", "doctor": null, "date_ref": null, "time_ref": null, "language": "uz", "is_medical": false}
+
 Отвечай только JSON-объектом по схеме, без пояснений.
