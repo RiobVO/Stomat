@@ -283,6 +283,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   прикрыта FSM — промпт НЕ дожимать (конвенция в силе). Дальнейший рост
   качества — только реальные данные пилота (450 синтетики мало для
   выбора моделей, доверительный интервал real-40 ±9%).
+- 12.06.2026 DATA FLYWHEEL + FINE-TUNING ЗАПУЩЕНЫ ПО КОМАНДЕ «по полной
+  программе» (план одобрен; бюджет тренировки до $10 подтверждён явно).
+  ПОСТРОЕНО (5 коммитов, в origin): И-0 прод-промпт синхронизирован со
+  спайковым + tests/test_prompt_sync.py (копии РАЗЪЕХАЛИСЬ на правку
+  12.06 — прод читает src/navbat/nlu/prompts/system.md!); И-1
+  NAVBAT_OPENAI_MODEL env-переключатель (включение ft-модели одной
+  переменной); И-2 python -m navbat.export_corpus — обезличенный экспорт
+  текстов пациентов из message_queue до retention (PRIVACY.md 3/7/9
+  синхронизирован, п.8/9 актуализированы); И-3 spike_nlu/
+  harvest_telegram.py — Telethon-харвестер публичных uz-групп/комментариев
+  клиник (requirements-harvest.txt, фильтры+анонимизация, --discover);
+  И-5 spike_nlu/finetune.py — prepare (зеркало прод-инференса,
+  анти-leakage: real_40 ВНУТРИ messages.jsonl → фильтр source!=real,
+  гейт is_medical) / estimate / start (--yes-spend-money, --max-usd 9,
+  n_epochs=2 явно) / status / smoke / compare (парный гейт приёмки:
+  holdout fixes-breaks ≥ +8, real_40 ≥ 0, intent/service ≥ −3 п.п.).
+  ЗАБЛОКИРОВАНО НА ПОЛЬЗОВАТЕЛЕ: TG_API_ID/TG_API_HASH с my.telegram.org
+  в .env + интерактивный логин харвестера (код из Telegram) →
+  --discover → вычитка harvest_sources.json → прогон → И-4 разметка
+  ассистентом (300-600, + бэкфилл is_medical у 239 записей
+  messages.jsonl — prepare это гейтит) → И-6 тренировка (~$9, по
+  явной команде «запускай», прибл. оценку показать) → вердикт гейта →
+  при выигрыше NAVBAT_OPENAI_MODEL=ft:... в .env.
 - Рабочие заметки: 11.06 ВСЯ история переписана filter-branch (автор →
   noreply-адрес GitHub пользователя для графа контрибуций; упоминания
   ассистента убраны из сообщений — В НОВЫХ КОММИТАХ Co-Authored-By
