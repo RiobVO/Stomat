@@ -54,3 +54,24 @@ python eval.py                                 # полный: 130 сообщ ×
 - Цены моделей и курс UZS захардкожены в `eval.py` (сверены 2026-06-05).
 - Извлекается одна услуга на сообщение; «чистка и отбеливание» в одном сообщении
   схема не покрывает (в датасете таких нет).
+
+## Харвестер живой речи (data flywheel)
+
+Сбор аутентичных стоматологических фраз из ПУБЛИЧНЫХ Telegram-источников
+для разметки и fine-tuning. Отправители не сохраняются — только
+обезличенный текст (телефоны/@упоминания/ссылки → плейсхолдеры).
+
+    pip install -r requirements-harvest.txt
+    # один раз: my.telegram.org → API development tools,
+    # в корневой .env: TG_API_ID=..., TG_API_HASH=...
+    python harvest_telegram.py --discover "stomatologiya"  # кандидаты
+    # вычитать кандидатов → добавить в harvest_sources.json руками
+    python harvest_telegram.py        # харвест → data/inbox/harvest_*.jsonl
+
+Первый запуск спросит телефон и код из Telegram (session-файл
+`.harvest.session` локальный, в git не попадает). Читаем малыми объёмами
+с паузами (FloodWait обрабатывается); агрессивное чтение = риск
+ограничений на аккаунт — не использовать основной без необходимости.
+
+Экспорт реальных сообщений из БД бота (пилот): из корня
+`python -m navbat.export_corpus --clinic <uuid>` → `data/inbox/pilot_*.jsonl`.
