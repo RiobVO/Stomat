@@ -8,3 +8,4 @@ spike_nlu/data/*backup*.jsonl
 .recon_group_c.md
 spike_nlu/data/inbox/
 spike_nlu/.harvest.session*
+spike_nlu/data/ft_*.jsonl

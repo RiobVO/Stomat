@@ -48,6 +48,17 @@ PRICES_USD_PER_1M = {
     "gemini-2.5-flash-lite": (0.10, 0.40),
 }
 
+def _prices_for(model: str) -> tuple[float, float] | None:
+    """Цены модели; fine-tuned id (ft:base:org:suffix:hash) — по базе ×2
+    (тариф ft-инференса OpenAI; сверить при смене прайса)."""
+    exact = PRICES_USD_PER_1M.get(model)
+    if exact:
+        return exact
+    if model.startswith("ft:gpt-4o-mini"):
+        return (0.30, 1.20)
+    return None
+
+
 # OpenAI-совместимый слой Gemini: тот же SDK, другой base_url и ключ
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 UZS_PER_USD = 12_500   # ориентир на июнь 2026; проверить курс перед выводами по cost model
@@ -364,7 +375,7 @@ def build_model_report(model: str, results: list[dict]) -> tuple[list[str], dict
     reasoning_tok = sum(r["reasoning_tokens"] for r in results)
     latencies = sorted(r["latency_ms"] for r in results if r["latency_ms"] is not None)
 
-    prices = PRICES_USD_PER_1M.get(model)
+    prices = _prices_for(model)
     if prices:
         cost_usd = in_tok / 1e6 * prices[0] + out_tok / 1e6 * prices[1]
     else:
