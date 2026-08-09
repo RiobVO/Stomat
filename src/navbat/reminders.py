@@ -7,15 +7,24 @@ attend:<id> / remind_cancel:<id>) — отмена из напоминания �
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from navbat.db.base import tenant_transaction
+from navbat.dialog import (
+    clinic_repo,
+    doctors_repo,
+    questions_repo,
+    services_repo,
+    waitlist_repo,
+)
 from navbat.dialog.conversation import (
     get_chat_lang,
     load_conversation,
@@ -27,11 +36,12 @@ from navbat.dialog.escalation import (
     system_alert,
 )
 from navbat.dialog.replies import Button, Reply, service_label, t
-from navbat.dialog import questions_repo
 from navbat.retention import cleanup_old_data
+from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
     collect_daily_stats, render_digest_short, render_questions,
     should_send_digest)
+from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.worker import send_reply
 
@@ -39,6 +49,12 @@ log = logging.getLogger("navbat.reminders")
 
 DEFAULT_OFFSETS = (timedelta(hours=24), timedelta(hours=2))
 MAX_ATTEMPTS = 3
+
+# Лист ожидания: горизонт поиска слота, антиспам-кулдаун, TTL записи (env)
+WAITLIST_HORIZON_DAYS = int(os.environ.get("WAITLIST_HORIZON_DAYS", "14"))
+WAITLIST_RENOTIFY_HOURS = int(os.environ.get("WAITLIST_RENOTIFY_HOURS", "6"))
+WAITLIST_TTL_DAYS = int(os.environ.get("WAITLIST_TTL_DAYS", "14"))
+WAITLIST_ENABLED = os.environ.get("WAITLIST_ENABLED", "1") != "0"
 
 
 def _kind(offset: timedelta) -> str:
@@ -61,6 +77,7 @@ class ReminderService:
         self._notifier = notifier or LoggingEscalation()
         self._offsets = offsets
         self._digest_chat_ids = _as_chat_tuple(digest_chat_id)
+        self._sched = SchedulingEngine(session_factory, clinic_id)
         # retention: раз в календарный день; отметка в памяти — DELETE
         # идемпотентен, повтор после рестарта безвреден
         self._cleaned_on: date | None = None
@@ -165,6 +182,95 @@ class ReminderService:
             )
         return True
 
+    # ── Лист ожидания: освободился слот → предложить очереди ──────────────
+
+    def match_waitlist(self) -> int:
+        """Предложить освободившийся слот пациентам из очереди. Возвращает
+        число отправленных предложений. Освобождение слота даёт cancel()
+        (запись выходит из exclusion constraint); матчер ищет ближайший
+        свободный слот по услуге в горизонте и шлёт его теми же
+        slot:-кнопками — тап = штатная запись."""
+        if not WAITLIST_ENABLED:
+            return 0
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            waitlist_repo.expire_old(session, WAITLIST_TTL_DAYS)
+            rows = waitlist_repo.list_waiting(session)
+            if not rows:  # пустая очередь не сканирует слоты
+                return 0
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+            doctor_ids = [d[0] for d in doctors_repo.doctor_list(session)]
+        now = datetime.now(tz)
+        days = [now.date() + timedelta(days=i)
+                for i in range(WAITLIST_HORIZON_DAYS)]
+        sent = 0
+        for row in rows:
+            if self._offer_waitlist_slot(row, doctor_ids, days, tz, now):
+                sent += 1
+        return sent
+
+    def _earliest_slot(self, service_id, doctor_ids, days, now):
+        """Ближайший свободный слот по услуге (любой врач) в горизонте."""
+        for day in days:
+            best = None
+            for did in doctor_ids:
+                for slot in self._sched.find_free_slots(did, service_id, day):
+                    if slot.start > now:  # отсечь прошедшие часы сегодня
+                        if best is None or slot.start < best[0]:
+                            best = (slot.start, did)
+                        break  # find_free_slots отсортирован — первый = ближайший
+            if best:
+                return best  # дни по порядку → первый день с слотом = ближайший
+        return None
+
+    def _offer_waitlist_slot(self, row, doctor_ids, days, tz, now) -> bool:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            if waitlist_repo.has_future_booked(session, row.tg_chat_id,
+                                               row.service_id):
+                waitlist_repo.mark_fulfilled(session, row.id)
+                return False
+        # антиспам: пока тот же слот висит — не долбить уведомлённого
+        if row.status == "notified" and row.notified_at and \
+                now - row.notified_at < timedelta(hours=WAITLIST_RENOTIFY_HOURS):
+            return False
+        found = self._earliest_slot(row.service_id, doctor_ids, days, now)
+        if found is None:
+            return False
+        start, doctor_id = found
+        local = start.astimezone(tz)
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            lang = get_chat_lang(session, row.tg_chat_id)
+            svc = service_label(
+                services_repo.service_name(session, row.service_id) or "checkup",
+                lang)
+            # строка conversation обязана существовать: send_reply кладёт
+            # туда map slot:-кнопки (callback придёт позже)
+            save_conversation(session, load_conversation(session, row.tg_chat_id))
+        reply = Reply(
+            t("waitlist_slot_offer", lang, service=svc, when=f"{local:%d.%m %H:%M}"),
+            button_rows=(
+                (Button(f"{local:%d.%m %H:%M}",
+                        f"slot:{doctor_id}:{start.isoformat()}"),),
+                (Button(t("btn_waitlist_leave", lang), f"wl:leave:{row.id}"),),
+            ),
+        )
+        try:
+            if self._tg_api is None:
+                raise RuntimeError("tg_api не задан")
+            send_reply(self._tg_api, self._session_factory, self._clinic_id,
+                       row.tg_chat_id, reply)
+        except ChatUnavailableError:
+            # пациент заблокировал бота — снять с очереди (как C2)
+            with tenant_transaction(self._session_factory,
+                                    self._clinic_id) as session:
+                waitlist_repo.mark_cancelled(session, row.id)
+            return False
+        except Exception as e:
+            log.warning("waitlist %s: пуш не удался: %s", row.id, e)
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            waitlist_repo.mark_notified(session, row.id)
+        return True
+
     # ── Вечерняя сводка админу ───────────────────────────────────────────
 
     def maybe_send_digest(self, now_local=None) -> bool:
@@ -224,6 +330,7 @@ class ReminderService:
             try:
                 self.reconcile()
                 self.send_due()
+                self.match_waitlist()
                 self.maybe_send_digest()
                 self.maybe_cleanup()
             except Exception:

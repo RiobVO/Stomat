@@ -157,3 +157,62 @@ def test_join_creates_waiting_and_idempotent(app_session_factory, admin_engine,
     r2 = engine.handle_action(CHAT, "wl:join:cleaning")
     assert "очеред" in r1.text and "уже" in r2.text
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "waiting")]
+
+
+# ── К-4: матчер ──────────────────────────────────────────────────────────────
+
+def _matcher(app_session_factory, clinic_id):
+    from test_reminders import make_service_obj
+    return make_service_obj(app_session_factory, clinic_id)
+
+
+def age_notified(admin_engine, clinic_id, hours):
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE waitlist SET notified_at = now() - "
+                 "make_interval(hours => :h) WHERE clinic_id = :c"),
+            {"h": hours, "c": clinic_id})
+
+
+def test_match_notifies_with_leave_button_and_marks_notified(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # пациент в очереди + врач с расписанием (слоты есть) → пуш
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    actions = [b.action for row in api.row_keyboards[-1] for b in row]
+    assert any(a.startswith("wl:leave:") for a in actions), "кнопка выхода (сырая)"
+    assert any(a.startswith("a:") for a in actions), "slot:-кнопка (нумерована)"
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "notified")]
+
+
+def test_renotify_cooldown(app_session_factory, admin_engine, clinic_a,
+                           doctor_a, service_cleaning):
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    service.match_waitlist()
+    assert service.match_waitlist() == 0, "кулдаун: сразу повторно не шлём"
+    age_notified(admin_engine, clinic_a, 7)  # > WAITLIST_RENOTIFY_HOURS
+    assert service.match_waitlist() == 1, "после кулдауна шлём снова"
+
+
+def test_match_empty_queue_no_send(app_session_factory, admin_engine, clinic_a,
+                                   doctor_a, service_cleaning):
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 0
+    assert api.sent == []
+
+
+def test_match_no_free_slot_keeps_waiting(app_session_factory, admin_engine,
+                                          clinic_a, service_cleaning):
+    no_days = {d: [] for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")}
+    from conftest import make_doctor
+    make_doctor(admin_engine, clinic_a, intervals=no_days)  # слотов нет
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 0
+    assert api.sent == []
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "waiting")]
