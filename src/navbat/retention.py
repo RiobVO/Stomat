@@ -47,7 +47,16 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "WHERE at < now() - make_interval(days => :days)"),
             {"days": days},
         ).rowcount
-    if messages or dialogs or questions:
-        log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов "
-                 "старше %d дней", messages, dialogs, questions, days)
+        # лист ожидания: терминальные записи — история без ценности; активные
+        # (waiting/notified) не трогаем (их закрывает матчер/expire)
+        waitlist = session.execute(
+            text("DELETE FROM waitlist "
+                 "WHERE status IN ('fulfilled', 'cancelled', 'expired') "
+                 "AND created_at < now() - make_interval(days => :days)"),
+            {"days": days},
+        ).rowcount
+    if messages or dialogs or questions or waitlist:
+        log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов, "
+                 "%d записей очереди старше %d дней",
+                 messages, dialogs, questions, waitlist, days)
     return messages, dialogs

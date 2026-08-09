@@ -292,3 +292,32 @@ def test_chat_unavailable_drops_from_queue(app_session_factory, admin_engine,
     api.chat_gone = True  # пациент заблокировал бота
     assert service.match_waitlist() == 0
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "cancelled")]
+
+
+# ── К-6: retention + видимость владельцу ─────────────────────────────────────
+
+def test_retention_cleans_terminal_keeps_active(app_session_factory, admin_engine,
+                                                clinic_a, service_cleaning):
+    from navbat.retention import cleanup_old_data
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, 1, None, "ru")            # активная
+        wid = wl.add(s, service_cleaning, 2, None, "ru")
+        wl.mark_cancelled(s, wid)                             # терминальная
+    age_created(admin_engine, clinic_a, 100)  # обе старше 90 дней
+    cleanup_old_data(app_session_factory, clinic_a, days=90)
+    # терминальная вычищена, активная (waiting) осталась
+    assert rows_in_db(admin_engine, clinic_a) == [(1, "waiting")]
+
+
+def test_digest_and_stats_show_waitlist_count(app_session_factory, clinic_a,
+                                              service_cleaning):
+    from zoneinfo import ZoneInfo
+    from navbat.stats import collect_daily_stats, render_digest_short, render_stats
+    from conftest import next_monday
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, 1, None, "ru")
+        wl.add(s, service_cleaning, 2, None, "ru")
+        stats = collect_daily_stats(s, next_monday(), ZoneInfo("Asia/Tashkent"))
+    assert stats.waitlist_waiting == 2
+    assert "очереди ожидания: 2" in render_digest_short(stats)
+    assert "ждут слота: 2" in render_stats(stats, next_monday())
