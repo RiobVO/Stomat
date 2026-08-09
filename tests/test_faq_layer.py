@@ -152,6 +152,70 @@ def test_hours_mid_booking_reprompts_slots(
     assert notifier.calls == []
 
 
+# ── FAQ до LLM (живая находка 12.06: 55/55 фраз батареи дёргали модель) ─────
+
+class ForbiddenExtractor:
+    """LLM не должен вызываться: FAQ при известном языке — ноль токенов."""
+
+    def extract(self, text):  # noqa: ANN001
+        raise AssertionError(f"LLM вызван для FAQ-фразы: {text!r}")
+
+
+def make_lang_known(app_session_factory, clinic_id, clock=None):
+    notifier = RecordingNotifier()
+    engine = DialogEngine(app_session_factory, clinic_id,
+                          extractor=ForbiddenExtractor(),
+                          notifier=notifier, clock=clock)
+    engine.handle_text(CHAT, "/start")
+    engine.handle_action(CHAT, "lang:ru")  # язык выбран кнопкой — как в проде
+    return engine, notifier
+
+
+def test_faq_hours_answers_without_llm(app_session_factory, admin_engine,
+                                       clinic_a, doctor_a):
+    engine, notifier = make_lang_known(
+        app_session_factory, clinic_a,
+        clock=lambda: at_tashkent(next_monday(), "10:00"))
+    reply = engine.handle_text(CHAT, "до скольки вы работаете?")
+
+    assert "09:00" in reply.text and "18:00" in reply.text
+    assert notifier.calls == []
+
+
+def test_faq_hours_with_today_not_hijacked_by_backstop(
+        app_session_factory, admin_engine, clinic_a, doctor_a):
+    # «сегодня» давало date_ref=today → booking_like бэкстоп показывал слоты
+    # ВМЕСТО часов (живой транскрипт S06); до LLM перехват — часы побеждают
+    engine, _ = make_lang_known(
+        app_session_factory, clinic_a,
+        clock=lambda: at_tashkent(next_monday(), "10:00"))
+    reply = engine.handle_text(CHAT, "до скольки работаете сегодня?")
+
+    assert "09:00" in reply.text and "18:00" in reply.text
+    assert not any(b.action.startswith("slot:") for b in reply.buttons)
+
+
+def test_faq_address_answers_without_llm(app_session_factory, admin_engine,
+                                         clinic_a, doctor_a):
+    set_address(admin_engine, clinic_a, "Ташкент, ул. Навои, 10")
+    engine, _ = make_lang_known(app_session_factory, clinic_a)
+    reply = engine.handle_text(CHAT, "где вы находитесь?")
+
+    assert "Навои" in reply.text
+
+
+def test_first_contact_faq_still_goes_through_llm(
+        app_session_factory, admin_engine, clinic_a, doctor_a):
+    # язык ещё не выбран — детект языка нужен, путь через NLU сохраняется
+    set_address(admin_engine, clinic_a, "Ташкент, ул. Навои, 10")
+    engine, _ = make(app_session_factory, clinic_a,
+                     [extr(intent="question", language="uz")])
+    reply = engine.handle_text(CHAT, "manzilingiz qayerda?")
+
+    assert "Навои" in reply.text
+    assert "Manzilimiz" in reply.text, "язык взят из NLU-детекта (uz)"
+
+
 # ── Адрес ────────────────────────────────────────────────────────────────────
 
 def set_address(admin_engine, clinic_id, value):

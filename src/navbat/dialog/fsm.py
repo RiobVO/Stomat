@@ -270,6 +270,15 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return self._escalate_on_request(session, conv)
         if conv.state == "awaiting_phone":
             return self._on_phone(session, conv, message)
+        if conv.context.lang is not None:
+            # FAQ до LLM (живая находка 12.06): часы/адрес/оплата/телефон —
+            # регэкспы, ноль токенов (обещание DEMO.md); заодно «до скольки
+            # работаете сегодня?» не угоняется booking_like-бэкстопом в слоты.
+            # Первый контакт (lang ещё не выбран) идёт через NLU — его детект
+            # языка нужен для ответа.
+            faq = self._faq_answer(session, conv, message)
+            if faq is not None:
+                return self._with_reprompt(session, conv, faq)
 
         try:
             extraction = self._extractor.extract(message)
