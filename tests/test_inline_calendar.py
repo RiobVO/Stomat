@@ -368,7 +368,9 @@ def test_no_slots_anywhere_honest_text_no_dead_buttons(
 
     reply = engine.handle_text(CHAT, "чистка в понедельник")
     assert TEMPLATES["no_slots_horizon"]["ru"] in reply.text
-    assert not reply.button_rows, "мёртвых кнопок нет"
+    # мёртвых (календарных) кнопок нет — только живая кнопка «встать в очередь»
+    actions = [b.action for row in reply.button_rows for b in row]
+    assert actions == ["wl:join:cleaning"], "одна кнопка очереди, без мёртвых"
     assert fsm_state(admin_engine) == "booking_collect", "диалог жив"
     assert len(notifier.calls) == 1, "владельцу FYI"
 

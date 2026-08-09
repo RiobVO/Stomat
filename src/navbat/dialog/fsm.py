@@ -455,6 +455,8 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return self._on_slot_chosen(session, conv, doctor_id, start_iso)
         if kind == "reslot":
             return self._on_reslot(session, conv, rest)
+        if kind == "wl":
+            return self._on_waitlist(session, conv, rest)
         if kind == "cancel_yes":
             return self._on_cancel_confirmed(session, conv)
         if kind == "cancel_no":

@@ -103,6 +103,27 @@ TEMPLATES = {
     },
     "btn_pick_date": {"ru": "📅 Выбрать дату", "uz": "📅 Sanani tanlash"},
     "btn_back_calendar": {"ru": "◀ К датам", "uz": "◀ Sanalarga"},
+    "btn_join_waitlist": {
+        "ru": "🔔 Сообщить, когда освободится",
+        "uz": "🔔 Bo'shaganda xabar bering",
+    },
+    "waitlist_joined": {
+        "ru": "🔔 Вы в очереди — пришлю первое освободившееся время.",
+        "uz": "🔔 Siz navbatdasiz — bo'shagan birinchi vaqtni yuboraman.",
+    },
+    "waitlist_already": {
+        "ru": "🔔 Вы уже в очереди — как только освободится, сразу напишу.",
+        "uz": "🔔 Siz allaqachon navbatdasiz — bo'shashi bilan yozaman.",
+    },
+    "waitlist_left": {
+        "ru": "Хорошо, убрал вас из очереди ожидания.",
+        "uz": "Mayli, sizni kutish navbatidan chiqardim.",
+    },
+    "waitlist_slot_offer": {
+        "ru": "🔔 Освободилось время на «{service}»: {when}. Записать вас?",
+        "uz": "🔔 «{service}» uchun vaqt bo'shadi: {when}. Yozib qo'yaymi?",
+    },
+    "btn_waitlist_leave": {"ru": "Я больше не жду", "uz": "Endi kutmayman"},
     "cal_no_free_days_month": {
         "ru": "В этом месяце свободных дней нет",
         "uz": "Bu oyda bo'sh kunlar yo'q",
