@@ -48,6 +48,7 @@ from navbat.dialog.dialog_common import (
     mentions_human_request,
     mentions_payment_question,
     mentions_phone_question,
+    mentions_price_question,
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import normalize_phone, phone_to_hash
@@ -330,6 +331,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # FAQ-слой (П-2б) ДО детектора наличия: «ish vaqti?» содержит
             # маркер «vaqt», но это вопрос о часах, не о слотах
             faq = self._faq_answer(session, conv, message)
+            if faq is None and not extraction.service \
+                    and mentions_price_question(message):
+                # «narxlari qancha» без услуги — прайс целиком, не «не понял»
+                # (живая батарея 12.06); вопрос с услугой дойдёт до точечного
+                # ответа в _answer_question
+                faq = self._price_list(session, conv)
             if faq is not None:
                 return self._with_reprompt(session, conv, faq)
         if extraction.intent in ("question", "other") and not extraction.service \

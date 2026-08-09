@@ -14,7 +14,9 @@ from sqlalchemy import text
 
 from conftest import at_tashkent, next_monday, next_sunday
 from navbat.dialog.dialog_common import (
-    mentions_address_question, mentions_hours_question)
+    mentions_address_question, mentions_hours_question,
+    mentions_payment_question, mentions_phone_question,
+    mentions_price_question)
 from navbat.dialog.fsm import DialogEngine
 from navbat.nlu.extractor import FakeExtractor
 from navbat.nlu.wrappers import redact_phones
@@ -150,6 +152,68 @@ def test_hours_mid_booking_reprompts_slots(
     assert "18:00" in reply.text
     assert slot_buttons(reply), "вопрос вбок не сбил шаг — слоты повторены"
     assert notifier.calls == []
+
+
+# ── Словари по живой батарее 12.06: rassrochka/nomer/общие цены ─────────────
+
+@pytest.mark.parametrize("text_", [
+    "rassrochka bormi",
+    "rasrochka qilib bo'ladimi",
+    "рассрочка есть?",
+    "karta bilan to'lasa bo'ladimi",
+])
+def test_payment_detector_latin_slang(text_):
+    assert mentions_payment_question(text_)
+
+
+@pytest.mark.parametrize("text_", [
+    "klinikangiz nomeri bormi",
+    "klinikani nomeri qancha",
+    "nomeringiz qanaqa",
+    "telefon raqamingiz qanaqa",
+    "какой у вас номер?",
+])
+def test_phone_detector_uz_nomer(text_):
+    assert mentions_phone_question(text_)
+
+
+@pytest.mark.parametrize("text_", [
+    "оставил номер соседу",
+    "вот мой номер +998901234567",
+    "nomer yozib oldim",
+])
+def test_phone_detector_ignores_own_number_talk(text_):
+    assert not mentions_phone_question(text_)
+
+
+@pytest.mark.parametrize("text_", [
+    "narxlari qancha",
+    "какие у вас цены?",
+    "прайс скиньте",
+    "сколько стоит у вас лечение",
+])
+def test_price_detector_positive(text_):
+    assert mentions_price_question(text_)
+
+
+@pytest.mark.parametrize("text_", [
+    "запишите на чистку",
+    "до скольки работаете?",
+])
+def test_price_detector_negative(text_):
+    assert not mentions_price_question(text_)
+
+
+def test_general_price_question_returns_price_list(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    # «narxlari qancha» без услуги раньше падало в «не понял» (батарея 12.06)
+    engine, notifier = make(app_session_factory, clinic_a,
+                            [extr(intent="question", language="uz")])
+    reply = engine.handle_text(CHAT, "narxlari qancha")
+
+    assert "Narxlarimiz" in reply.text
+    assert notifier.calls == []
+    assert saved_questions(admin_engine) == [], "отвеченный вопрос не копится"
 
 
 # ── FAQ до LLM (живая находка 12.06: 55/55 фраз батареи дёргали модель) ─────

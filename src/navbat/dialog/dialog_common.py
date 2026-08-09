@@ -75,14 +75,26 @@ _ADDRESS_RE = re.compile(
 # одиночное bo'lib — служебный глагол («kasal bo'lib qoldim»).
 _PAYMENT_RE = re.compile(
     r"\b(оплат\w*|рассрочк\w*|карт(?:ой|а|у|ы|е)|наличн\w*"
-    r"|to'lov\w*|bo'lib\s+to'l\w*|karta|naqd\w*|payme|click|humo)\b",
+    r"|to'lov\w*|bo'lib\s+to'l\w*|karta|naqd\w*|payme|click|humo"
+    r"|rass?rochka\w*)\b",  # латинский транслит — живая батарея 12.06
 )
 # Телефон: «номер» — только про клинику/«у вас» (иначе ловит «оставил номер
 # соседу» и шаг контакта); «у вас номер» и «номер клиники» — оба порядка.
 _PHONE_RE = re.compile(
     r"\b(телефон\w*|позвонить|дозвон\w*"
     r"|номер\s+клиники|у\s+вас\s+номер"
-    r"|telefon\w*|qo'ng'iroq|raqam\w*\s+bormi)\b",
+    r"|telefon\w*|qo'ng'iroq|raqam\w*\s+bormi"
+    # uz-заимствование «nomer» — с тем же гвардом «про клинику», что «номер»:
+    # голое nomer/raqam ловит «оставил номер соседу» и шаг контакта
+    r"|klinik\w*\s+(?:nomer|raqam)\w*|nomeringiz|raqamingiz"
+    r"|nomer\w*\s+bormi)\b",
+)
+# Общий вопрос о ценах без услуги («narxlari qancha», «какие цены») —
+# прайс целиком вместо «не понял» (живая батарея 12.06). Вопрос с услугой
+# сюда не доходит: ветка service в _answer_question срабатывает раньше.
+_PRICE_RE = re.compile(
+    r"\b(narx\w*|цен[аыу]|ценник\w*|прайс\w*|сколько\s+стоит"
+    r"|стоимост\w*|qancha\s+turadi|necha\s+pul\w*)\b",
 )
 
 
@@ -104,6 +116,11 @@ def mentions_payment_question(message: str) -> bool:
 def mentions_phone_question(message: str) -> bool:
     """Вопрос о телефоне клиники / просьба позвонить (ru/uz)."""
     return _PHONE_RE.search(_normalize(message)) is not None
+
+
+def mentions_price_question(message: str) -> bool:
+    """Общий вопрос о ценах (ru/uz): прайс целиком, когда услуга не названа."""
+    return _PRICE_RE.search(_normalize(message)) is not None
 
 
 def _looks_like_question(message: str) -> bool:
