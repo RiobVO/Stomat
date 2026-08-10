@@ -216,6 +216,24 @@ def test_general_price_question_returns_price_list(
     assert saved_questions(admin_engine) == [], "отвеченный вопрос не копится"
 
 
+# ── Комбинированное «запись + вопрос цены» одним сообщением ─────────────────
+
+def test_booking_with_price_question_answers_both(
+        app_session_factory, admin_engine, clinic_a, doctor_a):
+    # живой транскрипт S04 12.06: «завтра пломба қилдирмоқчиман, qancha
+    # turadi?» — бот показал слоты, цену молча проглотил
+    from conftest import make_service
+    make_service(admin_engine, clinic_a, "filling", 30, price=400_000)
+    engine, _ = make(app_session_factory, clinic_a,
+                     [extr(service="filling", date_ref="tomorrow")],
+                     clock=lambda: at_tashkent(next_monday(), "10:00"))
+    reply = engine.handle_text(CHAT, "завтра пломбу поставить, сколько стоит?")
+
+    assert "400 000" in reply.text, "ценовая половина вопроса не теряется"
+    assert any(b.action.startswith("slot:") for b in reply.buttons), \
+        "и слоты на завтра показаны"
+
+
 # ── FAQ до LLM (живая находка 12.06: 55/55 фраз батареи дёргали модель) ─────
 
 class ForbiddenExtractor:

@@ -50,6 +50,7 @@ from navbat.dialog.dialog_common import (
     mentions_payment_question,
     mentions_phone_question,
     mentions_price_question,
+    mentions_symptom,
 )
 from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
 from navbat.dialog.patients import normalize_phone, phone_to_hash
@@ -311,7 +312,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # other) — ещё не понимание; непонятое посреди сценария копит
             # счётчик той же машинерией, что ExtractionError (пересмотр 11.06)
             conv.context.nlu_failures = 0
-        return self._with_medical_disclaimer(conv, extraction, reply)
+        return self._with_medical_disclaimer(conv, extraction, reply, message)
 
     def _route_intent(self, session: Session, conv: Conversation,
                       extraction: Extraction, message: str) -> Reply:
@@ -332,7 +333,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                     and self._service_id(session, "checkup") is not None:
                 # наличие спрашивают без услуги — сетку считаем по осмотру
                 conv.context.service = "checkup"
-            return self._continue_booking(session, conv, extraction)
+            price_note = self._combined_price_note(session, conv,
+                                                   extraction, message)
+            reply = self._continue_booking(session, conv, extraction)
+            if price_note is not None:
+                reply = replace(reply, text=f"{price_note}\n\n{reply.text}")
+            return reply
         if extraction.intent in ("question", "other"):
             # FAQ-слой (П-2б) ДО детектора наличия: «ish vaqti?» содержит
             # маркер «vaqt», но это вопрос о часах, не о слотах
@@ -365,9 +371,11 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return self._start_reschedule(session, conv, extraction)
         if extraction.intent == "cancel":
             return self._start_cancel(session, conv)
-        lang = self._lang(conv)
-        # off-topic не оставляет пациента без выхода — кнопки меню под рукой (M7)
-        return Reply(t("other_fallback", lang), menu=menu_rows(lang))
+        # бессодержательный other («ыыыыы» живой LLM парсит как валидный
+        # other — живой тык 12.06) = тот же «не понял», что ExtractionError:
+        # 1-й раз переспрос с меню (M7), 2-й — кнопка к человеку (DEMO.md
+        # шаг 10 теперь честен и в пустом чате)
+        return self._on_nlu_failure(session, conv)
 
     def _asks_availability(self, conv: Conversation, message: str) -> bool:
         """Это вопрос о наличии? Только явные сигналы (П-1, пересмотр 11.06).
@@ -435,8 +443,12 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                                    Reply(t("reask", lang), menu=menu_rows(lang)))
 
     def _with_medical_disclaimer(self, conv: Conversation, extraction: Extraction,
-                                 reply: Reply) -> Reply:
-        if extraction.is_medical and not conv.context.medical_shown:
+                                 reply: Reply, message: str) -> Reply:
+        # дисклеймер уместен при жалобе или мед-вопросе; просьба об услуге
+        # без симптома («rentgen kerak» — живая батарея 12.06) обходится:
+        # is_medical модели здесь шире, чем нужно, фильтр — код-слой
+        applicable = extraction.intent == "question" or mentions_symptom(message)
+        if extraction.is_medical and applicable and not conv.context.medical_shown:
             conv.context.medical_shown = True
             disclaimer = MEDICAL_DISCLAIMER[self._lang(conv)]
             return Reply(f"{disclaimer}\n\n{reply.text}", reply.buttons)
@@ -518,6 +530,22 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
                 price = f"{int(row.price):,}".replace(",", " ")
                 lines.append(t("price_line", lang, service=label, price=price))
         return Reply(t("price_header", lang) + "\n" + "\n".join(lines))
+
+    def _combined_price_note(self, session: Session, conv: Conversation,
+                             extraction: Extraction, message: str) -> str | None:
+        """«Запись + вопрос цены» одним сообщением («завтра пломба, qancha
+        turadi?» — живой транскрипт S04 12.06): ценовая половина не теряется,
+        строка цены встаёт перед слотами."""
+        service = extraction.service or conv.context.service
+        if service is None or not mentions_price_question(message):
+            return None
+        lang = self._lang(conv)
+        label = service_label(service, lang)
+        price = services_repo.service_price(session, service)
+        if price is None:
+            return t("price_unknown", lang, service=label)
+        formatted = f"{int(price):,}".replace(",", " ")
+        return t("price_answer", lang, service=label, price=formatted)
 
     def _answer_question(self, session: Session, conv: Conversation,
                          extraction: Extraction, message: str) -> Reply:
