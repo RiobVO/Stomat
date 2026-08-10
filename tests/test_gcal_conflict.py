@@ -114,6 +114,41 @@ def test_no_alternative_slot_cancels_and_notifies(app_session_factory, admin_eng
     assert notifier.calls
 
 
+def test_relocate_hold_failure_does_not_silently_lose_patient(
+        monkeypatch, app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    # H2: слот, выбранный для переноса вытесненной записи, перехвачен
+    # конкурентной бронью между find_free_slots и hold → SlotTakenError.
+    # Жертва уже отменена (cancel закоммичен) — её НЕЛЬЗЯ терять молча:
+    # пациент и админ обязаны быть уведомлены, а sync_doctor не падать.
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning, day, "09:00",
+         chat_id=CHAT)
+    sync, api, notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)  # событие бота уехало в календарь
+
+    from navbat.scheduling.engine import SchedulingEngine
+    from navbat.scheduling.errors import SlotTakenError
+
+    def failing_hold(self, *args, **kwargs):
+        raise SlotTakenError("слот перехвачен конкурентной записью")
+
+    monkeypatch.setattr(SchedulingEngine, "hold", failing_hold)
+
+    # админ вписал пациента с улицы прямо поверх записи бота
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)  # не бросает, не теряет пациента молча
+
+    # жертва отменена (её слот занял ручной приём), новой брони нет
+    rows = bot_rows(admin_engine)
+    assert [r.status for r in rows] == ["cancelled"]
+    # но пациент и админ уведомлены — деградация в «перенести некуда», не тишина
+    assert tg_api.sent, "пациент должен быть уведомлён при сорванном переносе"
+    assert notifier.calls, "админ должен быть уведомлён при сорванном переносе"
+
+
 def test_conflict_with_live_hold_waits_for_expiry(app_session_factory, admin_engine,
                                                   clinic_a, doctor_a, service_cleaning):
     bind_calendar(admin_engine, doctor_a)
