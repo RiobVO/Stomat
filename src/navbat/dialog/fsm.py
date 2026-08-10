@@ -446,9 +446,15 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
 
     def _process_action(self, session: Session, conv: Conversation, action: str) -> Reply:
         lang = self._lang(conv)
+        kind, _, rest = action.partition(":")
+        if kind == "attend":
+            # «Приду» из напоминания — чистое подтверждение, состояние не
+            # меняет; работает и в escalated (живой тест 12.06: пациент позвал
+            # человека, потом пришло напоминание — тап не должен отвечать
+            # «передаю администратору»)
+            return Reply(t("attend_ok", lang))
         if conv.state == "escalated":
             return Reply(t("escalated", lang))
-        kind, _, rest = action.partition(":")
         if kind == "call_admin":
             # кнопка из фоллбэка = ровно путь «позовите администратора»;
             # повторный клик не дублирует алерт: escalated перехвачен выше
@@ -488,9 +494,6 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         if kind == "stale":
             # нажата кнопка из устаревшего сообщения — повторяем текущий шаг
             return self._with_reprompt(session, conv, Reply(t("stale_button", lang)))
-        if kind == "attend":
-            # кнопка «Приду» из напоминания — просто подтверждение
-            return Reply(t("attend_ok", lang))
         if kind == "remind_cancel":
             return self._start_cancel_by_id(session, conv, rest)
         if kind == "cal":
