@@ -240,10 +240,18 @@ def seed_demo_clinic(session_factory) -> None:
         ).scalar_one_or_none()
         if exists:
             return
+        # FAQ-поля сразу при создании: pytest TRUNCATE'ит базу, и финализатор
+        # восстанавливал демо-клинику без адреса/оплаты/телефона — на показе
+        # «где вы находитесь?» отвечало «не понял» (живая грабля 12.06)
         session.execute(
-            text("INSERT INTO clinic (id, name, salt, timezone) "
-                 "VALUES (:id, 'Navbat Demo', 'demo-salt', 'Asia/Tashkent')"),
-            {"id": DEMO_CLINIC_ID},
+            text("INSERT INTO clinic (id, name, salt, timezone, "
+                 "address, payment_info, phone) "
+                 "VALUES (:id, 'Navbat Demo', 'demo-salt', 'Asia/Tashkent', "
+                 ":addr, :pay, :phone)"),
+            {"id": DEMO_CLINIC_ID,
+             "addr": "Ташкент, ул. Навои, 10",
+             "pay": "Наличные, карта, Payme. Рассрочки нет",
+             "phone": "+998 71 200-50-50"},
         )
         for doctor in DOCTORS:
             session.execute(
