@@ -42,6 +42,7 @@ from navbat.dialog.dialog_common import (
     MAX_NLU_FAILURES,
     NEAREST_DAY_SCAN,
     SlotGuard,
+    looks_uzbek_cyrillic,
     mentions_address_question,
     mentions_availability,
     mentions_hours_question,
@@ -293,9 +294,14 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             # язык ещё не выбран (первый контакт свободным текстом) — берём
             # детект NLU; дальше язык меняет ТОЛЬКО кнопка «Til / Язык»:
             # явный выбор пациента главнее самого слабого поля модели
-            # (узбекскую кириллицу NLU массово зовёт ru — eval 12.06.2026)
-            conv.context.lang = ("ru" if extraction.language == "mixed"
-                                 else extraction.language)
+            # (узбекскую кириллицу NLU массово зовёт ru — eval 12.06.2026).
+            # Буквы ўқғҳ — детерминированный признак узбекского, перебивают
+            # детект (живой тест 12.06: «Тишим оғрияпти» получал ru-интерфейс)
+            if looks_uzbek_cyrillic(message):
+                conv.context.lang = "uz"
+            else:
+                conv.context.lang = ("ru" if extraction.language == "mixed"
+                                     else extraction.language)
         lang = self._lang(conv)
 
         failures_before = conv.context.nlu_failures
