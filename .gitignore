@@ -10,3 +10,5 @@ spike_nlu/data/inbox/
 spike_nlu/.harvest.session*
 spike_nlu/data/ft_*.jsonl
 spike_nlu/.harvest_login.json
+live_poke/
+photo_*.jpg
