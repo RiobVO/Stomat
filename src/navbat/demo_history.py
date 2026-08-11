@@ -8,7 +8,9 @@
 денежный аргумент показа выглядит пустым экраном (docs/SALES_READINESS.md,
 №4). Сидер создаёт правдоподобную неделю-другую: записи (часть оформлена
 вне рабочих часов), отмены из напоминания с суммой освобождённых слотов,
-новые и вернувшиеся пациенты.
+новые и вернувшиеся пациенты, журналы возвратов (recall) и оценок приёма —
+без последних двух строки «🔁 Возврат пациентов» и «⭐ Оценки пациентов»
+на показе пусты, и обе продающие фичи приходится пересказывать словами.
 
 Границы (ревью сидера):
 - только демо-клиника — гейт в CLI: синтетика в базе живой клиники портит
@@ -77,6 +79,28 @@ SAME_DAY_LEAD_HOURS = 3
 # раньше этого часа заявок не бывает даже ночью
 EARLIEST_BOOKING_HOUR = 6
 
+# ── Журналы витрины: возвраты (recall) и оценки приёма ─────────────────────
+# просьба об оценке уходит каждому N-му прошедшему приёму: сплошная лента
+# «спросили всех» читается как выдумка ровно так же, как ровный поток записей
+REVIEW_ASK_EVERY = 2
+# каждый третий спрошенный молчит: строка без rating — «молчание не двойка»,
+# в среднюю она не входит вовсе (stats.collect_stats)
+REVIEW_SILENT_EVERY = 3
+# паттерн оценок: средняя некруглая (31/7 ≈ 4.4) и одна тройка есть. Ровные
+# 5.0 владелец читает как выдумку; 1–2 не сеем — алерт по плохой оценке уходит
+# владельцу в чат, а на показе такого алерта нет и не будет
+REVIEW_RATINGS = (5, 4, 5, 5, 3, 5, 4)
+# через сколько часов после приёма ушла просьба и прилетела звезда
+REVIEW_ASK_LAG_HOURS = 2
+REVIEW_RATE_LAG_HOURS = 1
+# приглашение получает каждый N-й приём старой половины окна: за две недели
+# выходит 7–9 приглашений — рассылка, а не ковровая бомбардировка
+RECALL_EVERY = 3
+# каждый третий приглашённый записался: конверсия возврата — не половина
+RECALL_BOOKED_EVERY = 3
+# дневные часы рассылки: ночью приглашений не бывает (reminders — то же окно)
+RECALL_HOURS = (10, 11, 12)
+
 
 def _hour_for(index: int, after_hours: bool) -> int:
     """Час оформления записи: ночные — когда администратор спит."""
@@ -91,6 +115,8 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
 
     Идемпотентность скользящая: день, в котором история уже есть, не трогаем,
     а пустые дни окна досеиваем — между показами «сегодня» уезжает вперёд.
+    Журналы возвратов и оценок идут отдельной фазой после дней и по всем
+    прошедшим приёмам базы, а не по созданным здесь: `_seed_journals`.
 
     `now` инжектируется тестами (конвенция проекта — время тестируемо):
     сколько истории попадёт в сегодняшний день, зависит от часа прогона."""
@@ -154,7 +180,9 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
                     # сегодняшние приёмы — только те, что уже прошли: будущие
                     # заняли бы слоты, которые показываются вживую
                     not_after=now if offset == 0 else None)
-    log.info("демо-история: создано записей — %d", created)
+        recalls, reviews = _seed_journals(session, tz, today, now, days)
+    log.info("демо-история: создано записей — %d, приглашений — %d, оценок — %d",
+             created, recalls, reviews)
     return created
 
 
@@ -357,6 +385,104 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
 
 
+def _seed_journals(session: Session, tz: ZoneInfo, today: date,
+                   now: datetime, days: int) -> tuple[int, int]:
+    """Журналы возвратов и оценок по ВСЕМ прошедшим демо-приёмам базы.
+
+    Возвращает (приглашений, просьб об оценке).
+
+    Отдельной фазой после дней, а не внутри создания записи: идемпотентность
+    дней скользящая — наполненный день сид пропускает целиком, — и на таком
+    дне журналы не досеялись бы никогда. Типовой случай: финализатор сьюта
+    вернул записи, а строки «🔁» и «⭐» витрины остались пустыми. Дубли давит
+    ON CONFLICT: ключ обоих журналов — приём (0025, 0026).
+
+    Берём только состоявшиеся приёмы: у отменённого спрашивать об оценке и
+    звать «как в прошлый раз» не за что. Чат обязателен — /forget обнуляет
+    его, а в журналах колонка NOT NULL.
+    """
+    past = session.execute(
+        text("SELECT id, tg_chat_id, lang, upper(time_range) AS finish "
+             "FROM appointment WHERE source = :src AND status = 'booked' "
+             "AND tg_chat_id IS NOT NULL AND upper(time_range) < :now "
+             "ORDER BY upper(time_range), id"),
+        {"src": DEMO_SOURCE, "now": now}).all()
+    recalls = reviews = older = 0
+    for index, row in enumerate(past):
+        finish = row.finish.astimezone(tz)
+        if index % REVIEW_ASK_EVERY == 0:
+            reviews += _seed_review(session, row, index // REVIEW_ASK_EVERY,
+                                    finish, now)
+        # приглашения идут по СТАРОЙ половине окна: на свежих днях «приходите
+        # снова» звучало бы как «вы же были вчера», а конверсии по такому
+        # приглашению просто не успели бы случиться в прошлом
+        if (today - finish.date()).days > days // 2:
+            if older % RECALL_EVERY == 0:
+                recalls += _seed_recall(session, row, older // RECALL_EVERY,
+                                        finish, tz, days, now)
+            older += 1
+    return recalls, reviews
+
+
+def _seed_review(session: Session, row, asked: int, finish: datetime,
+                 now: datetime) -> int:
+    """Просьба об оценке приёма и — если пациент не промолчал — сама оценка.
+
+    Оба момента строго в прошлом: журнал из будущего — такая же ложь, как
+    будущий приём. Не поместилась просьба — строки нет вовсе; не поместилась
+    оценка — просьба остаётся неотвеченной, законное состояние журнала.
+    """
+    requested_at = finish + timedelta(hours=REVIEW_ASK_LAG_HOURS + asked % 2)
+    if requested_at > now:
+        return 0
+    rated_at = requested_at + timedelta(hours=REVIEW_RATE_LAG_HOURS + asked % 4)
+    if asked % REVIEW_SILENT_EVERY == REVIEW_SILENT_EVERY - 1 or rated_at > now:
+        rated_at = rating = None  # молчание — не двойка
+    else:
+        rating = REVIEW_RATINGS[asked % len(REVIEW_RATINGS)]
+    return session.execute(
+        text("INSERT INTO review (clinic_id, appointment_id, tg_chat_id, lang, "
+             "rating, requested_at, rated_at) VALUES "
+             "(current_setting('app.clinic_id')::uuid, :appt, :chat, :lang, "
+             ":rating, :requested, :rated) "
+             "ON CONFLICT (appointment_id) DO NOTHING"),
+        {"appt": row.id, "chat": row.tg_chat_id, "lang": row.lang or "ru",
+         "rating": rating, "requested": requested_at, "rated": rated_at},
+    ).rowcount
+
+
+def _seed_recall(session: Session, row, invite: int, finish: datetime,
+                 tz: ZoneInfo, days: int, now: datetime) -> int:
+    """Приглашение на повторный визит и — у части приглашённых — возврат.
+
+    Приглашение датируется на полокна позже приёма: витрина считает его по
+    sent_at, а показ идёт с семидневной сводки — оставь мы приглашение в дне
+    приёма, строка «🔁» была бы видна только в четырнадцатидневной. Деньги
+    строки приходят из цены услуги ИСХОДНОГО приёма (stats.collect_stats),
+    сеять их отдельно нечем.
+    """
+    sent_at = datetime.combine(
+        finish.date() + timedelta(days=max(1, days // 2)),
+        datetime.min.time(), tz).replace(
+            hour=RECALL_HOURS[invite % len(RECALL_HOURS)])
+    if sent_at > now:
+        return 0  # приглашение из будущего: та же граница «только прошлое»
+    booked_at = sent_at + timedelta(days=1 + invite % 3, hours=1 + invite % 5)
+    if invite % RECALL_BOOKED_EVERY or booked_at > now:
+        # промолчал (или ответил бы уже завтра) — приглашение без конверсии:
+        # витрина показывает и такие, «вернулось» меньше «приглашений»
+        booked_at = None
+    return session.execute(
+        text("INSERT INTO recall_outreach (clinic_id, appointment_id, "
+             "tg_chat_id, lang, sent_at, booked_at) VALUES "
+             "(current_setting('app.clinic_id')::uuid, :appt, :chat, :lang, "
+             ":sent, :booked) "
+             "ON CONFLICT (appointment_id) DO NOTHING"),
+        {"appt": row.id, "chat": row.tg_chat_id, "lang": row.lang or "ru",
+         "sent": sent_at, "booked": booked_at},
+    ).rowcount
+
+
 def summary_stats(session_factory, clinic_id: uuid.UUID, days: int = 14,
                   now: datetime | None = None) -> DailyStats | None:
     """Сводка владельца за окно последних `days` дней; None — клиники нет.
@@ -378,15 +504,19 @@ def summary_stats(session_factory, clinic_id: uuid.UUID, days: int = 14,
 
 
 def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:
-    """Убрать демо-историю целиком: записи и их аудит.
+    """Убрать демо-историю целиком: записи, их аудит и журналы витрины.
 
     Откат обязателен — без него следы синтетики остаются в базе навсегда
-    (ревью сидера). Порядок важен: аудит ссылается на записи."""
+    (ревью сидера). Порядок важен: и аудит, и журналы возвратов с оценками
+    находятся по appointment_id, а FK у журналов намеренно нет (0025, 0026) —
+    удали мы записи первыми, искать их строки было бы уже нечем, и синтетика
+    осталась бы в витрине навсегда."""
     with tenant_transaction(session_factory, clinic_id) as session:
-        session.execute(
-            text("DELETE FROM appointment_audit WHERE appointment_id IN "
-                 "(SELECT id FROM appointment WHERE source = :src)"),
-            {"src": DEMO_SOURCE})
+        for table in ("appointment_audit", "review", "recall_outreach"):
+            session.execute(
+                text(f"DELETE FROM {table} WHERE appointment_id IN "
+                     "(SELECT id FROM appointment WHERE source = :src)"),
+                {"src": DEMO_SOURCE})
         removed = session.execute(
             text("DELETE FROM appointment WHERE source = :src"),
             {"src": DEMO_SOURCE}).rowcount

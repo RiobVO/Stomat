@@ -741,9 +741,15 @@ def main() -> int:
         shown = summary.booked + summary.prevented_noshows if summary else 0
         if shown:
             head = f"создано записей — {created}" if created else "уже есть"
+            # возвраты и оценки — из той же сводки: их строки на витрине
+            # («🔁 Возврат пациентов», «⭐ Оценки пациентов») пустеют отдельно
+            # от денежных, и без них показ теряет две фичи целиком
             print(f"[OK] демо-история: {head}; сводка окна — записей "
                   f"{summary.booked}, предотвращено неявок "
-                  f"{summary.prevented_noshows}")
+                  f"{summary.prevented_noshows}, приглашений "
+                  f"{summary.recalls_sent} (вернулось {summary.recalls_returned}), "
+                  f"оценок {summary.reviews_count} "
+                  f"(средняя {summary.reviews_avg})")
             return 0
         if created:
             sys.exit(f"[FAIL] создано {created} записей, но сводка окна пуста: "

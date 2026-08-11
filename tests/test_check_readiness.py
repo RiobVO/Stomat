@@ -138,3 +138,39 @@ def test_check_passes_seeded_demo_showcase(app_session_factory, capsys):
 
     line = _line(capsys.readouterr().out, "витрина")
     assert line.startswith("[OK]"), line
+
+
+def test_check_fails_empty_showcase_journals(app_session_factory, admin_engine,
+                                             capsys):
+    """Записи витрины и её журналы пустеют порознь: приёмы могут быть на
+    месте, а recall_outreach и review — пусты (сид старой версии, ручная
+    чистка). Строки «🔁 Возврат пациентов» и «⭐ Оценки пациентов» тогда не
+    рендерятся вовсе, и показ молча теряет две фичи пакета."""
+    from navbat.demo_history import seed_demo_history
+    from navbat.onboard import DEMO_CLINIC_ID, seed_demo_clinic
+    seed_demo_clinic(app_session_factory)
+    seed_demo_history(app_session_factory, DEMO_CLINIC_ID)
+    with admin_engine.begin() as conn:
+        conn.execute(text("DELETE FROM recall_outreach"))
+        conn.execute(text("DELETE FROM review"))
+
+    run_check(app_session_factory, DEMO_CLINIC_ID, use_real=False)
+
+    out = capsys.readouterr().out
+    assert _line(out, "витрина /stats").startswith("[OK]"), \
+        "предпосылка: сами записи витрины на месте, пусты только журналы"
+    line = _line(out, "возвраты и отзывы")
+    assert line.startswith("[FAIL]"), line
+    assert "--demo-history" in line, "чек обязан подсказать команду починки"
+
+
+def test_check_passes_seeded_showcase_journals(app_session_factory, capsys):
+    from navbat.demo_history import seed_demo_history
+    from navbat.onboard import DEMO_CLINIC_ID, seed_demo_clinic
+    seed_demo_clinic(app_session_factory)
+    seed_demo_history(app_session_factory, DEMO_CLINIC_ID)
+
+    run_check(app_session_factory, DEMO_CLINIC_ID, use_real=False)
+
+    line = _line(capsys.readouterr().out, "возвраты и отзывы")
+    assert line.startswith("[OK]"), line
