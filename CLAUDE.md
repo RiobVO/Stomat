@@ -392,6 +392,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   сьютом. Остаётся задокументированным: pre-NLU FAQ перехватывает
   «запись+FAQ-вопрос одним сообщением» в пользу FAQ (обратный трейдофф
   S04, чинится только NLU — не трогать без живых жалоб).
+- 13.06.2026 АУДИТ ПОДСИСТЕМЫ КАЛЕНДАРЬ+РАСПИСАНИЕ (scheduling/ + calendar/)
+  по команде /review: состязательный воркфлоу (5 ревьюеров × 2 верификатора,
+  24 находки) + ЭМПИРИЧЕСКАЯ перепроверка прогоном кода (зеркало интервалов
+  _free_slots↔constraint точное на 64800 случаях → класса «двойная бронь»
+  в ядре НЕТ; psycopg3 DeadlockDetected = OperationalError, не Integrity;
+  Google 410-on-delete подтверждён доками). ЗАКРЫТО 10 находок TDD
+  (repro-первым, 4a00885..2559871, всё в origin, сьют 985):
+  H1 410 Gone на DELETE роняло синк (missing_ok глотал только 404, 410
+  раньше → экспорт врача залипал вечно, импорт вставал) → 404/410 при
+  missing_ok = успех, ResyncRequired только для list_events;
+  H2 перенос вытесненной записи делал cancel жертвы, затем hold/confirm
+  в отдельных транзакциях без try/except → гонка (SlotTaken)/краш теряли
+  запись пациента молча → try/except деградирует в «перенести некуда»
+  (_notify_unrelocatable); M1 reschedule брал FOR UPDATE ДО advisory-лока
+  (инверсия порядка vs hold/confirm) → ДЕТЕРМИНИРОВАННЫЙ repro
+  DeadlockDetected (test_concurrency) → advisory-лок первым по лёгкому
+  SELECT doctor_id; L2 naive dateTime из GCal → TypeError в _relocation_slot
+  → _event_span привязывает naive к tz клиники; L6 200 без access_token →
+  CalendarAuthError (не сырой KeyError, сохраняет auth-алерт); M2 freeBusy
+  жёсткий subscript ронял confirm на нестандартном 200 → мягкий .get;
+  L7 401-refresh не тратит retry-слот (повтор в той же итерации, _request);
+  L1 мёртвый exclude_id удалён; L10 channel_id info→debug (секрет);
+  S1 state в loopback-OAuth (анти-CSRF). ОТКРЫТО структурно: H2 crash-window
+  (краш МЕЖДУ cancel и confirm — нужен резерв замены ДО отмены жертвы,
+  бо́льший рефактор _relocate, отдельная итерация). ОТЛОЖЕНО с обоснованием
+  (не блокеры, вердикт «L8 не необходим»): L8 персист счётчика сбоев синка
+  (auth-шторм при флаппинге — но ОПАСНЫЙ режим прикрыт персистентным
+  gcal_last_sync_at + /health; нужна миграция → только по сигналу пилота);
+  L4 DST (Tashkent без DST → недостижимо), L9 горизонт full-resync, L11
+  CLI-цикл, L5 _map_integrity (второй UNIQUE ux_appointment_gcal_event на
+  hold/reschedule недостижим — партиал WHERE gcal_event_id IS NOT NULL),
+  L3/L12/L13/S2-S4 косметика — продуктовые/низкоотдачные, до пилота не
+  трогать. ГРАБЛЯ: серия полных pytest стёрла GCal-привязку демо-клиники —
+  для календарного показа нужна повторная calendar.auth (клик в браузере).
+  СЛЕДУЮЩИЙ ШАГ: пилот/витрина по явной команде; H2 crash-window и L8 —
+  кандидаты на отдельную итерацию по команде.
 - Рабочие заметки: 11.06 ВСЯ история переписана filter-branch (автор →
   noreply-адрес GitHub пользователя для графа контрибуций; упоминания
   ассистента убраны из сообщений — В НОВЫХ КОММИТАХ Co-Authored-By
