@@ -428,8 +428,16 @@ def _event_span(event: dict, tz: ZoneInfo) -> tuple[datetime, datetime] | None:
     """Интервал события в aware-datetime; all-day разворачивается в сутки TZ клиники."""
     start, end = event.get("start", {}), event.get("end", {})
     if "dateTime" in start and "dateTime" in end:
-        return (datetime.fromisoformat(start["dateTime"]),
-                datetime.fromisoformat(end["dateTime"]))
+        lo = datetime.fromisoformat(start["dateTime"])
+        hi = datetime.fromisoformat(end["dateTime"])
+        # Google отдаёт offset-aware RFC3339; naive (нестандартный источник)
+        # трактуем как локальное время клиники — иначе сравнение с aware-БД
+        # (lower/upper time_range) бросит TypeError в _relocation_slot
+        if lo.tzinfo is None:
+            lo = lo.replace(tzinfo=tz)
+        if hi.tzinfo is None:
+            hi = hi.replace(tzinfo=tz)
+        return lo, hi
     if "date" in start and "date" in end:
         # у Google end.date эксклюзивен — это уже граница следующего дня
         lo = datetime.combine(datetime.fromisoformat(start["date"]).date(),

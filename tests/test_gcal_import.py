@@ -153,3 +153,21 @@ def test_sync_token_is_persisted_and_reused(app_session_factory, admin_engine,
     with admin_engine.begin() as conn:
         token = conn.execute(text("SELECT gcal_sync_token FROM doctor")).scalar_one()
     assert token == "SYNC2"
+
+
+def test_event_span_naive_datetime_assumed_clinic_local():
+    # L2: Google отдаёт offset-aware RFC3339, но naive dateTime (нестандартный
+    # источник) роняет сравнение с aware-БД в _relocation_slot. _event_span
+    # привязывает naive к таймзоне клиники — сравнение порядка больше не падает.
+    from zoneinfo import ZoneInfo
+
+    from navbat.calendar.sync import _event_span
+
+    tz = ZoneInfo("Asia/Tashkent")
+    lo, hi = _event_span(
+        {"start": {"dateTime": "2026-06-15T09:00:00"},
+         "end": {"dateTime": "2026-06-15T09:30:00"}}, tz)
+    assert lo.tzinfo is not None and hi.tzinfo is not None
+    # naive 09:00 в Ташкенте == 04:00 UTC — сравнение с aware не бросает
+    import datetime as _dt
+    assert lo < _dt.datetime(2026, 6, 15, 5, 0, tzinfo=_dt.timezone.utc)
