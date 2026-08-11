@@ -63,7 +63,8 @@ class GcalWatchManager:
                 "WHERE id = :id"),
                 {"channel": channel_id, "resource": result.get("resourceId"),
                  "expires": _expiration(result), "id": row.id})
-        log.info("watch-канал %s открыт для %s", channel_id, row.gcal_calendar_id)
+        # channel_id — секрет валидации входящих пушей: не светим на info
+        log.debug("watch-канал %s открыт для %s", channel_id, row.gcal_calendar_id)
         if row.gcal_channel_id and row.gcal_resource_id:
             try:
                 self._api.stop_channel(row.gcal_channel_id, row.gcal_resource_id)
