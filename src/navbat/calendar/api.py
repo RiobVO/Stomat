@@ -132,6 +132,12 @@ class GoogleCalendarAPI:
                 f"ответ token-эндпоинта без access_token: {response.text[:200]}")
         self._access_token = token
 
+    def _request(self, method: str, path: str, params, json) -> httpx.Response:
+        return self._client.request(
+            method, BASE_URL + path, params=params, json=json,
+            headers={"Authorization": f"Bearer {self._access_token}"},
+        )
+
     def _call(self, method: str, path: str, params: dict | None = None,
               json: dict | None = None, missing_ok: bool = False):
         if self._access_token is None:
@@ -142,19 +148,18 @@ class GoogleCalendarAPI:
             if attempt:
                 time.sleep(self._retry_delays[attempt - 1])
             try:
-                response = self._client.request(
-                    method, BASE_URL + path, params=params, json=json,
-                    headers={"Authorization": f"Bearer {self._access_token}"},
-                )
+                response = self._request(method, path, params, json)
+                if response.status_code == 401 and not refreshed:
+                    # access-токен истёк — обновляем и повторяем запрос в ТОЙ ЖЕ
+                    # итерации, не тратя retry-слот (иначе на 429/5xx после
+                    # refresh остаётся на один ретрай меньше заявленного)
+                    refreshed = True
+                    self._refresh_access_token()
+                    response = self._request(method, path, params, json)
             except httpx.TransportError as e:
                 last_error = e
                 log.warning("gcal %s %s: сеть (попытка %d): %s",
                             method, path, attempt + 1, e)
-                continue
-            if response.status_code == 401 and not refreshed:
-                # access-токен истёк — единожды обновляем и повторяем
-                refreshed = True
-                self._refresh_access_token()
                 continue
             if response.status_code in (404, 410) and missing_ok:
                 # «уже удалено»: 404 — не существовало, 410 Gone — снято/протухло.
