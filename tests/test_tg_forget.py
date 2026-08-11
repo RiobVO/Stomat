@@ -149,15 +149,22 @@ def test_forget_breaks_the_swipe_reply_channel(app_session_factory, clinic_a):
 
 def test_forget_bad_argument_shows_usage(app_session_factory, admin_engine,
                                          clinic_a, doctor_a, service_cleaning):
+    """Аргумент — вход от админа, и гард int() обязан быть шире цифр ASCII:
+    «²» проходит isdigit(), а «--5» переживает lstrip('-') — на обоих int()
+    падал, и команда уходила в ретраи вместо подсказки формата."""
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],
                                  admin_chat_id=ADMIN_CHAT)
     put_message(app_session_factory, clinic_a, "/forget", chat_id=ADMIN_CHAT)
     put_message(app_session_factory, clinic_a, "/forget abc", chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, "/forget ²", chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, "/forget --5", chat_id=ADMIN_CHAT)
+    worker.process_one()
+    worker.process_one()
     worker.process_one()
     worker.process_one()
 
     replies = [reply for reply, _ in sent_to(api, ADMIN_CHAT)]
-    assert len(replies) == 2
+    assert len(replies) == 4
     for reply in replies:
         assert "/forget <chat_id>" in reply
 

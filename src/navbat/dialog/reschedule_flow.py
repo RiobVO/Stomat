@@ -106,7 +106,7 @@ class _RescheduleFlowMixin:
                                        Reply(t("stale_button", lang)))
 
         appointment_raw, _, minutes_raw = rest.partition(":")
-        if not minutes_raw.isdigit():
+        if not minutes_raw.isdecimal():
             return stale()
         try:
             uuid.UUID(appointment_raw)

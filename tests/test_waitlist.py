@@ -414,6 +414,42 @@ def test_wl_leave_cancels(app_session_factory, admin_engine, clinic_a,
     assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "cancelled")]
 
 
+def test_garbage_in_offer_buttons_answers_instead_of_crashing(
+        app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Обе кнопки предложения сырые — приходят от клиента как есть.
+
+    И id строки очереди, и минуты уезжали в int() под гардом isdigit(), а тот
+    пропускает Unicode-цифры («²»): int() на них падает, и тап уходил в
+    ретраи и dead letter вместо ответа. Мусор обязан гаситься на месте и
+    ничего не менять."""
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.dialog.replies import t
+    from navbat.nlu.extractor import FakeExtractor
+
+    with tenant_transaction(app_session_factory, clinic_a) as s:
+        wl.add(s, service_cleaning, CHAT, None, "ru")
+    service, api, _ = _matcher(app_session_factory, clinic_a)
+    assert service.match_waitlist() == 1
+    _, _, wid, minutes = _slot_action(api).split(":")
+
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+
+    assert engine.handle_action(CHAT, f"wl:take:²:{minutes}").text == \
+        t("stale_button", "ru")
+    assert engine.handle_action(CHAT, f"wl:take:{wid}:²").text == \
+        t("stale_button", "ru")
+    assert engine.handle_action(CHAT, "wl:leave:²").text == \
+        t("waitlist_left", "ru")
+
+    assert rows_in_db(admin_engine, clinic_a) == [(CHAT, "notified")], \
+        "мусорная кнопка тронула очередь"
+    with admin_engine.begin() as conn:
+        assert conn.execute(
+            text("SELECT count(*) FROM appointment")).scalar_one() == 0
+
+
 def test_chat_unavailable_drops_from_queue(app_session_factory, admin_engine,
                                            clinic_a, doctor_a, service_cleaning):
     with tenant_transaction(app_session_factory, clinic_a) as s:

@@ -409,7 +409,7 @@ class UpdateWorker:
         меню — он должен видеть, что бот снова отвечает.
         """
         parts = command.split()
-        if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        if len(parts) != 2 or not parts[1].removeprefix("-").isdecimal():
             return Reply(at("release_usage", lang))
         target = int(parts[1])
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -451,7 +451,7 @@ class UpdateWorker:
         свайп-ответов админа.
         """
         parts = command.split()
-        if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        if len(parts) != 2 or not parts[1].removeprefix("-").isdecimal():
             return Reply(at("forget_usage", lang))
         target = int(parts[1])
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -612,7 +612,7 @@ class UpdateWorker:
         args = command.split()[1:2]
         days = 1
         if args:
-            if not args[0].isdigit() or not 1 <= int(args[0]) <= 90:
+            if not args[0].isdecimal() or not 1 <= int(args[0]) <= 90:
                 return Reply(at("stats_usage", lang))
             days = int(args[0])
         return self._stats_view(days, lang)
@@ -646,7 +646,7 @@ class UpdateWorker:
             self._send(chat_id, self._stats_reply(lang=lang))
             return
         message_id = callback["message"].get("message_id")
-        if suffix.isdigit() and 1 <= int(suffix) <= 90 and message_id is not None:
+        if suffix.isdecimal() and 1 <= int(suffix) <= 90 and message_id is not None:
             edit_reply(self._api, self._session_factory, self._clinic_id,
                        chat_id, message_id,
                        self._stats_view(int(suffix), lang))

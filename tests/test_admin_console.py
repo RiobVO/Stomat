@@ -119,11 +119,16 @@ def test_price_edit_via_button_and_number(app_session_factory, admin_engine,
 
 def test_invalid_price_rejected_without_write(app_session_factory, admin_engine,
                                               clinic_a, service_cleaning):
-    worker, _, _ = make_worker(app_session_factory, clinic_a, [],
-                               admin_chat_id=ADMIN_CHAT)
+    """«²» — цифра для isdigit(), но не для int(): гард её пропускал, и ввод
+    молча уходил в ретраи. Ответ считаем явно — без этого молчание консоли
+    неотличимо от отказа, и проверка «цена не записалась» проходит впустую."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
     click(worker, app_session_factory, clinic_a, "adm:price:cleaning")
-    for bad in ("abc", "-5", "0", "12.5"):
+    for bad in ("abc", "-5", "0", "12.5", "²"):
+        sent_before = len(api.sent)
         send_admin(worker, app_session_factory, clinic_a, bad)
+        assert len(api.sent) > sent_before, f"консоль не ответила на «{bad}»"
         assert price_in_db(admin_engine, clinic_a) is None
         assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "price:cleaning"
 
@@ -351,11 +356,16 @@ def test_duration_edit_via_button_and_number(app_session_factory, admin_engine,
 
 def test_invalid_duration_rejected(app_session_factory, admin_engine,
                                     clinic_a, service_cleaning):
-    worker, _, _ = make_worker(app_session_factory, clinic_a, [],
-                               admin_chat_id=ADMIN_CHAT)
+    """«²» — цифра для isdigit(), но не для int(): гард её пропускал, и ввод
+    молча уходил в ретраи. Ответ считаем явно — иначе молчание консоли
+    проходит проверку наравне с отказом."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
     click(worker, app_session_factory, clinic_a, "adm:svc:cleaning:dur")
-    for bad in ("0", "abc", "500", "-1"):
+    for bad in ("0", "abc", "500", "-1", "²"):
+        sent_before = len(api.sent)
         send_admin(worker, app_session_factory, clinic_a, bad)
+        assert len(api.sent) > sent_before, f"консоль не ответила на «{bad}»"
         assert service_field(admin_engine, clinic_a, "cleaning", "duration_min") == 30
         # pending должен сохраняться после каждого неверного ввода
         assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "dur:cleaning"

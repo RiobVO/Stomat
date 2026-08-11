@@ -491,7 +491,8 @@ def test_garbage_in_the_star_button_answers_instead_of_crashing(
         service_cleaning):
     """Мусор в callback_data не должен ронять обработку: битый uuid уводил бы
     апдейт в dead letter вместо ответа, а оценка вне 1..5 разбивалась бы о
-    CHECK в БД, отравляя транзакцию целиком."""
+    CHECK в БД, отравляя транзакцию целиком. Отдельный подкласс — Unicode-цифры
+    («²»): isdigit() их пропускает, а int() на них падает."""
     appointment_id = seed_visit(admin_engine, clinic_a, doctor_a,
                                 service_cleaning, hours_ago=3)
     service, _ = make_review_service(app_session_factory, clinic_a)
@@ -503,6 +504,8 @@ def test_garbage_in_the_star_button_answers_instead_of_crashing(
     assert engine.handle_action(CHAT, f"rate:{appointment_id}:9").text == \
         t("stale_button", "ru")
     assert engine.handle_action(CHAT, f"rate:{appointment_id}:0").text == \
+        t("stale_button", "ru")
+    assert engine.handle_action(CHAT, f"rate:{appointment_id}:²").text == \
         t("stale_button", "ru")
 
     assert [r.rating for r in review_rows(admin_engine, clinic_a)] == [None]
@@ -640,7 +643,7 @@ def test_stats_show_the_average_patient_rating(app_session_factory,
 
     assert (stats.reviews_count, stats.reviews_avg) == (2, 3.5)
     rendered = render_stats(stats, today)
-    assert "⭐" in rendered and "средняя: 3.5 (из 2)" in rendered, rendered
+    assert "⭐" in rendered and "средняя: 3.5 · оценок: 2" in rendered, rendered
 
 
 def test_stats_hide_the_rating_line_without_ratings():

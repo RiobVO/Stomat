@@ -510,7 +510,7 @@ class AdminConsole:
         lang = self._lang(chat_id)
         if raw == "off":
             months = None
-        elif raw.isdigit() and int(raw) in RECALL_CHOICES:
+        elif raw.isdecimal() and int(raw) in RECALL_CHOICES:
             months = int(raw)
         else:
             # значения приходят с наших же кнопок; чужой callback ничего не
@@ -540,7 +540,7 @@ class AdminConsole:
 
     def _apply_duration(self, chat_id: int, key: str, raw: str) -> Reply:
         lang = self._lang(chat_id)
-        if not raw.isdigit() or not DUR_MIN <= int(raw) <= DUR_MAX:
+        if not raw.isdecimal() or not DUR_MIN <= int(raw) <= DUR_MAX:
             return Reply(
                 at("dur_invalid", lang, lo=DUR_MIN, hi=DUR_MAX),
                 button_rows=((Button(at("btn_cancel", lang), "adm:cancel"),),))
@@ -590,7 +590,7 @@ class AdminConsole:
 
     def _apply_svcadd(self, chat_id: int, key: str, raw: str) -> Reply:
         lang = self._lang(chat_id)
-        if not raw.isdigit() or not DUR_MIN <= int(raw) <= DUR_MAX:
+        if not raw.isdecimal() or not DUR_MIN <= int(raw) <= DUR_MAX:
             return Reply(
                 at("svcadd_retry", lang, lo=DUR_MIN, hi=DUR_MAX),
                 button_rows=((Button(at("btn_cancel", lang), "adm:cancel"),),))
@@ -631,7 +631,7 @@ class AdminConsole:
     def _apply_price(self, chat_id: int, key: str, raw: str) -> Reply:
         lang = self._lang(chat_id)
         value = raw.strip()
-        if not value.isdigit() or not 0 < int(value) <= PRICE_MAX:
+        if not value.isdecimal() or not 0 < int(value) <= PRICE_MAX:
             return Reply(
                 at("price_invalid", lang),
                 button_rows=((Button(at("btn_cancel", lang), "adm:cancel"),),))
@@ -863,7 +863,7 @@ class AdminConsole:
 
     def _apply_dbuf(self, chat_id: int, doc_id_str: str, raw: str) -> Reply:
         lang = self._lang(chat_id)
-        if not raw.isdigit() or not BUF_MIN <= int(raw) <= BUF_MAX:
+        if not raw.isdecimal() or not BUF_MIN <= int(raw) <= BUF_MAX:
             return Reply(
                 at("dbuf_invalid", lang, lo=BUF_MIN, hi=BUF_MAX),
                 button_rows=((Button(at("btn_cancel", lang), "adm:cancel"),),))

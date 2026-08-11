@@ -100,7 +100,7 @@ class TelegramEscalation:
         self._lang_of = lang_of or (lambda chat: DEFAULT_LANG)
         # владелец системы (не клиники): системные алерты дублируются ему
         raw_owner = os.environ.get("NAVBAT_OWNER_CHAT_ID", "")
-        self._owner_chat = int(raw_owner) if raw_owner.lstrip("-").isdigit() else None
+        self._owner_chat = int(raw_owner) if raw_owner.removeprefix("-").isdecimal() else None
 
     def notify(self, chat_id: int, reason: str, context: dict) -> bool:
         """False — алерт не дошёл НИ ОДНОМУ админ-чату (транспортный сбой):

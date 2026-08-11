@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from conftest import at_tashkent, next_monday
 from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.replies import t
 from navbat.nlu.extractor import FakeExtractor
 from navbat.scheduling.engine import SchedulingEngine
 from test_dialog_booking import CHAT, explicit, extr, fsm_state
@@ -154,6 +155,24 @@ def test_reslot_with_garbage_time_does_not_crash(app_session_factory, admin_engi
     reply = engine.handle_action(CHAT, "reslot:не-время")
     assert reply.text
     assert appt_row(admin_engine).status == "booked"
+
+
+def test_reslot_with_unicode_digit_minutes_does_not_crash(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """«²» — цифра для isdigit(), но не для int(): гард минут её пропускал,
+    и подменённая кнопка роняла обработку вместо ответа «кнопка не активна».
+    Запись при этом обязана остаться там, где стояла."""
+    monday = next_monday()
+    appointment = book_directly(app_session_factory, clinic_a, doctor_a,
+                                service_cleaning, monday, "09:00")
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+
+    reply = engine.handle_action(CHAT, f"reslot:{appointment}:²")
+
+    assert reply.text == t("stale_button", "ru")
+    assert appt_row(admin_engine).start == at_tashkent(monday, "09:00"), \
+        "мусорная кнопка сдвинула запись"
 
 
 def test_reslot_into_the_past_is_refused(app_session_factory, admin_engine,

@@ -608,7 +608,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `stats_hit_service` | ✨ Хит-услуга ⏎ • {service} — {count} зап. | **✨ Eng ommabop xizmat ⏎ • {service} — {count} ta yozuv** | |
 | `stats_waitlist` | 🔔 Очередь ожидания ⏎ • сейчас ждут слота: {count} | **🔔 Kutish navbati ⏎ • hozir vaqt kutayotganlar: {count}** | |
 | `stats_recall` | 🔁 Возврат пациентов ⏎ • приглашений: {sent} · вернулось: {returned} (≈ {money} сум) | **🔁 Bemorlarning qaytishi ⏎ • takliflar: {sent} · qaytdi: {returned} (≈ {money} so'm)** | |
-| `stats_reviews` | ⭐ Оценки пациентов ⏎ • средняя: {avg} (из {count}) | **⭐ Bemorlar baholari ⏎ • o'rtacha: {avg} ({count} tadan)** | |
+| `stats_reviews` | ⭐ Оценки пациентов ⏎ • средняя: {avg} · оценок: {count} | **⭐ Bemorlar baholari ⏎ • o'rtacha: {avg} · baholar: {count} ta** | |
 | `stats_tech` | ⚙️ Служебное ⏎ • напоминаний: {reminders} · LLM: {requests} запросов, {tokens} токенов, сбоев: {failures}, repair: {repairs} | **⚙️ Texnik ⏎ • eslatmalar: {reminders} · LLM: {requests} so'rov, {tokens} token, xato: {failures}, repair: {repairs}** | |
 | `stats_p95` | · p95 ответа: {seconds} с (SLA &lt; 5 с) | **· javob p95: {seconds} s (SLA &lt; 5 s)** | |
 | `digest_title` | 📊 <b>Итог дня</b> | **📊 <b>Kun yakuni</b>** | |

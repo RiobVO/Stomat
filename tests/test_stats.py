@@ -219,6 +219,15 @@ def test_stats_command_with_period(app_session_factory, admin_engine, clinic_a,
     worker.process_one()
     assert "Формат" in api.sent[-1][1]
 
+    # «²» проходит isdigit(), но не int(): период молча уходил в ретраи, и
+    # проверка «последнее сообщение» смотрела бы на ответ предыдущей команды —
+    # поэтому сверяем, что ответ вообще НОВЫЙ
+    sent_before = len(api.sent)
+    put_message(app_session_factory, clinic_a, "/stats ²", chat_id=ADMIN_CHAT)
+    worker.process_one()
+    assert len(api.sent) == sent_before + 1, "на «/stats ²» ответа не было"
+    assert "Формат" in api.sent[-1][1]
+
 
 def test_stats_with_arg_from_patient_goes_to_nlu(app_session_factory,
                                                  admin_engine, clinic_a,

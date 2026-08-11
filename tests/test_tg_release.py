@@ -98,14 +98,24 @@ def test_release_not_escalated_chat(app_session_factory, admin_engine, clinic_a,
 
 def test_release_bad_argument_shows_usage(app_session_factory, admin_engine,
                                           clinic_a, doctor_a, service_cleaning):
+    """Аргумент — вход от админа, и гард int() обязан быть шире цифр ASCII:
+    «²» проходит isdigit(), а «--5» переживает lstrip('-') — на обоих int()
+    падал, и команда молча уходила в ретраи (счётчик ответов ниже это и
+    ловит: без него молчание проходило бы как успех)."""
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],
                                  admin_chat_id=ADMIN_CHAT)
     put_message(app_session_factory, clinic_a, "/release", chat_id=ADMIN_CHAT)
     put_message(app_session_factory, clinic_a, "/release abc", chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, "/release ²", chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, "/release --5", chat_id=ADMIN_CHAT)
+    worker.process_one()
+    worker.process_one()
     worker.process_one()
     worker.process_one()
 
-    for text, _ in sent_to(api, ADMIN_CHAT):
+    replies = sent_to(api, ADMIN_CHAT)
+    assert len(replies) == 4
+    for text, _ in replies:
         assert "/release <chat_id>" in text
 
 
