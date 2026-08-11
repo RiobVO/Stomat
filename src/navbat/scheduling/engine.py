@@ -200,7 +200,6 @@ class SchedulingEngine:
         service_id: uuid.UUID,
         day: date,
         step_min: int,
-        exclude_id: uuid.UUID | None = None,
     ) -> list[Slot]:
         candidates, buffer_min = self._grid(session, doctor_id, service_id, day, step_min)
         if not candidates:
@@ -214,13 +213,11 @@ class SchedulingEngine:
                   AND (status = 'booked'
                        OR (status = 'hold' AND hold_expires_at > now()))
                   AND time_range && tstzrange(:win_lo, :win_hi, '[)')
-                  AND (CAST(:excl AS uuid) IS NULL OR id != :excl)
             """),
             {
                 "doctor": doctor_id,
                 "win_lo": candidates[0][0] - BUSY_WINDOW_MARGIN,
                 "win_hi": candidates[-1][1] + BUSY_WINDOW_MARGIN,
-                "excl": exclude_id,
             },
         ).all()
         buf = timedelta(minutes=buffer_min)
