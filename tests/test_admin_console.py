@@ -422,6 +422,27 @@ def test_service_add_creates_with_duration(app_session_factory, admin_engine, cl
     assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
 
 
+def test_invalid_svcadd_duration_rejected(app_session_factory, admin_engine,
+                                          clinic_a):
+    """«²» — цифра для isdigit(), но не для int(): гард её пропускал, и шаг
+    длительности при ДОБАВЛЕНИИ услуги молча уходил в ретраи вместо подсказки
+    формата. Ответ считаем явно — иначе молчание консоли проходит проверку
+    наравне с отказом."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svcadd")
+    click(worker, app_session_factory, clinic_a, "adm:svcadd:braces")
+    for bad in ("0", "abc", "500", "-1", "²"):
+        sent_before = len(api.sent)
+        send_admin(worker, app_session_factory, clinic_a, bad)
+        assert len(api.sent) > sent_before, f"консоль не ответила на «{bad}»"
+        # услуги в базе нет: отказ идёт ДО add_service
+        assert service_field(admin_engine, clinic_a, "braces",
+                             "duration_min") is None
+        assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "svcadd:braces"
+        assert "adm:cancel" in actions(api.row_keyboards[-1])
+
+
 def test_service_add_lists_catalog_missing(app_session_factory, clinic_a,
                                             service_cleaning):
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],
@@ -451,6 +472,29 @@ def test_service_card_delete_gating(app_session_factory, admin_engine, clinic_a)
     click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
     acts = row_actions(api)
     assert "adm:svc:cleaning:del" in acts
+
+
+def test_recall_garbage_callback_keeps_interval(app_session_factory,
+                                                admin_engine, clinic_a,
+                                                service_cleaning):
+    """Значение интервала приходит с наших же кнопок, но callback — это вход
+    от клиента: «²» проходило isdigit() и валило int() внутри обработки,
+    апдейт уходил в ретраи вместо перерисовки карточки. Карточка правится на
+    месте, поэтому наблюдаем рост api.edited, а не api.sent."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning:recall:6")
+    assert service_field(admin_engine, clinic_a, "cleaning", "recall_months") == 6
+
+    for bad in ("abc", "7", "-3", "²"):
+        edited_before = len(api.edited)
+        click(worker, app_session_factory, clinic_a,
+              f"adm:svc:cleaning:recall:{bad}")
+        assert len(api.edited) > edited_before, \
+            f"карточка не перерисована на «{bad}»"
+        assert service_field(admin_engine, clinic_a, "cleaning",
+                             "recall_months") == 6, f"«{bad}» изменило интервал"
+        assert "6 мес" in api.edited[-1][2], api.edited[-1][2]
 
 
 # -- 8. Врачи (P-3) --------------------------------------------------------
@@ -495,6 +539,25 @@ def test_doctor_buffer_edit(app_session_factory, admin_engine, clinic_a, doctor_
     send_admin(worker, app_session_factory, clinic_a, "15")
 
     assert doctor_field(admin_engine, clinic_a, doctor_a, "buffer_min") == 15
+
+
+def test_invalid_doctor_buffer_rejected(app_session_factory, admin_engine,
+                                        clinic_a, doctor_a):
+    """«²» — цифра для isdigit(), но не для int(): гард её пропускал, и ввод
+    буфера молча уходил в ретраи вместо подсказки формата. Ответ считаем
+    явно — иначе молчание консоли неотличимо от отказа."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:doc:{doctor_a}:buf")
+    for bad in ("abc", "121", "-1", "²"):
+        sent_before = len(api.sent)
+        send_admin(worker, app_session_factory, clinic_a, bad)
+        assert len(api.sent) > sent_before, f"консоль не ответила на «{bad}»"
+        # 10 — буфер врача из фикстуры: правка не доехала до set_doctor_buffer
+        assert doctor_field(admin_engine, clinic_a, doctor_a, "buffer_min") == 10
+        assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == \
+            f"dbuf:{doctor_a}"
+        assert "adm:cancel" in actions(api.row_keyboards[-1])
 
 
 def test_schedule_template_applies(app_session_factory, admin_engine,
