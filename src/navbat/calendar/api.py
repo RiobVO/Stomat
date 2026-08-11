@@ -121,7 +121,13 @@ class GoogleCalendarAPI:
         if response.status_code != 200:
             raise CalendarAuthError(
                 f"refresh не удался ({response.status_code}): {response.text[:200]}")
-        self._access_token = response.json()["access_token"]
+        token = response.json().get("access_token")
+        if not token:
+            # 200 без access_token (нестандартный ответ OAuth) — это auth-сбой,
+            # а не сырой KeyError: иначе теряется быстрый auth-алерт владельцу
+            raise CalendarAuthError(
+                f"ответ token-эндпоинта без access_token: {response.text[:200]}")
+        self._access_token = token
 
     def _call(self, method: str, path: str, params: dict | None = None,
               json: dict | None = None, missing_ok: bool = False):
