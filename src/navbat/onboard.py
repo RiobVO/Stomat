@@ -237,6 +237,95 @@ def set_doctor_buffer(session_factory, clinic_id: uuid.UUID,
         raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
 
 
+def deactivate_doctor(session_factory, clinic_id: uuid.UUID,
+                      doctor_id: uuid.UUID) -> None:
+    _set_doctor_active(session_factory, clinic_id, doctor_id, False)
+
+
+def activate_doctor(session_factory, clinic_id: uuid.UUID,
+                    doctor_id: uuid.UUID) -> None:
+    _set_doctor_active(session_factory, clinic_id, doctor_id, True)
+
+
+def _set_doctor_active(session_factory, clinic_id, doctor_id, active) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE doctor SET is_active = :a WHERE id = :d RETURNING id"),
+            {"a": active, "d": doctor_id},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+
+
+def deactivate_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
+    """Снять услугу с продажи: is_active=false + погасить активные записи
+    листа ожидания по ней (иначе матчер шлёт слоты по снятой услуге)."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE service SET is_active = false WHERE name = :n "
+                 "RETURNING id"),
+            {"n": name},
+        ).scalar_one_or_none()
+        if updated is None:
+            raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+        session.execute(
+            text("UPDATE waitlist SET status = 'cancelled' "
+                 "WHERE service_id = :s AND status IN ('waiting', 'notified')"),
+            {"s": updated},
+        )
+
+
+def activate_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE service SET is_active = true WHERE name = :n "
+                 "RETURNING id"),
+            {"n": name},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+
+
+def delete_doctor(session_factory, clinic_id: uuid.UUID,
+                  doctor_id: uuid.UUID) -> None:
+    """Физически удалить врача — ТОЛЬКО если на него нет ни одной записи
+    (FK RESTRICT). Иначе ValueError — нужно деактивировать."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        refs = session.execute(
+            text("SELECT count(*) FROM appointment WHERE doctor_id = :d"),
+            {"d": doctor_id},
+        ).scalar_one()
+        if refs:
+            raise ValueError(
+                f"у врача есть записи ({refs}) — удалить нельзя, деактивируйте")
+        deleted = session.execute(
+            text("DELETE FROM doctor WHERE id = :d RETURNING id"),
+            {"d": doctor_id},
+        ).scalar_one_or_none()
+    if deleted is None:
+        raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+
+
+def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
+    """Физически удалить услугу — ТОЛЬКО если нет ссылок из appointment и
+    waitlist. Иначе ValueError."""
+    with tenant_transaction(session_factory, clinic_id) as session:
+        sid = session.execute(
+            text("SELECT id FROM service WHERE name = :n"), {"n": name},
+        ).scalar_one_or_none()
+        if sid is None:
+            raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+        refs = session.execute(
+            text("SELECT (SELECT count(*) FROM appointment WHERE service_id = :s) "
+                 "+ (SELECT count(*) FROM waitlist WHERE service_id = :s)"),
+            {"s": sid},
+        ).scalar_one()
+        if refs:
+            raise ValueError(
+                f"на услугу есть записи ({refs}) — удалить нельзя, деактивируйте")
+        session.execute(text("DELETE FROM service WHERE id = :s"), {"s": sid})
+
+
 def add_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:
     """Добавить админ-чат клинике (M4): получатель алертов + право на
     команды /stats /release /dayoff /dayopen /forget. Идемпотентно."""
