@@ -202,6 +202,41 @@ def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
         raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
 
 
+def set_service_duration(session_factory, clinic_id: uuid.UUID, name: str,
+                         duration_min: int) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE service SET duration_min = :d WHERE name = :n "
+                 "RETURNING id"),
+            {"d": duration_min, "n": name},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+
+
+def rename_doctor(session_factory, clinic_id: uuid.UUID, doctor_id: uuid.UUID,
+                  name: str) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE doctor SET name_encrypted = :name WHERE id = :d "
+                 "RETURNING id"),
+            {"name": encrypt_text(name), "d": doctor_id},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+
+
+def set_doctor_buffer(session_factory, clinic_id: uuid.UUID,
+                      doctor_id: uuid.UUID, buffer_min: int) -> None:
+    with tenant_transaction(session_factory, clinic_id) as session:
+        updated = session.execute(
+            text("UPDATE doctor SET buffer_min = :b WHERE id = :d RETURNING id"),
+            {"b": buffer_min, "d": doctor_id},
+        ).scalar_one_or_none()
+    if updated is None:
+        raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+
+
 def add_admin(session_factory, clinic_id: uuid.UUID, chat_id: int) -> None:
     """Добавить админ-чат клинике (M4): получатель алертов + право на
     команды /stats /release /dayoff /dayopen /forget. Идемпотентно."""
