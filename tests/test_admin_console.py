@@ -76,7 +76,7 @@ def test_admin_start_shows_admin_console(app_session_factory, clinic_a):
     body = last_to(api, ADMIN_CHAT)
     assert "Админ-консоль" in body
     labels = flat(last_menu(api))
-    assert ac.BTN_PRICES in labels and ac.BTN_STATS in labels
+    assert ac.BTN_SERVICES in labels and ac.BTN_STATS in labels
 
 
 def test_patient_start_unaffected(app_session_factory, clinic_a):
@@ -245,3 +245,95 @@ def test_console_alive_while_paused(app_session_factory, admin_engine, clinic_a,
     put_message(app_session_factory, clinic_a, "привет", chat_id=CHAT)
     worker.process_one()
     assert last_to(api, CHAT) is not None
+
+
+# ── 6. раздел «Услуги» (P-2) ────────────────────────────────────────────────
+
+def _service_field(admin_engine, clinic_id, name, field):
+    with admin_engine.begin() as conn:
+        return conn.execute(
+            text(f"SELECT {field} FROM service WHERE clinic_id=:c AND name=:n"),
+            {"c": clinic_id, "n": name}).scalar_one()
+
+
+def test_services_menu_lists_active_and_inactive(app_session_factory,
+                                                 admin_engine, clinic_a):
+    from conftest import make_service
+    make_service(admin_engine, clinic_a, "cleaning", 30, price=350000)
+    braces = make_service(admin_engine, clinic_a, "braces", 60)
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE service SET is_active = false WHERE id = :s"),
+                     {"s": braces})
+
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, ac.BTN_SERVICES)
+
+    rows = api.row_keyboards[-1]
+    acts = actions(rows)
+    assert "adm:svc:cleaning" in acts and "adm:svc:braces" in acts
+    assert "adm:svcadd" in acts
+    body = last_to(api, ADMIN_CHAT)
+    assert "Услуги" in body
+
+
+def test_service_card_shows_price_and_duration_buttons(app_session_factory,
+                                                       admin_engine, clinic_a,
+                                                       service_cleaning):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning")
+    # карточка либо отправлена, либо отредактирована — берём последнюю поверхность
+    rendered = api.edited[-1][3] if api.edited else api.row_keyboards[-1]
+    acts = actions(rendered)
+    assert "adm:price:cleaning" in acts
+    assert "adm:dur:cleaning" in acts
+    assert "adm:svc:cleaning:deact" in acts
+
+
+def test_duration_edit_via_button_and_number(app_session_factory, admin_engine,
+                                             clinic_a, service_cleaning):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:dur:cleaning")
+    send_admin(worker, app_session_factory, clinic_a, "45")
+    assert _service_field(admin_engine, clinic_a, "cleaning", "duration_min") == 45
+    assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
+
+
+def test_invalid_duration_rejected(app_session_factory, admin_engine, clinic_a,
+                                   service_cleaning):
+    worker, _, _ = make_worker(app_session_factory, clinic_a, [],
+                               admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:dur:cleaning")
+    for bad in ("0", "4", "500", "abc"):
+        send_admin(worker, app_session_factory, clinic_a, bad)
+        assert _service_field(admin_engine, clinic_a, "cleaning",
+                              "duration_min") == 30
+        assert context_of(admin_engine, ADMIN_CHAT)["adm_pending"] == "dur:cleaning"
+
+
+def test_service_add_lists_only_missing_catalog(app_session_factory,
+                                                admin_engine, clinic_a,
+                                                service_cleaning):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svcadd")
+    acts = actions(api.row_keyboards[-1] or (api.edited[-1][3] if api.edited else ()))
+    assert "adm:svcadd:cleaning" not in acts   # уже есть
+    assert "adm:svcadd:braces" in acts          # из каталога, ещё нет
+
+
+def test_service_add_creates_with_duration(app_session_factory, admin_engine,
+                                           clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:svcadd:braces")
+    send_admin(worker, app_session_factory, clinic_a, "60")
+    with admin_engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT duration_min, is_active FROM service "
+                 "WHERE clinic_id = :c AND name = 'braces'"),
+            {"c": clinic_a}).one()
+    assert row.duration_min == 60 and row.is_active is True
+    assert "adm_pending" not in context_of(admin_engine, ADMIN_CHAT)
