@@ -215,7 +215,7 @@ def _after_hours_confirms(session: Session, first: date, last: date,
     if not moments:
         return 0
     schedules = session.execute(
-        text("SELECT working_intervals FROM doctor")).scalars().all()
+        text("SELECT working_intervals FROM doctor WHERE is_active")).scalars().all()
     holidays = set(session.execute(
         text("SELECT date FROM holiday WHERE date BETWEEN :first AND :last"),
         {"first": first, "last": last},

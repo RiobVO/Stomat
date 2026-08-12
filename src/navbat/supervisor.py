@@ -175,8 +175,10 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
                      "FROM clinic WHERE id = :id"),
                 {"id": clinic_id},
             ).one_or_none()
-            doctors = session.execute(text("SELECT count(*) FROM doctor")).scalar_one()
-            services = session.execute(text("SELECT count(*) FROM service")).scalar_one()
+            doctors = session.execute(
+                text("SELECT count(*) FROM doctor WHERE is_active")).scalar_one()
+            services = session.execute(
+                text("SELECT count(*) FROM service WHERE is_active")).scalar_one()
         report(True, "БД и миграции")
     except Exception as e:
         report(False, "БД и миграции", str(e)[:120])
