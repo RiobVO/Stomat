@@ -21,8 +21,7 @@ from navbat.dialog.replies import SERVICE_EMOJI, SERVICE_LABELS, Button, Reply
 from navbat.scheduling.calendar_rules import WEEKDAY_KEYS
 
 # верхнее меню — reply-клавиатура
-BTN_SERVICES = "💰 Услуги"
-BTN_PRICES = BTN_SERVICES          # обратная совместимость
+BTN_SERVICES = "💊 Услуги"
 BTN_DOCTORS = "🧑‍⚕️ Врачи"
 BTN_ABOUT = "🏥 О клинике"
 BTN_STATS = "📊 Статистика"
@@ -65,9 +64,9 @@ _SCHEDULE_TEMPLATES = [
         d: [["09:00", "13:00"], ["14:00", "18:00"]]
         for d in ("mon", "tue", "wed", "thu", "fri", "sat")
     }),
-    ("Пн–Вс 09–18", {
-        d: [["09:00", "18:00"]]
-        for d in WEEKDAY_KEYS
+    ("Пн–Пт 10:00–19:00", {
+        d: [["10:00", "19:00"]]
+        for d in ("mon", "tue", "wed", "thu", "fri")
     }),
 ]
 
@@ -88,8 +87,6 @@ def _esc(value: str) -> str:
 
 def _format_schedule(wi: dict) -> str:
     """Группирует последовательные дни с одинаковыми сменами в диапазон."""
-    if not wi:
-        return "расписание не задано"
     order = list(WEEKDAY_KEYS)
     groups: list = []  # (first_day, last_day, shifts_json)
     for day in order:
@@ -109,14 +106,14 @@ def _format_schedule(wi: dict) -> str:
             lines.append(f"{_WEEKDAY_RU[first]} {spans}")
         else:
             lines.append(f"{_WEEKDAY_RU[first]}–{_WEEKDAY_RU[last]} {spans}")
-    return "\n".join(lines) if lines else "выходной"
+    return "\n".join(lines) if lines else "выходной всю неделю"
 
 
 
 def _parse_shifts(raw: str) -> list[list[str]] | None:
     """Парсит "09:00-13:00, 14:00-18:00" -> [["09:00","13:00"],...].
 
-    Возвращает None при любой ошибке формата.
+    Возвращает None при любой ошибке формата, включая часы >23 / минуты >59.
     """
     parts = [p.strip() for p in raw.split(",")]
     result = []
@@ -125,13 +122,15 @@ def _parse_shifts(raw: str) -> list[list[str]] | None:
         m = pattern.match(part)
         if not m:
             return None
-        start, end = m.group(1), m.group(2)
-
-        def _pad(t: str) -> str:
-            h, m2 = t.split(":")
-            return f"{int(h):02d}:{m2}"
-
-        start, end = _pad(start), _pad(end)
+        start_raw, end_raw = m.group(1), m.group(2)
+        try:
+            # onboard._parse_hhmm поднимает ValueError при h>=24 или m>=60
+            sh, sm = onboard._parse_hhmm(start_raw)
+            eh, em = onboard._parse_hhmm(end_raw)
+        except ValueError:
+            return None
+        start = f"{sh:02d}:{sm:02d}"
+        end = f"{eh:02d}:{em:02d}"
         if start >= end:
             return None
         result.append([start, end])
@@ -191,14 +190,20 @@ class AdminConsole:
             self._worker._send(chat_id, self.main_menu())
             return
         kind, _, arg = body.partition(":")
-        if kind == "services":
+        if body == "services" or kind == "services":
             r = self._services_menu()
             self._edit_or_send(chat_id, message_id, r)
             return
         if kind == "svc":
             self._service_callback(chat_id, message_id, arg)
             return
+        if body == "svcadd":
+            # adm:svcadd (без ключа) → показать каталог добавляемых услуг
+            r = self._svcadd_catalog_menu()
+            self._edit_or_send(chat_id, message_id, r)
+            return
         if kind == "svcadd":
+            # adm:svcadd:<key> → начать добавление конкретной услуги
             self._begin_svcadd(chat_id, arg, message_id)
             return
         if kind == "doctors":
@@ -258,15 +263,16 @@ class AdminConsole:
         for row in rows_data:
             emoji = SERVICE_EMOJI.get(row.name, "")
             label = SERVICE_LABELS.get(row.name, {}).get("ru", row.name)
-            status = "" if row.is_active else " [пауза]"
-            rows.append((Button(
-                f"{emoji} {label}{status}".strip(),
-                f"adm:svc:{row.name}"),))
-        rows.append((Button("+ Добавить услугу", "adm:svcadd:_"),))
+            if row.is_active:
+                btn_text = f"{emoji} {label}".strip()
+            else:
+                btn_text = f"⚪ {label} (скрыта)"
+            rows.append((Button(btn_text, f"adm:svc:{row.name}"),))
+        rows.append((Button("+ Добавить услугу", "adm:svcadd"),))
         rows.append((Button("◄ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
-            f"{head}💰 <b>Услуги</b>\nВыберите услугу:",
+            f"{head}💊 <b>Услуги</b>\nВыберите услугу:",
             button_rows=tuple(rows))
 
     def _service_callback(self, chat_id: int, message_id: int | None, arg: str) -> None:
@@ -296,17 +302,33 @@ class AdminConsole:
             r = self._service_card(key)
             self._edit_or_send(chat_id, message_id, r)
 
+    @staticmethod
+    def _service_refs(session, key: str) -> int:
+        """Число ссылок на услугу в appointment + waitlist (по имени).
+        Кнопка удаления не должна показываться при refs > 0."""
+        from sqlalchemy import text as _text
+        return session.execute(
+            _text("SELECT"
+                  " (SELECT count(*) FROM appointment a"
+                  "  JOIN service s ON s.id = a.service_id WHERE s.name = :n)"
+                  "+"
+                  "(SELECT count(*) FROM waitlist w"
+                  "  JOIN service s ON s.id = w.service_id WHERE s.name = :n)"),
+            {"n": key},
+        ).scalar_one()
+
     def _service_card(self, key: str, notice: str = "") -> Reply:
         with tenant_transaction(self._sf, self._cid) as session:
             rows_data = services_repo.service_list_all(session)
-        row = next((r for r in rows_data if r.name == key), None)
+            row = next((r for r in rows_data if r.name == key), None)
+            refs = self._service_refs(session, key) if row is not None else 0
         if row is None:
             return self._services_menu()
         emoji = SERVICE_EMOJI.get(key, "")
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
         price_txt = _fmt_sum(row.price) + " сум" if row.price else "не задана"
         dur_txt = f"{row.duration_min} мин"
-        status = "активна" if row.is_active else "пауза"
+        status = "активна" if row.is_active else "⚪ скрыта"
         head = f"{notice}\n\n" if notice else ""
         text = (f"{head}{emoji} <b>{_esc(label)}</b>\n"
                 f"Цена: {price_txt}\n"
@@ -317,14 +339,16 @@ class AdminConsole:
             if row.is_active else
             Button("▶️ Активировать", f"adm:svc:{key}:act")
         )
-        btn_rows = (
+        btn_rows_list = [
             (Button("Изм. цену", f"adm:svc:{key}:price"),
              Button("Изм. длит.", f"adm:svc:{key}:dur")),
             (toggle_btn,),
-            (Button("🗑 Удалить", f"adm:svc:{key}:del"),),
-            (Button("◄ Услуги", "adm:services:"),),
-        )
-        return Reply(text, button_rows=btn_rows)
+        ]
+        # Кнопка физического удаления — только деактивированной и без ссылок
+        if not row.is_active and refs == 0:
+            btn_rows_list.append((Button("🗑 Удалить совсем", f"adm:svc:{key}:del"),))
+        btn_rows_list.append((Button("◄ Услуги", "adm:services"),))
+        return Reply(text, button_rows=tuple(btn_rows_list))
 
     def _begin_dur_edit(self, chat_id: int, key: str, message_id: int | None) -> None:
         self._set_pending(chat_id, f"dur:{key}")
@@ -351,35 +375,54 @@ class AdminConsole:
         return self._service_card(
             key, notice=f"✅ Длительность «{_esc(label)}»: {dur} мин")
 
-    def _begin_svcadd(self, chat_id: int, _arg: str, message_id: int | None) -> None:
+    def _svcadd_catalog_menu(self, notice: str = "") -> Reply:
+        """Каталог услуг, ещё не добавленных в клинику."""
         with tenant_transaction(self._sf, self._cid) as session:
             existing = {r.name for r in services_repo.service_list_all(session)}
         from navbat.nlu.schema import SERVICE_KEYS
         missing = [k for k in SERVICE_KEYS if k not in existing]
         if not missing:
-            r = Reply(
+            return Reply(
                 "✅ Все услуги из каталога уже добавлены.",
-                button_rows=((Button("◄ Назад", "adm:services:"),),))
-            self._edit_or_send(chat_id, message_id, r)
-            return
+                button_rows=((Button("◄ Назад", "adm:services"),),))
         rows = []
         for k in missing:
             emoji = SERVICE_EMOJI.get(k, "")
             label = SERVICE_LABELS.get(k, {}).get("ru", k)
             rows.append((Button(f"{emoji} {label}".strip(), f"adm:svcadd:{k}"),))
-        rows.append((Button("◄ Назад", "adm:services:"),))
-        r = Reply(
-            "Добавить услугу из каталога:",
+        rows.append((Button("◄ Назад", "adm:services"),))
+        head = f"{notice}\n\n" if notice else ""
+        return Reply(
+            f"{head}Добавить услугу из каталога:",
             button_rows=tuple(rows))
-        self._edit_or_send(chat_id, message_id, r)
+
+    def _begin_svcadd(self, chat_id: int, key: str, message_id: int | None) -> None:
+        """Задать pending svcadd:<key> и попросить длительность."""
+        from navbat.nlu.schema import SERVICE_KEYS
+        if key not in SERVICE_KEYS:
+            self._edit_or_send(chat_id, message_id, self._svcadd_catalog_menu())
+            return
+        self._set_pending(chat_id, f"svcadd:{key}")
+        label = SERVICE_LABELS.get(key, {}).get("ru", key)
+        reply = Reply(
+            f"➕ <b>{_esc(label)}</b>\nВведите длительность приёма в минутах "
+            f"({DUR_MIN}–{DUR_MAX}), например 30.",
+            button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+        self._edit_or_send(chat_id, message_id, reply)
 
     def _apply_svcadd(self, chat_id: int, key: str, raw: str) -> Reply:
         if not raw.isdigit() or not DUR_MIN <= int(raw) <= DUR_MAX:
             return Reply(
-                f"Введите длительность в минутах (5–480):",
+                f"Введите длительность в минутах ({DUR_MIN}–{DUR_MAX}):",
                 button_rows=((Button("✖ Отмена", "adm:cancel"),),))
         dur = int(raw)
-        onboard.set_service_duration(self._sf, self._cid, key, dur)
+        # add_service создаёт новую строку; set_service_duration работает только
+        # для уже существующих — не использовать здесь
+        try:
+            onboard.add_service(self._sf, self._cid, key, dur)
+        except ValueError as exc:
+            self._clear_pending(chat_id)
+            return self._services_menu(notice=f"⚠️ {_esc(str(exc))}")
         self._clear_pending(chat_id)
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
         return self._services_menu(
@@ -390,7 +433,11 @@ class AdminConsole:
     def _begin_price_edit(self, chat_id: int, key: str, message_id: int | None) -> None:
         self._set_pending(chat_id, f"price:{key}")
         with tenant_transaction(self._sf, self._cid) as session:
-            current = services_repo.service_price(session, key)
+            # service_price фильтрует is_active — для деактивированной услуги
+            # вернёт None даже если цена задана; service_list_all даёт честную цену
+            rows_all = services_repo.service_list_all(session)
+        row = next((r for r in rows_all if r.name == key), None)
+        current = row.price if row is not None else None
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
         cur_txt = f"{_fmt_sum(current)} сум" if current is not None else "не задана"
         reply = Reply(
@@ -467,11 +514,12 @@ class AdminConsole:
             docs = doctors_repo.doctor_list_all(session)
         rows = []
         for doc in docs:
-            status = "" if doc.is_active else " [пауза]"
             name = doc.name or f"[врач {str(doc.id)[:8]}]"
-            rows.append((Button(
-                f"🧑‍⚕️ {name}{status}",
-                f"adm:doc:{doc.id}"),))
+            if doc.is_active:
+                btn_text = f"🧑‍⚕️ {name}"
+            else:
+                btn_text = f"⚪ {name} (скрыт)"
+            rows.append((Button(btn_text, f"adm:doc:{doc.id}"),))
         rows.append((Button("+ Добавить врача", "adm:docadd:"),))
         rows.append((Button("◄ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
@@ -507,24 +555,39 @@ class AdminConsole:
                 onboard.delete_doctor(self._sf, self._cid, doc_id)
                 r = self._doctors_menu(notice="✅ Врач удалён")
             except ValueError as e:
-                r = self._doctor_card(doc_id_str, notice=f"⚠️ {_esc(str(e))}")
+                r = self._doctor_card(doc_id_str, notice=f"⚠️ {_esc(str(e))}", chat_id=chat_id)
             self._edit_or_send(chat_id, message_id, r)
         else:
-            r = self._doctor_card(doc_id_str)
+            r = self._doctor_card(doc_id_str, chat_id=chat_id)
             self._edit_or_send(chat_id, message_id, r)
 
-    def _doctor_card(self, doc_id_str: str, notice: str = "") -> Reply:
+    @staticmethod
+    def _doctor_refs(session, doctor_id) -> int:
+        """Число ссылок на врача в appointment (для гейтинга кнопки удаления).
+        Физическое удаление при наличии записей заблокировано FK RESTRICT."""
+        from sqlalchemy import text as _text
+        return session.execute(
+            _text("SELECT count(*) FROM appointment WHERE doctor_id = :d"),
+            {"d": str(doctor_id)},
+        ).scalar_one()
+
+    def _doctor_card(self, doc_id_str: str, notice: str = "",
+                     chat_id: int | None = None) -> Reply:
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
             return self._doctors_menu()
         with tenant_transaction(self._sf, self._cid) as session:
             docs = doctors_repo.doctor_list_all(session)
-        doc = next((d for d in docs if d.id == doc_id), None)
+            doc = next((d for d in docs if d.id == doc_id), None)
+            refs = self._doctor_refs(session, doc_id) if doc is not None else 0
         if doc is None:
             return self._doctors_menu()
+        # Запоминаем текущего врача в extras для adm:doc:name / :buf / :deact …
+        if chat_id is not None:
+            self._set_extra(chat_id, "adm_doc", doc_id_str)
         name = doc.name or "(без имени)"
-        status = "активен" if doc.is_active else "пауза"
+        status = "активен" if doc.is_active else "⚪ скрыт"
         sch = _format_schedule(doc.working_intervals or {})
         head = f"{notice}\n\n" if notice else ""
         text = (f"{head}🧑‍⚕️ <b>{_esc(name)}</b>\n"
@@ -536,15 +599,17 @@ class AdminConsole:
             if doc.is_active else
             Button("▶️ Активировать", f"adm:doc:{doc_id}:act")
         )
-        btn_rows = (
+        btn_rows_list = [
             (Button("Имя", f"adm:doc:{doc_id}:name"),
              Button("Буфер", f"adm:doc:{doc_id}:buf")),
             (Button("📅 Расписание", f"adm:doc:{doc_id}:sched"),),
             (toggle_btn,),
-            (Button("🗑 Удалить", f"adm:doc:{doc_id}:del"),),
-            (Button("◄ Врачи", "adm:doctors:"),),
-        )
-        return Reply(text, button_rows=btn_rows)
+        ]
+        # Кнопка физического удаления — только деактивированного и без записей
+        if not doc.is_active and refs == 0:
+            btn_rows_list.append((Button("🗑 Удалить совсем", f"adm:doc:{doc_id}:del"),))
+        btn_rows_list.append((Button("◄ Врачи", "adm:doctors"),))
+        return Reply(text, button_rows=tuple(btn_rows_list))
 
     def _begin_dname(self, chat_id: int, doc_id_str: str, message_id: int | None) -> None:
         self._set_pending(chat_id, f"dname:{doc_id_str}")
@@ -736,6 +801,17 @@ class AdminConsole:
             conv = load_conversation(session, chat_id)
             if conv.context.extras.pop("adm_pending", None) is not None:
                 save_conversation(session, conv)
+
+    def _set_extra(self, chat_id: int, key: str, value) -> None:
+        with tenant_transaction(self._sf, self._cid) as session:
+            conv = load_conversation(session, chat_id)
+            conv.context.extras[key] = value
+            save_conversation(session, conv)
+
+    def _get_extra(self, chat_id: int, key: str):
+        with tenant_transaction(self._sf, self._cid) as session:
+            conv = load_conversation(session, chat_id)
+        return conv.context.extras.get(key)
 
     # -- отправка/редактирование ----------------------------------------------
 
