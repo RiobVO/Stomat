@@ -111,7 +111,6 @@ def _format_schedule(wi: dict) -> str:
     return "\n".join(lines) if lines else "выходной всю неделю"
 
 
-
 def _parse_shifts(raw: str) -> list[list[str]] | None:
     """Парсит "09:00-13:00, 14:00-18:00" -> [["09:00","13:00"],...].
 
@@ -279,7 +278,7 @@ class AdminConsole:
                 btn_text = f"⚪ {label} (скрыта)"
             rows.append((Button(btn_text, f"adm:svc:{row.name}"),))
         rows.append((Button("+ Добавить услугу", "adm:svcadd"),))
-        rows.append((Button("◄ Меню", "adm:home"),))
+        rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
             f"{head}💊 <b>Услуги</b>\nВыберите услугу:",
@@ -357,7 +356,7 @@ class AdminConsole:
         # Кнопка физического удаления — только деактивированной и без ссылок
         if not row.is_active and refs == 0:
             btn_rows_list.append((Button("🗑 Удалить совсем", f"adm:svc:{key}:del"),))
-        btn_rows_list.append((Button("◄ Услуги", "adm:services"),))
+        btn_rows_list.append((Button("◀ Услуги", "adm:services"),))
         return Reply(text, button_rows=tuple(btn_rows_list))
 
     def _begin_dur_edit(self, chat_id: int, key: str, message_id: int | None) -> None:
@@ -394,13 +393,13 @@ class AdminConsole:
         if not missing:
             return Reply(
                 "✅ Все услуги из каталога уже добавлены.",
-                button_rows=((Button("◄ Назад", "adm:services"),),))
+                button_rows=((Button("◀ Назад", "adm:services"),),))
         rows = []
         for k in missing:
             emoji = SERVICE_EMOJI.get(k, "")
             label = SERVICE_LABELS.get(k, {}).get("ru", k)
             rows.append((Button(f"{emoji} {label}".strip(), f"adm:svcadd:{k}"),))
-        rows.append((Button("◄ Назад", "adm:services"),))
+        rows.append((Button("◀ Назад", "adm:services"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
             f"{head}Добавить услугу из каталога:",
@@ -479,7 +478,7 @@ class AdminConsole:
             (Button(self._faq_btn("📍 Адрес", values["address"]), "adm:faq:address"),),
             (Button(self._faq_btn("💳 Оплата", values["payment"]), "adm:faq:payment"),),
             (Button(self._faq_btn("📞 Телефон", values["phone"]), "adm:faq:phone"),),
-            (Button("◄ Меню", "adm:home"),),
+            (Button("◀ Меню", "adm:home"),),
         )
         head = f"{notice}\n\n" if notice else ""
         return Reply(f"{head}🏥 <b>О клинике</b>\nВыберите поле:", button_rows=rows)
@@ -531,7 +530,7 @@ class AdminConsole:
                 btn_text = f"⚪ {name} (скрыт)"
             rows.append((Button(btn_text, f"adm:doc:{doc.id}"),))
         rows.append((Button("+ Добавить врача", "adm:docadd:"),))
-        rows.append((Button("◄ Меню", "adm:home"),))
+        rows.append((Button("◀ Меню", "adm:home"),))
         head = f"{notice}\n\n" if notice else ""
         return Reply(
             f"{head}🧑‍⚕️ <b>Врачи</b>\nВыберите врача:",
@@ -614,7 +613,7 @@ class AdminConsole:
         # Кнопка физического удаления — только деактивированного и без записей
         if not doc.is_active and refs == 0:
             btn_rows_list.append((Button("🗑 Удалить совсем", f"adm:doc:{doc_id}:del"),))
-        btn_rows_list.append((Button("◄ Врачи", "adm:doctors"),))
+        btn_rows_list.append((Button("◀ Врачи", "adm:doctors"),))
         return Reply(text, button_rows=tuple(btn_rows_list))
 
     def _begin_dname(self, chat_id: int, doc_id_str: str, message_id: int | None) -> None:
@@ -685,7 +684,7 @@ class AdminConsole:
         for i, (tpl_name, _wi) in enumerate(_SCHEDULE_TEMPLATES):
             rows.append((Button(tpl_name, f"adm:sched:tpl:{doc_id_str}:{i}"),))
         rows.append((Button("📝 Свой график", f"adm:sched:custom:{doc_id_str}"),))
-        rows.append((Button("◄ Назад", f"adm:doc:{doc_id_str}"),))
+        rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}"),))
         r = Reply(
             "📅 <b>Расписание</b>\nВыберите шаблон или задайте свой:",
             button_rows=tuple(rows))
@@ -728,7 +727,7 @@ class AdminConsole:
             if not selected:
                 r = Reply(
                     "Выберите хотя бы один рабочий день.",
-                    button_rows=((Button("◄ Назад", f"adm:doc:{doc_id_str}:sched"),),))
+                    button_rows=((Button("◀ Назад", f"adm:doc:{doc_id_str}:sched"),),))
                 self._edit_or_send(chat_id, message_id, r)
                 return
             self._set_pending(chat_id, f"sched:{doc_id_str}")
@@ -748,7 +747,7 @@ class AdminConsole:
             rows.append((Button(f"{mark}{_WEEKDAY_RU[day]}",
                                 f"adm:sched:day:{doc_id_str}:{day}"),))
         rows.append((Button("Далее →", f"adm:sched:next:{doc_id_str}"),))
-        rows.append((Button("◄ Назад", f"adm:doc:{doc_id_str}:sched"),))
+        rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}:sched"),))
         r = Reply(
             "📅 Отметьте рабочие дни:",
             button_rows=tuple(rows))
