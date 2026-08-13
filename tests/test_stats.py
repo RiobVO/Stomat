@@ -91,7 +91,12 @@ def test_p95_rendered_in_stats():
                        llm_requests=0, llm_tokens=0, nlu_failures=0,
                        nlu_repairs=0, prevented_noshows=0, saved_revenue=0,
                        p95_response_sec=2.3)
-    assert "p95" in render_stats(stats, date(2026, 6, 10))
+    out = render_stats(stats, date(2026, 6, 10))
+    assert "p95" in out
+    # сводка уходит с parse_mode=HTML: голый «<» в «SLA < 5 с» ломает парсер
+    # Telegram (живьём — dead-letter) → должно быть HTML-экранировано
+    assert "SLA < 5" not in out
+    assert "&lt;" in out
 
 
 # ── should_send_digest: чистые границы ───────────────────────────────────────
