@@ -344,9 +344,9 @@ class AdminConsole:
                 f"Длительность: {dur_txt}\n"
                 f"Статус: {status}")
         toggle_btn = (
-            Button("⏸ Поставить на паузу", f"adm:svc:{key}:deact")
+            Button("⛔ Скрыть", f"adm:svc:{key}:deact")
             if row.is_active else
-            Button("▶️ Активировать", f"adm:svc:{key}:act")
+            Button("✅ Показать", f"adm:svc:{key}:act")
         )
         btn_rows_list = [
             (Button("Изм. цену", f"adm:svc:{key}:price"),
@@ -600,9 +600,9 @@ class AdminConsole:
                 f"Статус: {status}\n"
                 f"Расписание:\n{_esc(sch)}")
         toggle_btn = (
-            Button("⏸ Пауза", f"adm:doc:{doc_id}:deact")
+            Button("⛔ Скрыть", f"adm:doc:{doc_id}:deact")
             if doc.is_active else
-            Button("▶️ Активировать", f"adm:doc:{doc_id}:act")
+            Button("✅ Показать", f"adm:doc:{doc_id}:act")
         )
         btn_rows_list = [
             (Button("Имя", f"adm:doc:{doc_id}:name"),
