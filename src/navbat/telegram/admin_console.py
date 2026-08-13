@@ -294,11 +294,11 @@ class AdminConsole:
             self._begin_dur_edit(chat_id, key, message_id)
         elif action == "deact":
             onboard.deactivate_service(self._sf, self._cid, key)
-            r = self._services_menu(notice="⏸ Услуга поставлена на паузу")
+            r = self._services_menu(notice="⛔ Услуга скрыта")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "act":
             onboard.activate_service(self._sf, self._cid, key)
-            r = self._services_menu(notice="✅ Услуга активирована")
+            r = self._services_menu(notice="✅ Услуга снова доступна")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "del":
             try:
@@ -553,11 +553,11 @@ class AdminConsole:
             self._sched_entry(chat_id, doc_id_str, message_id)
         elif action == "deact":
             onboard.deactivate_doctor(self._sf, self._cid, doc_id)
-            r = self._doctors_menu(notice="⏸ Врач поставлен на паузу")
+            r = self._doctors_menu(notice="⛔ Врач скрыт")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "act":
             onboard.activate_doctor(self._sf, self._cid, doc_id)
-            r = self._doctors_menu(notice="✅ Врач активирован")
+            r = self._doctors_menu(notice="✅ Врач снова в записи")
             self._edit_or_send(chat_id, message_id, r)
         elif action == "del":
             try:
