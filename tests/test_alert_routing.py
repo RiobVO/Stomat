@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from navbat.dialog.escalation import fyi_alert, system_alert
+from navbat.dialog.escalation import fyi_alert, ops_alert, system_alert
 from navbat.telegram.escalation import TelegramEscalation
 from test_tg_worker import FakeTelegramAPI
 
@@ -109,3 +109,54 @@ def test_system_alert_still_delivered(monkeypatch, reason):
     system_alert(escalation, reason, {})
 
     assert len(api.sent) == 1 and reason in api.sent[0][1]
+
+
+# ── Ревью волны B, блокер 2: операционные сигналы обязаны дойти клинике ─────
+
+def test_ops_alert_reaches_clinic_and_owner(monkeypatch):
+    """«Синк не работает», «напоминание не доставлено», «лимит исчерпан» —
+    это работа администратора клиники, а не только диагностика платформы."""
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", str(OWNER_CHAT))
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+
+    escalation.notify_ops("синхронизация Google Calendar не работает", {})
+
+    assert sorted(chat for chat, _, _ in api.sent) == sorted([ADMIN_CHAT,
+                                                              OWNER_CHAT])
+
+
+def test_ops_alert_hides_technical_detail_from_clinic(monkeypatch):
+    """Причина — клинике человеческим языком, трассировка — владельцу
+    (карта, №10: покупатель не должен читать текст исключения)."""
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", str(OWNER_CHAT))
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+
+    escalation.notify_ops("сообщение пациента не обработано", {},
+                          detail="KeyError: 'message'")
+
+    to_clinic = next(t for chat, t, _ in api.sent if chat == ADMIN_CHAT)
+    to_owner = next(t for chat, t, _ in api.sent if chat == OWNER_CHAT)
+    assert "KeyError" not in to_clinic, to_clinic
+    assert "сообщение пациента не обработано" in to_clinic
+    assert "KeyError" in to_owner
+
+
+def test_ops_alert_falls_back_for_legacy_notifiers():
+    legacy = _Legacy()
+
+    ops_alert(legacy, "синк умер", {}, chat_id=7)
+
+    assert legacy.calls == [(7, "синк умер", {})]
+
+
+def test_infrastructure_alerts_do_not_reach_clinic(monkeypatch):
+    """Сертификат, бэкапы, webhook и NLU-дрифт клинике бесполезны."""
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", str(OWNER_CHAT))
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+
+    escalation.notify_system("TLS-cert истекает через 3 дн.", {})
+
+    assert [chat for chat, _, _ in api.sent] == [OWNER_CHAT]

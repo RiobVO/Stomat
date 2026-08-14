@@ -1,6 +1,7 @@
 """onboard-мутации для self-service инкремента 2 (вызываются из консоли)."""
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
 
 from conftest import make_doctor, make_service
@@ -80,7 +81,12 @@ def test_deactivate_service_cancels_waitlist(app_session_factory, admin_engine,
 
 
 def test_delete_unused_doctor_ok(app_session_factory, admin_engine, clinic_a):
+    # ужесточение 27.07.2026 (ревью волны B, блокер 4): физическое удаление
+    # требует, чтобы врач был СНАЧАЛА скрыт — инвариант жил только в UI
+    # (кнопка удаления показывалась деактивированным), и путь подтверждения
+    # его обходил, если сущность вернули в работу между экраном и нажатием
     did = make_doctor(admin_engine, clinic_a, name="Botir")
+    onboard.deactivate_doctor(app_session_factory, clinic_a, did)
     onboard.delete_doctor(app_session_factory, clinic_a, did)
     with admin_engine.begin() as conn:
         gone = conn.execute(text("SELECT 1 FROM doctor WHERE id = :d"),
@@ -88,8 +94,17 @@ def test_delete_unused_doctor_ok(app_session_factory, admin_engine, clinic_a):
     assert gone is None
 
 
+def test_delete_active_doctor_blocked(app_session_factory, admin_engine,
+                                      clinic_a):
+    did = make_doctor(admin_engine, clinic_a, name="Botir")
+    with pytest.raises(ValueError, match="скройте"):
+        onboard.delete_doctor(app_session_factory, clinic_a, did)
+
+
 def test_delete_referenced_doctor_blocked(app_session_factory, admin_engine,
                                           clinic_a):
+    # врача скрываем: иначе удаление отвергнет проверка is_active и тест
+    # перестанет проверять свой инвариант — блокировку по ссылкам
     did = make_doctor(admin_engine, clinic_a, name="Akmal")
     sid = make_service(admin_engine, clinic_a, "cleaning", 30)
     day = next_monday()
@@ -100,6 +115,7 @@ def test_delete_referenced_doctor_blocked(app_session_factory, admin_engine,
                  "tstzrange(:lo, :hi))"),
             {"c": clinic_a, "d": did, "s": sid,
              "lo": at_tashkent(day, "09:00"), "hi": at_tashkent(day, "09:30")})
+    onboard.deactivate_doctor(app_session_factory, clinic_a, did)
     try:
         onboard.delete_doctor(app_session_factory, clinic_a, did)
         assert False, "удаление врача с записью должно быть запрещено"

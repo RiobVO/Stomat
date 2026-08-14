@@ -20,6 +20,7 @@ from navbat.db.base import tenant_transaction
 from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
+    ops_alert,
     system_alert,
 )
 from navbat.nlu.extractor import ExtractionError, Extractor, LLMDisabledError
@@ -150,7 +151,7 @@ class UsageRecorder:
         if self._alerted_on == today:
             return
         self._alerted_on = today
-        system_alert(
+        ops_alert(
             self._notifier,
             f"дневной лимит LLM-токенов ({self._cap}) исчерпан — "
             f"бот эскалирует диалоги до конца дня", {"cap": self._cap})

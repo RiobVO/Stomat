@@ -33,6 +33,7 @@ from navbat.dialog.conversation import (
 from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
+    ops_alert,
     system_alert,
 )
 from navbat.dialog.replies import Button, Reply, service_label, t
@@ -167,10 +168,10 @@ class ReminderService:
                     {"id": row.id, "max": MAX_ATTEMPTS},
                 ).scalar_one()
             if status == "failed":
-                system_alert(
+                ops_alert(
                     self._notifier,
-                    f"напоминание о записи {row.appointment_id} не доставлено "
-                    f"после {MAX_ATTEMPTS} попыток",
+                    f"напоминание пациенту (чат {row.tg_chat_id}) не доставлено "
+                    f"после {MAX_ATTEMPTS} попыток — свяжитесь с ним сами",
                     {"reminder": row.id},
                     chat_id=row.tg_chat_id or 0)
             return False

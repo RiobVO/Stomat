@@ -105,6 +105,32 @@ class TelegramEscalation:
                 log.error("FYI chat=%s не доставлен админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
 
+    def notify_ops(self, reason: str, context: dict,
+                   detail: str | None = None) -> None:
+        """Операционный сигнал: админ-чаты клиники + владелец системы.
+
+        Клинике — только причина (ей с ней работать), владельцу — причина
+        плюс техническая часть. Так администратор узнаёт, что синк стоит
+        или пациенту не дошло напоминание, но покупатель на показе не
+        читает текст исключения (ревью волны B, блокер 2)."""
+        targets = list(self._admin_chat_ids)
+        for chat in targets:
+            self._send_alert(chat, f"⚠ {reason}", reason)
+        if self._owner_chat and self._owner_chat not in targets:
+            owner_text = f"⚠ Системный алерт\n{reason}"
+            if detail:
+                owner_text += f"\n{detail}"
+            self._send_alert(self._owner_chat, owner_text, reason)
+        if not targets and not self._owner_chat:
+            log.warning("операционный алерт (чаты не заданы): %s | %s",
+                        reason, context)
+
+    def _send_alert(self, chat: int, message: str, reason: str) -> None:
+        try:
+            self._api.send_message(chat, message)
+        except TelegramAPIError as e:
+            log.error("алерт не доставлен в %s: %s | %s", chat, e, reason)
+
     def notify_system(self, reason: str, context: dict) -> None:
         """Системный алерт: владельцу системы, а клинике — только если
         канала владельца нет.

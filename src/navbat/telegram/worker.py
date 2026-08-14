@@ -27,6 +27,7 @@ from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
+    ops_alert,
     system_alert,
 )
 from navbat.dialog.fsm import DialogEngine
@@ -88,11 +89,13 @@ class UpdateWorker:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
                 status = fail(session, claimed.id)
             if status == "failed":
-                system_alert(
+                ops_alert(
                     self._notifier,
-                    f"апдейт {claimed.update_id} в dead letter: {e}",
+                    f"сообщение пациента (чат {claimed.tg_chat_id}) не удалось "
+                    f"обработать — свяжитесь с ним сами",
                     {"update_id": claimed.update_id},
                     chat_id=claimed.tg_chat_id,
+                    detail=f"апдейт {claimed.update_id} в dead letter: {e}",
                 )
             return True
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
