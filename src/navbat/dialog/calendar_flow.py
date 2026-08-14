@@ -69,8 +69,14 @@ class _CalendarFlowMixin:
         free = self._free_days_between(session, conv, first, month_last)
         if not free and not self._free_days_between(session, conv, today,
                                                     horizon_end, limit=1):
-            # во всём горизонте пусто: честный текст без мёртвой сетки
-            return Reply(t("no_slots_horizon", self._lang(conv)), edit=edit)
+            # во всём горизонте пусто: честный текст без мёртвой сетки.
+            # Кнопка к человеку рядом — единственное место, где пациента
+            # просили НАБРАТЬ фразу вместо тапа (карта продажи, №19);
+            # сам текст не трогаем, он проверен живьём
+            lang = self._lang(conv)
+            return Reply(t("no_slots_horizon", lang),
+                         (Button(t("btn_call_admin", lang), "call_admin"),),
+                         edit=edit)
         caption, rows = month_view(first, set(free), today, horizon_end,
                                    self._lang(conv))
         return Reply(caption, button_rows=rows, edit=edit)

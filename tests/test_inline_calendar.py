@@ -376,3 +376,29 @@ def test_no_slots_anywhere_honest_text_no_dead_buttons(
 
     engine.handle_text(CHAT, "а на чистку в понедельник?")  # второй заход
     assert len(notifier.calls) == 1, "FYI раз в день, не на каждый заход"
+
+
+def test_empty_horizon_offers_admin_button(app_session_factory, admin_engine,
+                                           clinic_a, doctor_a, service_cleaning):
+    """Карта продажи №19: единственное место, где пациента просили НАБРАТЬ
+    фразу «позовите администратора» вместо тапа. Текст не трогаем (он
+    проверен живьём) — добавляем кнопку рядом."""
+    from sqlalchemy import text as _text
+
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.nlu.extractor import FakeExtractor
+
+    # горизонт пуст: у врача нет ни одного рабочего дня
+    with admin_engine.begin() as conn:
+        conn.execute(_text("UPDATE doctor SET working_intervals = '{}'::jsonb "
+                           "WHERE id = :d"), {"d": doctor_a})
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    engine.handle_action(CHAT, "lang:ru")
+
+    reply = engine.handle_action(CHAT, "cal:nav:2026-07-01")
+
+    assert TEMPLATES["no_slots_horizon"]["ru"] in reply.text
+    actions = ([b.action for b in reply.buttons]
+               + [b.action for row in reply.button_rows for b in row])
+    assert "call_admin" in actions, "выход к человеку должен быть тапом"
