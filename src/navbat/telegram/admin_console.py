@@ -343,21 +343,19 @@ class AdminConsole:
         emoji = SERVICE_EMOJI.get(key, "")
         label = SERVICE_LABELS.get(key, {}).get("ru", key)
         price_txt = _fmt_sum(row.price) + " сум" if row.price else "не задана"
-        dur_txt = f"{row.duration_min} мин"
-        status = "активна" if row.is_active else "⚪ скрыта"
         head = f"{notice}\n\n" if notice else ""
-        text = (f"{head}{emoji} <b>{_esc(label)}</b>\n"
-                f"Цена: {price_txt}\n"
-                f"Длительность: {dur_txt}\n"
-                f"Статус: {status}")
+        text = (f"{head}{emoji} <b>{_esc(label)}</b>\n\n"
+                f"💰 Цена: {price_txt}\n"
+                f"⏱ Длительность: {row.duration_min} мин\n"
+                f"{_status_badge(row.is_active, female=True)}")
         toggle_btn = (
             Button("⛔ Скрыть", f"adm:svc:{key}:deact")
             if row.is_active else
             Button("✅ Показать", f"adm:svc:{key}:act")
         )
         btn_rows_list = [
-            (Button("Изм. цену", f"adm:svc:{key}:price"),
-             Button("Изм. длит.", f"adm:svc:{key}:dur")),
+            (Button("💰 Изм. цену", f"adm:svc:{key}:price"),
+             Button("⏱ Изм. длит.", f"adm:svc:{key}:dur")),
             (toggle_btn,),
         ]
         # Кнопка физического удаления — только деактивированной и без ссылок
@@ -599,21 +597,22 @@ class AdminConsole:
         if doc is None:
             return self._doctors_menu()
         name = doc.name or "(без имени)"
-        status = "активен" if doc.is_active else "⚪ скрыт"
         sch = _format_schedule(doc.working_intervals or {})
+        cal = ("привязан" if doc.gcal_calendar_id else "не привязан")
         head = f"{notice}\n\n" if notice else ""
-        text = (f"{head}🧑‍⚕️ <b>{_esc(name)}</b>\n"
-                f"Буфер: {doc.buffer_min} мин\n"
-                f"Статус: {status}\n"
-                f"Расписание:\n{_esc(sch)}")
+        text = (f"{head}🧑‍⚕️ <b>{_esc(name)}</b>\n\n"
+                f"⏲ Буфер: {doc.buffer_min} мин\n"
+                f"📆 Календарь: {cal}\n"
+                f"{_status_badge(doc.is_active, female=False)}\n\n"
+                f"📅 <b>График</b>\n{_esc(sch)}")
         toggle_btn = (
             Button("⛔ Скрыть", f"adm:doc:{doc_id}:deact")
             if doc.is_active else
             Button("✅ Показать", f"adm:doc:{doc_id}:act")
         )
         btn_rows_list = [
-            (Button("Имя", f"adm:doc:{doc_id}:name"),
-             Button("Буфер", f"adm:doc:{doc_id}:buf")),
+            (Button("👤 Имя", f"adm:doc:{doc_id}:name"),
+             Button("⏲ Буфер", f"adm:doc:{doc_id}:buf")),
             (Button("📅 Расписание", f"adm:doc:{doc_id}:sched"),),
             (toggle_btn,),
         ]
