@@ -27,7 +27,7 @@ from navbat.calendar.api import ResyncRequired
 from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import load_conversation, save_conversation
-from navbat.dialog.escalation import EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import fyi_alert, EscalationNotifier, LoggingEscalation
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import SchedulingError
@@ -182,8 +182,8 @@ class CalendarSync:
         if event.get("status") == "cancelled":
             recreated = self._api.insert_event(calendar_id, self._event_body(row))
             self._mark_synced(row.id, event_id=recreated["id"], synced=True)
-            self._notifier.notify(row.tg_chat_id or 0,
-                                  "событие записи удалили в календаре — восстановил; "
+            fyi_alert(self._notifier, row.tg_chat_id or 0,
+                      "событие записи удалили в календаре — восстановил; "
                                   "правки записей — через бота", {"appointment": str(row.id)})
             return
         span = _event_span(event, self._clinic_tz())
@@ -191,8 +191,8 @@ class CalendarSync:
             body = self._event_body(row)
             self._api.patch_event(calendar_id, event["id"],
                                   {"start": body["start"], "end": body["end"]})
-            self._notifier.notify(row.tg_chat_id or 0,
-                                  "событие записи сдвинули в календаре — вернул; "
+            fyi_alert(self._notifier, row.tg_chat_id or 0,
+                      "событие записи сдвинули в календаре — вернул; "
                                   "переносы — через бота", {"appointment": str(row.id)})
 
     def _apply_manual(self, doctor_id: uuid.UUID, event: dict,
@@ -357,8 +357,8 @@ class CalendarSync:
             self._notify_patient(victim.tg_chat_id,
                                  Reply(t("conflict_moved", lang,
                                          old=old_label, new=new_label), buttons))
-        self._notifier.notify(victim.tg_chat_id or 0,
-                              f"запись {old_label} вытеснена ручным событием — "
+        fyi_alert(self._notifier, victim.tg_chat_id or 0,
+                  f"запись {old_label} вытеснена ручным событием — "
                               f"перенесена на {new_label}",
                               {"appointment": str(new_id)})
 
@@ -367,8 +367,8 @@ class CalendarSync:
         уведомляем пациента и админа об отмене, не теряем запись молча."""
         self._notify_patient(victim.tg_chat_id,
                              Reply(t("conflict_cancelled", lang, old=old_label)))
-        self._notifier.notify(victim.tg_chat_id or 0,
-                              f"запись {old_label} вытеснена ручным событием, "
+        fyi_alert(self._notifier, victim.tg_chat_id or 0,
+                  f"запись {old_label} вытеснена ручным событием, "
                               f"перенести некуда — отменена",
                               {"appointment": str(victim.id)})
 

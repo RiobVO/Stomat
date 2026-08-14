@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from navbat.dialog.calendar_view import HORIZON_DAYS, month_view
 from navbat.dialog.conversation import Conversation
+from navbat.dialog.escalation import fyi_alert
 from navbat.dialog.replies import Button, Reply, t
 
 SLOTS_PER_DAY_ROW = 4      # сетка времени в day-view
@@ -176,8 +177,8 @@ class _CalendarFlowMixin:
         today = self._today(session)
         if self._no_slots_fyi_date != today:
             self._no_slots_fyi_date = today
-            self._notifier.notify(conv.chat_id, reason,
-                                  self._escalation_context(conv))
+            fyi_alert(self._notifier, conv.chat_id, reason,
+                      self._escalation_context(conv))
         lang = self._lang(conv)
         # «встать в очередь»: при отмене бот сам пришлёт освободившийся слот
         join = (Button(t("btn_join_waitlist", lang),

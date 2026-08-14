@@ -87,12 +87,35 @@ class TelegramEscalation:
                 log.error("эскалация chat=%s не доставлена админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
 
+    def notify_fyi(self, chat_id: int, reason: str, context: dict) -> None:
+        """🟡 Информирование владельца: человек не нужен, снимать нечего.
+
+        Отличается от notify() отсутствием эскалационной шапки и подсказки
+        /release — пациент не заморожен (карта продажи, №9)."""
+        if not self._admin_chat_ids:
+            log.info("FYI chat=%s (админ-чаты не заданы): %s | %s",
+                     chat_id, reason, context)
+            return
+        message = (f"🟡 К сведению: {reason}\n"
+                   f"Что хотел пациент: {summarize_context(context)}")
+        for admin_chat in self._admin_chat_ids:
+            try:
+                self._api.send_message(admin_chat, message)
+            except TelegramAPIError as e:
+                log.error("FYI chat=%s не доставлен админу %s: %s | %s",
+                          chat_id, admin_chat, e, reason)
+
     def notify_system(self, reason: str, context: dict) -> None:
-        """Системный алерт: веер админ-чатам + владельцу системы (env)."""
+        """Системный алерт: владельцу системы, а клинике — только если
+        канала владельца нет.
+
+        Раньше шёл веером во все админ-чаты: на показе покупатель читал
+        текст исключения в том же чате, что у него на экране (карта, №10).
+        Фолбэк сохранён — потерять «бэкапы не снимаются» хуже, чем показать
+        его клинике."""
         message = f"⚠ Системный алерт\n{reason}"
-        targets = list(self._admin_chat_ids)
-        if self._owner_chat and self._owner_chat not in targets:
-            targets.append(self._owner_chat)
+        targets = ([self._owner_chat] if self._owner_chat
+                   else list(self._admin_chat_ids))
         if not targets:
             log.warning("системный алерт (чаты не заданы): %s | %s",
                         reason, context)
