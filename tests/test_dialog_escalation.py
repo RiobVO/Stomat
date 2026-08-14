@@ -42,7 +42,10 @@ def test_escalated_state_stops_processing(app_session_factory, admin_engine, cli
     reply = engine.handle_text(CHAT, "запишите на чистку")
     assert fsm_state(admin_engine) == "escalated"
     assert len(notifier.calls) == 1, "повторных эскалаций нет"
-    assert not reply.buttons
+    # сценарий не продолжается: ни слотов, ни выбора услуги — единственная
+    # кнопка ведёт обратно к боту (карта продажи №5, было «кнопок нет вовсе»)
+    assert [b.action for b in reply.buttons] == ["unfreeze"]
+    assert not reply.button_rows
 
 
 def test_valid_extraction_resets_failure_counter(app_session_factory, admin_engine,

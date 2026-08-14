@@ -157,7 +157,7 @@ class _BookingFlowMixin:
                          own: bool) -> Reply:
         lang = self._lang(conv)
         if conv.state == "escalated":
-            return Reply(t("escalated", lang))
+            return self._escalated_reply(conv)
         if conv.state != "awaiting_phone":
             return Reply(t("other_fallback", lang))
         if not own:
@@ -213,7 +213,7 @@ class _BookingFlowMixin:
                 self._notifier.notify(conv.chat_id, "сбой подтверждения записи",
                                       self._escalation_context(conv))
                 conv.state = "escalated"
-                return Reply(t("escalated", lang))
+                return self._escalated_reply(conv)
             return self._offer_slots(session, conv, note="confirm_retry")
         local = datetime.fromisoformat(ctx.slot_start).astimezone(self._clinic_tz(session))
         # отдельная строка карточки (П-7); экранирует t() вместе с именем
