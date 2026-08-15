@@ -203,6 +203,40 @@ def set_doctor_schedule(session_factory, clinic_id: uuid.UUID,
         raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
 
 
+def set_doctor_schedule_days(session_factory, clinic_id: uuid.UUID,
+                             doctor_id: uuid.UUID, days, shifts) -> dict:
+    """Задать смены ТОЛЬКО выбранным дням, остальной график не трогая.
+
+    `shifts=None` делает выбранные дни выходными. Правка части недели — норма
+    («будни длинные, суббота короткая»), а перезапись графика целиком вторым
+    проходом молча стирала остальные дни (docs/SALES_READINESS.md, №6).
+    Чтение и запись в одной транзакции: между ними график менять нельзя.
+    Возвращает получившийся график."""
+    days = list(days)
+    unknown = [d for d in days if d not in _DAYS]
+    if unknown:
+        raise ValueError(f"неизвестный день {unknown[0]!r} (нужно из {_DAYS})")
+    with tenant_transaction(session_factory, clinic_id) as session:
+        row = session.execute(
+            text("SELECT working_intervals FROM doctor WHERE id = :d "
+                 "FOR UPDATE"), {"d": doctor_id}).first()
+        if row is None:
+            raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+        schedule = dict(row[0] or {})
+        for day in days:
+            if shifts is None:
+                schedule.pop(day, None)
+            else:
+                schedule[day] = shifts
+        # пустая неделя — это не график, а скрытие врача: _validate_intervals
+        # бросит ValueError и откатит транзакцию, ничего не записав
+        _validate_intervals(schedule)
+        session.execute(
+            text("UPDATE doctor SET working_intervals = :wi WHERE id = :d"),
+            {"wi": json.dumps(schedule), "d": doctor_id})
+    return schedule
+
+
 def set_service_duration(session_factory, clinic_id: uuid.UUID, name: str,
                          duration_min: int) -> None:
     with tenant_transaction(session_factory, clinic_id) as session:

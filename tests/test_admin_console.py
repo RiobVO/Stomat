@@ -273,6 +273,21 @@ def row_actions(api):
     return actions(from_edit if api.edited else from_sent)
 
 
+def row_labels(api):
+    """Подписи кнопок последнего inline-сообщения (парная к row_actions)."""
+    from_sent = api.row_keyboards[-1] if api.row_keyboards else ()
+    from_edit = api.edited[-1][3] if api.edited else ()
+    rows = from_edit if api.edited else from_sent
+    return [b.label for row in (rows or ()) for b in row]
+
+
+def wi_of(admin_engine, clinic_id, doctor_id) -> dict:
+    """working_intervals врача из базы (jsonb приезжает и строкой, и dict)."""
+    import json
+    raw = doctor_field(admin_engine, clinic_id, doctor_id, "working_intervals")
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
 # -- 6. чистые функции (P-2/P-3) -------------------------------------------
 
 def test_format_schedule_groups_consecutive_days():
@@ -511,7 +526,8 @@ def test_custom_schedule_days_dont_leak_between_doctors(app_session_factory,
     # C1: незавершённый выбор дней для одного врача не должен протечь в график
     # другого. Бросаем выбор пн+вт для doctor_a, затем задаём ср другому врачу.
     from conftest import make_doctor
-    other = make_doctor(admin_engine, clinic_a, name="Второй")
+    other = make_doctor(admin_engine, clinic_a, name="Второй",
+                        intervals={"wed": [["09:00", "18:00"]]})
     worker, api, _ = make_worker(app_session_factory, clinic_a, [],
                                  admin_chat_id=ADMIN_CHAT)
     click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
@@ -523,11 +539,97 @@ def test_custom_schedule_days_dont_leak_between_doctors(app_session_factory,
     click(worker, app_session_factory, clinic_a, f"adm:sched:next:{other}")
     send_admin(worker, app_session_factory, clinic_a, "10:00-14:00")
 
-    import json
-    wi_raw = doctor_field(admin_engine, clinic_a, other, "working_intervals")
-    wi = json.loads(wi_raw) if isinstance(wi_raw, str) else wi_raw
+    wi = wi_of(admin_engine, clinic_a, other)
     assert set(wi.keys()) == {"wed"}, f"дни протекли: {set(wi.keys())}"
     assert wi["wed"] == [["10:00", "14:00"]]
+
+
+def test_custom_schedule_keeps_other_days(app_session_factory, admin_engine,
+                                          clinic_a, doctor_a):
+    """Карта готовности №6: «будни длинные, суббота короткая» — кнопками.
+
+    Второй проход «Свой график» не должен стирать дни, которых не касались."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:doc:{doctor_a}:sched")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:tpl:{doctor_a}:0")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:sat")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    send_admin(worker, app_session_factory, clinic_a, "09:00-13:00")
+
+    wi = wi_of(admin_engine, clinic_a, doctor_a)
+    assert wi.get("mon") == [["09:00", "18:00"]], "будни стёрты правкой субботы"
+    assert wi.get("fri") == [["09:00", "18:00"]]
+    assert wi.get("sat") == [["09:00", "13:00"]]
+
+
+def test_custom_schedule_replaces_only_selected_day(app_session_factory,
+                                                    admin_engine, clinic_a,
+                                                    doctor_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:tpl:{doctor_a}:1")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:sat")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    send_admin(worker, app_session_factory, clinic_a, "10:00-14:00")
+
+    wi = wi_of(admin_engine, clinic_a, doctor_a)
+    assert wi["sat"] == [["10:00", "14:00"]]
+    assert wi["mon"] == [["09:00", "13:00"], ["14:00", "18:00"]]
+
+
+def test_schedule_day_off_clears_selected_day(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a):
+    """Слияние оставило бы день навсегда рабочим — нужен явный выходной."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:tpl:{doctor_a}:1")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:sat")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:off:{doctor_a}")
+
+    wi = wi_of(admin_engine, clinic_a, doctor_a)
+    assert "sat" not in wi
+    assert wi["mon"] == [["09:00", "13:00"], ["14:00", "18:00"]]
+
+
+def test_schedule_day_off_refuses_to_empty_week(app_session_factory,
+                                                admin_engine, clinic_a,
+                                                doctor_a):
+    """Пустая неделя — это скрытие врача, а не график: отказ, не тихая запись."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:tpl:{doctor_a}:0")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    for day in ("mon", "tue", "wed", "thu", "fri"):
+        click(worker, app_session_factory, clinic_a,
+              f"adm:sched:day:{doctor_a}:{day}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:off:{doctor_a}")
+
+    wi = wi_of(admin_engine, clinic_a, doctor_a)
+    assert wi.get("mon") == [["09:00", "18:00"]], "график стёрт целиком"
+    body = last_to(api, ADMIN_CHAT) or ""
+    edited = api.edited[-1][2] if api.edited else ""
+    assert "Скрыть" in (body + edited)
+
+
+def test_sched_day_picker_shows_current_hours(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a):
+    """Владелец правит день вслепую, если не видит его текущих часов."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:tpl:{doctor_a}:0")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+
+    labels = row_labels(api)
+    mon = next(x for x in labels if x.startswith("Пн"))
+    sat = next(x for x in labels if x.startswith("Сб"))
+    assert "09:00" in mon and "18:00" in mon
+    assert "выходной" in sat.lower()
 
 
 def test_custom_schedule_bad_shifts_stays_pending(app_session_factory, admin_engine,

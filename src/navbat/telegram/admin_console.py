@@ -118,6 +118,13 @@ def _format_schedule(wi: dict) -> str:
     return "\n".join(lines) if lines else "выходной всю неделю"
 
 
+def _day_hours(shifts) -> str:
+    """Часы одного дня для подписи кнопки: «09:00–13:00 / 14:00–18:00»."""
+    if not shifts:
+        return "выходной"
+    return " / ".join(f"{s[0]}–{s[1]}" for s in shifts)
+
+
 def _parse_shifts(raw: str) -> list[list[str]] | None:
     """Парсит "09:00-13:00, 14:00-18:00" -> [["09:00","13:00"],...].
 
@@ -735,7 +742,9 @@ class AdminConsole:
         rows.append((Button("📝 Свой график", f"adm:sched:custom:{doc_id_str}"),))
         rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}"),))
         r = Reply(
-            "📅 <b>Расписание</b>\nВыберите шаблон или задайте свой 👇",
+            "📅 <b>Расписание</b>\nВыберите шаблон или задайте свой 👇\n\n"
+            "Шаблон задаёт неделю целиком, «Свой график» меняет только "
+            "выбранные дни.",
             button_rows=tuple(rows))
         self._edit_or_send(chat_id, message_id, r)
 
@@ -784,23 +793,75 @@ class AdminConsole:
             r = Reply(
                 f"Дни: {days_txt}\n\n"
                 "Введите смены через запятую, например:\n"
-                "<code>09:00-13:00, 14:00-18:00</code>",
-                button_rows=((Button("✖ Отмена", "adm:cancel"),),))
+                "<code>09:00-13:00, 14:00-18:00</code>\n\n"
+                "Остальные дни недели останутся как есть.",
+                button_rows=((Button("🚫 Сделать выходным",
+                                     f"adm:sched:off:{doc_id_str}"),),
+                             (Button("✖ Отмена", "adm:cancel"),)))
             self._edit_or_send(chat_id, message_id, r)
+        elif action == "off" and len(parts) >= 2:
+            self._sched_make_dayoff(chat_id, message_id, parts[1])
+
+    def _sched_make_dayoff(self, chat_id: int, message_id: int | None,
+                           doc_id_str: str) -> None:
+        """Выбранные дни — выходные. Пара к слиянию: без неё день, однажды
+        ставший рабочим, уже нельзя было бы освободить."""
+        selected = self._get_sched_days(chat_id)
+        try:
+            doc_id = _uuid_mod.UUID(doc_id_str)
+        except ValueError:
+            self._edit_or_send(chat_id, message_id, self._doctors_menu())
+            return
+        if not selected:
+            self._edit_or_send(chat_id, message_id, Reply(
+                "Выберите хотя бы один день.",
+                button_rows=((Button("◀ Назад", f"adm:doc:{doc_id_str}:sched"),),)))
+            return
+        try:
+            onboard.set_doctor_schedule_days(self._sf, self._cid, doc_id,
+                                             selected, None)
+        except ValueError:
+            # дни приходят с наших же кнопок — единственная достижимая
+            # причина отказа это пустая неделя
+            self._edit_or_send(chat_id, message_id, Reply(
+                "⚠️ Так у врача не останется ни одного рабочего дня.\n\n"
+                "Чтобы убрать врача из записи целиком, нажмите «⛔ Скрыть» "
+                "в его карточке.",
+                button_rows=((Button("◀ Назад", f"adm:doc:{doc_id_str}"),),)))
+            return
+        self._clear_pending(chat_id)
+        self._clear_sched_days(chat_id)
+        self._edit_or_send(chat_id, message_id,
+                           self._doctor_card(doc_id_str,
+                                             notice="✅ Дни сделаны выходными"))
 
     def _sched_custom_days(self, chat_id: int, doc_id_str: str,
                            message_id: int | None, selected: set) -> None:
+        # текущие часы прямо на кнопках: иначе владелец правит день вслепую
+        # и не видит, что именно заменит
+        wi = self._doctor_intervals(doc_id_str)
         rows = []
         for day in WEEKDAY_KEYS:
             mark = "✅ " if day in selected else ""
-            rows.append((Button(f"{mark}{_WEEKDAY_RU[day]}",
+            rows.append((Button(f"{mark}{_WEEKDAY_RU[day]} · {_day_hours(wi.get(day))}",
                                 f"adm:sched:day:{doc_id_str}:{day}"),))
         rows.append((Button("Далее →", f"adm:sched:next:{doc_id_str}"),))
         rows.append((Button("◀ Назад", f"adm:doc:{doc_id_str}:sched"),))
         r = Reply(
-            "📅 <b>Свой график</b>\nОтметьте рабочие дни 👇",
+            "📅 <b>Свой график</b>\nОтметьте дни, которые меняем 👇\n\n"
+            "Остальные дни останутся как есть.",
             button_rows=tuple(rows))
         self._edit_or_send(chat_id, message_id, r)
+
+    def _doctor_intervals(self, doc_id_str: str) -> dict:
+        try:
+            doc_id = _uuid_mod.UUID(doc_id_str)
+        except ValueError:
+            return {}
+        with tenant_transaction(self._sf, self._cid) as session:
+            doc = next((d for d in doctors_repo.doctor_list_all(session)
+                        if d.id == doc_id), None)
+        return (doc.working_intervals or {}) if doc is not None else {}
 
     def _apply_sched_shifts(self, chat_id: int, doc_id_str: str, raw: str) -> Reply:
         shifts = _parse_shifts(raw)
@@ -809,14 +870,15 @@ class AdminConsole:
                 "⚠️ Формат: <code>09:00-13:00, 14:00-18:00</code>\nВведите ещё раз:",
                 button_rows=((Button("✖ Отмена", "adm:cancel"),),))
         selected = self._get_sched_days(chat_id)
-        wi = {d: shifts for d in selected}
         try:
             doc_id = _uuid_mod.UUID(doc_id_str)
         except ValueError:
             self._clear_pending(chat_id)
             self._clear_sched_days(chat_id)
             return self._doctors_menu()
-        onboard.set_doctor_schedule(self._sf, self._cid, doc_id, wi)
+        # только выбранные дни: прежняя перезапись целиком стирала остальные
+        onboard.set_doctor_schedule_days(self._sf, self._cid, doc_id,
+                                         selected, shifts)
         self._clear_pending(chat_id)
         self._clear_sched_days(chat_id)
         return self._doctor_card(doc_id_str, notice="✅ Расписание задано")
