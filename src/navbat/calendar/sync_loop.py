@@ -72,9 +72,12 @@ class CalendarSyncLoop:
             self._notifier,
             f"Google OAuth-токен мёртв — синхронизация календаря остановилась "
             f"и сама не починится. Нужна переавторизация: "
-            f"python -m navbat.calendar.auth. Ошибка: {str(error)[:200]}",
+            f"python -m navbat.calendar.auth",
             {"error": str(error)[:200]},
-            chat_id=self._admin_chat_id)
+            chat_id=self._admin_chat_id,
+            # текст исключения — только владельцу системы: клинике он
+            # бесполезен и пугает на показе (финальное ревью волны B)
+            detail=f"Ошибка: {str(error)[:200]}")
         self._auth_alert_date = today
         # генерический порог-алерт не дублируем; recovery-уведомление сработает
         self._alerted = True
