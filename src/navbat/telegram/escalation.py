@@ -113,13 +113,17 @@ class TelegramEscalation:
         плюс техническая часть. Так администратор узнаёт, что синк стоит
         или пациенту не дошло напоминание, но покупатель на показе не
         читает текст исключения (ревью волны B, блокер 2)."""
+        owner_text = f"⚠ Системный алерт\n{reason}"
+        if detail:
+            owner_text += f"\n{detail}"
         targets = list(self._admin_chat_ids)
         for chat in targets:
-            self._send_alert(chat, f"⚠ {reason}", reason)
+            # владелец системы часто и есть админ-чат клиники (пилот на одном
+            # аккаунте) — ему техническая часть нужна, остальным нет
+            is_owner = chat == self._owner_chat
+            self._send_alert(chat, owner_text if is_owner else f"⚠ {reason}",
+                             reason)
         if self._owner_chat and self._owner_chat not in targets:
-            owner_text = f"⚠ Системный алерт\n{reason}"
-            if detail:
-                owner_text += f"\n{detail}"
             self._send_alert(self._owner_chat, owner_text, reason)
         if not targets and not self._owner_chat:
             log.warning("операционный алерт (чаты не заданы): %s | %s",

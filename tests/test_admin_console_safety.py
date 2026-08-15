@@ -196,3 +196,46 @@ def test_delyes_refuses_reactivated_service(console, admin_engine, clinic_a,
                              {"s": service_cleaning}).scalar_one()
     assert alive == 1
     assert "скр" in _last(worker).text.lower()
+
+
+def test_reactivation_between_screens_blocks_delete(console, admin_engine,
+                                                    clinic_a, doctor_a):
+    """Полный путь гонки (ре-ревью, дефект 2): скрыли → открыли экран
+    подтверждения → другой администратор вернул врача в работу → «Да»."""
+    cons, worker = console
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET is_active = false WHERE id = :d"),
+                     {"d": doctor_a})
+    cons.handle_callback(_callback(f"adm:doc:{doctor_a}:del"), CHAT,
+                         f"adm:doc:{doctor_a}:del")
+    with admin_engine.begin() as conn:  # второй администратор
+        conn.execute(text("UPDATE doctor SET is_active = true WHERE id = :d"),
+                     {"d": doctor_a})
+
+    cons.handle_callback(_callback(f"adm:doc:{doctor_a}:delyes"), CHAT,
+                         f"adm:doc:{doctor_a}:delyes")
+
+    with admin_engine.begin() as conn:
+        alive = conn.execute(text("SELECT count(*) FROM doctor WHERE id = :d"),
+                             {"d": doctor_a}).scalar_one()
+    assert alive == 1, "вернувшегося в работу врача удалять нельзя"
+
+
+def test_delete_is_atomic_against_activation(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a):
+    """Само удаление обязано нести условие is_active=false, а не полагаться
+    на прочитанное ранее значение: иначе активация между SELECT и DELETE
+    проходит. Проверяем сам SQL-инвариант через прямой вызов executor'а."""
+    from navbat import onboard
+
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE doctor SET is_active = true WHERE id = :d"),
+                     {"d": doctor_a})
+    try:
+        onboard.delete_doctor(app_session_factory, clinic_a, doctor_a)
+    except ValueError:
+        pass
+    with admin_engine.begin() as conn:
+        alive = conn.execute(text("SELECT count(*) FROM doctor WHERE id = :d"),
+                             {"d": doctor_a}).scalar_one()
+    assert alive == 1
