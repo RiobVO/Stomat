@@ -1,6 +1,7 @@
 """Онбординг клиники без ручного SQL.
 
     python -m navbat.onboard --demo                                  # демо-клиника
+    python -m navbat.onboard --demo-history [--days 14]              # история для /stats
     python -m navbat.onboard --new-clinic "Smile Dent" [--tz Asia/Tashkent]
     python -m navbat.onboard --clinic <uuid> --add-doctor "Иванов" [--schedule-json '{...}'] [--buffer 10]
     python -m navbat.onboard --clinic <uuid> --add-service cleaning --duration 30 --price 350000
@@ -548,6 +549,10 @@ def show_clinic(session_factory, clinic_id: uuid.UUID) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Онбординг клиники Navbat")
     parser.add_argument("--demo", action="store_true", help="создать демо-клинику")
+    parser.add_argument("--demo-history", action="store_true",
+                        help="наполнить прошлое демо-клиники записями для /stats")
+    parser.add_argument("--days", type=int, default=14,
+                        help="глубина демо-истории в днях")
     parser.add_argument("--clinic", type=uuid.UUID)
     parser.add_argument("--new-clinic", metavar="NAME", help="создать клинику")
     parser.add_argument("--tz", default="Asia/Tashkent", help="таймзона новой клиники")
@@ -594,6 +599,14 @@ def main() -> int:
         body = Path(args.prompt_upload).read_text(encoding="utf-8")
         version = upload_prompt(session_factory, body, args.note)
         print(f"[OK] промпт загружен: версия {version}")
+        return 0
+    if args.demo_history:
+        from navbat.demo_history import seed_demo_history
+
+        clinic = args.clinic or DEMO_CLINIC_ID
+        created = seed_demo_history(session_factory, clinic, args.days)
+        print(f"[OK] демо-история: создано записей — {created}"
+              if created else "[OK] демо-история уже есть")
         return 0
     if args.demo:
         if args.prompt_pin:  # staging: пин новой версии на демо-клинику
