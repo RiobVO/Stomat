@@ -118,6 +118,37 @@ def _format_schedule(wi: dict) -> str:
     return "\n".join(lines) if lines else "выходной всю неделю"
 
 
+def booked_warning(session, day) -> str:
+    """Предупреждение о живых приёмах закрываемого дня (карта, №7) — пустая
+    строка, когда их нет.
+
+    Решение владельца: закрытие дня НЕ отменяет записи (договорённость с
+    пациентом бот не рвёт) — но и закрывать день вслепую не даёт: раньше
+    владелец не узнавал о приёмах, а пациенту в этот день ещё и приходило
+    напоминание «Ждём вас!»."""
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import text as _text
+
+    tz_name = session.execute(_text(
+        "SELECT timezone FROM clinic "
+        "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one()
+    tz = ZoneInfo(tz_name)
+    rows = session.execute(
+        _text("SELECT lower(time_range) AS start FROM appointment "
+              "WHERE status = 'booked' AND lower(time_range) > now() "
+              "AND (lower(time_range) AT TIME ZONE :tz)::date = :d "
+              "ORDER BY lower(time_range)"),
+        {"tz": tz_name, "d": day}).all()
+    if not rows:
+        return ""
+    shown = ", ".join(f"{r.start.astimezone(tz):%H:%M}" for r in rows[:5])
+    more = f" и ещё {len(rows) - 5}" if len(rows) > 5 else ""
+    return (f"\n\n⚠️ На этот день уже есть записи: {len(rows)} "
+            f"({shown}{more}).\nБот их не отменяет и напоминания придут — "
+            f"перенесите или отмените их сами.")
+
+
 def _day_hours(shifts) -> str:
     """Часы одного дня для подписи кнопки: «09:00–13:00 / 14:00–18:00»."""
     if not shifts:
@@ -956,8 +987,10 @@ class AdminConsole:
                     _text("INSERT INTO holiday (clinic_id, date, reason) VALUES "
                           "(current_setting('app.clinic_id')::uuid, :d, :r)"),
                     {"d": target, "r": reason})
+            warning = booked_warning(session, target)
         self._clear_pending(chat_id)
-        return self._dayoff_menu(notice=f"✅ {target:%d.%m.%Y} — выходной")
+        return self._dayoff_menu(
+            notice=f"✅ {target:%d.%m.%Y} — выходной{warning}")
 
     # -- extras: sched days ---------------------------------------------------
 

@@ -130,6 +130,93 @@ def test_dayoff_from_patient_goes_to_nlu(app_session_factory, admin_engine,
     assert not holidays_in_db(admin_engine, clinic_a)
 
 
+# ── №7: закрытие дня видит уже назначенные приёмы ────────────────────────────
+
+def _book_at(admin_engine, clinic_id, doctor_id, service_id, day, hhmm="10:00"):
+    """Живая запись на этот день — то, что закрытие дня НЕ отменяет."""
+    import uuid
+
+    from conftest import at_tashkent
+    start = at_tashkent(day, hhmm)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO appointment (id, clinic_id, doctor_id, service_id, "
+            "time_range, status, tg_chat_id) VALUES (:i, :c, :d, :s, "
+            "tstzrange(:start, :finish, '[)'), 'booked', 555)"),
+            {"i": uuid.uuid4(), "c": clinic_id, "d": doctor_id, "s": service_id,
+             "start": start, "finish": start + timedelta(minutes=30)})
+
+
+def _statuses(admin_engine, clinic_id):
+    with admin_engine.begin() as conn:
+        return [r.status for r in conn.execute(
+            text("SELECT status FROM appointment WHERE clinic_id = :c"),
+            {"c": clinic_id}).all()]
+
+
+def test_dayoff_warns_about_existing_bookings(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a,
+                                              service_cleaning):
+    """Карта готовности №7: владелец закрывает день, а записи на нём остаются.
+
+    Решение владельца: предупреждать, ничего не отменять."""
+    target = future_workday(7)
+    _book_at(admin_engine, clinic_a, doctor_a, service_cleaning, target, "10:30")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, f"/dayoff {target:%d.%m}")
+
+    out = admin_text(api)
+    assert "[OK]" in out, "день всё равно закрывается"
+    assert "10:30" in out, f"нет времени приёма: {out}"
+    assert "1" in out and "запис" in out.lower()
+    assert [row.date for row in holidays_in_db(admin_engine, clinic_a)] == [target]
+    assert _statuses(admin_engine, clinic_a) == ["booked"], "запись отменена сама"
+
+
+def test_dayoff_without_bookings_stays_quiet(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a,
+                                             service_cleaning):
+    target = future_workday(7)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, f"/dayoff {target:%d.%m}")
+
+    assert "запис" not in admin_text(api).lower()
+
+
+def test_dayoff_ignores_bookings_of_other_days(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a,
+                                               service_cleaning):
+    """Считаем приёмы закрываемого дня, а не все будущие."""
+    _book_at(admin_engine, clinic_a, doctor_a, service_cleaning,
+             future_workday(3), "09:00")
+    target = future_workday(7)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    send_admin(worker, app_session_factory, clinic_a, f"/dayoff {target:%d.%m}")
+
+    assert "запис" not in admin_text(api).lower()
+
+
+def test_dayoff_button_warns_about_existing_bookings(app_session_factory,
+                                                     admin_engine, clinic_a,
+                                                     doctor_a, service_cleaning):
+    """Кнопочный путь консоли предупреждает так же, как слэш-команда."""
+    from test_admin_console import click
+    target = future_workday(7)
+    _book_at(admin_engine, clinic_a, doctor_a, service_cleaning, target, "15:00")
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, "adm:dayoff:add")
+    send_admin(worker, app_session_factory, clinic_a, f"{target:%d.%m}")
+
+    out = admin_text(api)
+    assert "15:00" in out, f"нет времени приёма: {out}"
+    assert "запис" in out.lower()
+    assert _statuses(admin_engine, clinic_a) == ["booked"]
+
+
 # ── /dayopen ─────────────────────────────────────────────────────────────────
 
 def test_dayopen_reopens_closed_day(app_session_factory, admin_engine, clinic_a,
