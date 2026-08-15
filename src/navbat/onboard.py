@@ -551,6 +551,8 @@ def main() -> int:
     parser.add_argument("--demo", action="store_true", help="создать демо-клинику")
     parser.add_argument("--demo-history", action="store_true",
                         help="наполнить прошлое демо-клиники записями для /stats")
+    parser.add_argument("--demo-history-clear", action="store_true",
+                        help="убрать демо-историю (записи и их аудит)")
     parser.add_argument("--days", type=int, default=14,
                         help="глубина демо-истории в днях")
     parser.add_argument("--clinic", type=uuid.UUID)
@@ -600,10 +602,19 @@ def main() -> int:
         version = upload_prompt(session_factory, body, args.note)
         print(f"[OK] промпт загружен: версия {version}")
         return 0
-    if args.demo_history:
-        from navbat.demo_history import seed_demo_history
+    if args.demo_history or args.demo_history_clear:
+        from navbat.demo_history import clear_demo_history, seed_demo_history
 
         clinic = args.clinic or DEMO_CLINIC_ID
+        if clinic != DEMO_CLINIC_ID:
+            # синтетика в базе живой клиники — порча её отчётности и денежных
+            # метрик; отката «на глаз» там не будет (ревью сидера)
+            sys.exit("[FAIL] демо-история только для демо-клиники "
+                     f"({DEMO_CLINIC_ID}) — на живой клинике это порча данных")
+        if args.demo_history_clear:
+            removed = clear_demo_history(session_factory, clinic)
+            print(f"[OK] демо-история удалена: записей — {removed}")
+            return 0
         created = seed_demo_history(session_factory, clinic, args.days)
         print(f"[OK] демо-история: создано записей — {created}"
               if created else "[OK] демо-история уже есть")
