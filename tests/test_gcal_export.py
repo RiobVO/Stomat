@@ -218,3 +218,24 @@ def test_doctor_without_calendar_is_skipped(app_session_factory, admin_engine,
     sync, api = make_sync(app_session_factory, clinic_a)
     sync.sync_doctor(doctor_a)  # календарь не привязан
     assert api.insert_calls == 0
+
+
+def test_demo_history_is_not_exported(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a, service_cleaning):
+    """Демо-история — витрина статистики, а не работа календаря.
+
+    Экспорт брал любую booked-запись кроме gcal_import, поэтому синтетика
+    улетала в личный календарь врача, а `--demo-history-clear` удаляет строки
+    напрямую и осиротевшие события оставались в Google навсегда
+    (повторное ревью сидера, блокер)."""
+    from navbat.demo_history import clear_demo_history, seed_demo_history
+
+    bind_calendar(admin_engine, doctor_a)
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    sync, api = make_sync(app_session_factory, clinic_a)
+
+    sync.sync_doctor(doctor_a)
+    assert api.insert_calls == 0, "синтетика ушла в календарь врача"
+
+    clear_demo_history(app_session_factory, clinic_a)
+    assert not list(api.events().values()), "в календаре остались следы демо"

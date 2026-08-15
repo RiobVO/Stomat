@@ -241,6 +241,81 @@ def test_history_respects_working_days(app_session_factory, admin_engine,
     assert lunch == 0, "в обед приёмов нет"
 
 
+# ── Повторное ревью сидера: что нашёл независимый проход ───────────────────
+
+def _seed_at(app_session_factory, clinic_id, hour: int = 15, days: int = 14):
+    """Сид с зафиксированным «сейчас»: иначе тест сегодняшнего дня зависит
+    от часа прогона (ночью приёмов за сегодня не бывает вовсе)."""
+    now = datetime.now(TZ).replace(hour=hour, minute=0, second=0, microsecond=0)
+    return seed_demo_history(app_session_factory, clinic_id, days=days, now=now)
+
+
+def test_todays_summary_is_not_empty(app_session_factory, priced_clinic):
+    """Сводка за СЕГОДНЯ считает не приёмы, а работу бота: confirm-аудиты
+    (stats.py) и created_at. Оформление всей истории «накануне» оставляло
+    первый экран покупателя пустым даже с приёмами в этом дне."""
+    clinic_a = priced_clinic
+    _seed_at(app_session_factory, clinic_a)
+    today = datetime.now(TZ).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today, today, TZ)
+
+    assert stats.booked > 0, "за сегодня бот не оформил ни одной записи"
+    assert stats.new_patients + stats.returning_patients > 0, "секция клиентов пуста"
+    assert stats.top_doctors, "топ врачей за сегодня пуст"
+
+
+def test_todays_appointments_are_booked_today(app_session_factory, admin_engine,
+                                              priced_clinic):
+    clinic_a = priced_clinic
+    _seed_at(app_session_factory, clinic_a)
+
+    with admin_engine.begin() as conn:
+        mismatched = conn.execute(text(
+            "SELECT count(*) FROM appointment "
+            "WHERE source = 'demo_history' "
+            "AND (lower(time_range) AT TIME ZONE 'Asia/Tashkent')::date = "
+            "    (now() AT TIME ZONE 'Asia/Tashkent')::date "
+            "AND (created_at AT TIME ZONE 'Asia/Tashkent')::date <> "
+            "    (now() AT TIME ZONE 'Asia/Tashkent')::date")).scalar_one()
+    assert mismatched == 0, "сегодняшние приёмы оформлены не сегодня"
+
+
+def test_history_skips_closed_days(app_session_factory, admin_engine,
+                                   priced_clinic):
+    """Приёмы в день, закрытый через /dayoff, — та же ложь, что приём в
+    воскресенье: живая запись туда не пустила бы (engine смотрит holiday)."""
+    clinic_a = priced_clinic
+    closed = datetime.now(TZ).date() - timedelta(days=3)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO holiday (clinic_id, date, reason) "
+            "VALUES (:c, :d, 'Праздник')"), {"c": clinic_a, "d": closed})
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        on_holiday = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND (lower(time_range) AT TIME ZONE 'Asia/Tashkent')::date = :d"),
+            {"d": closed}).scalar_one()
+    assert on_holiday == 0, "сидер записал приёмы в закрытый день"
+
+
+def test_appointments_sit_on_the_slot_grid(app_session_factory, admin_engine,
+                                           priced_clinic):
+    """Слоты живой записи идут по сетке 30 минут (calendar_rules). Приём
+    в 09:40 в календаре врача — первый вопрос владельца на показе."""
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        off_grid = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND extract(minute FROM lower(time_range) AT TIME ZONE "
+            "'Asia/Tashkent')::int % 30 <> 0")).scalar_one()
+    assert off_grid == 0, "приёмы стоят мимо получасовой сетки"
+
+
 def test_clear_removes_everything_it_created(app_session_factory, admin_engine,
                                              priced_clinic):
     """Откат обязателен: без него следы демо остаются в базе навсегда."""

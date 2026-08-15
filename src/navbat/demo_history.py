@@ -59,6 +59,12 @@ SERVICE_WEIGHTS = ("cleaning", "checkup", "cleaning", "filling", "checkup",
 CANCEL_EVERY = 6
 # доля вернувшихся: каждый третий пациент приходит повторно
 RETURNING_EVERY = 3
+# шаг сетки слотов живой записи (scheduling.calendar_rules.slot_candidates)
+SLOT_STEP_MIN = 30
+# за сколько часов до приёма оформлена сегодняшняя заявка
+SAME_DAY_LEAD_HOURS = 3
+# раньше этого часа заявок не бывает даже ночью
+EARLIEST_BOOKING_HOUR = 6
 
 
 def _hour_for(index: int, after_hours: bool) -> int:
@@ -69,8 +75,11 @@ def _hour_for(index: int, after_hours: bool) -> int:
 
 
 def seed_demo_history(session_factory, clinic_id: uuid.UUID,
-                      days: int = 14) -> int:
-    """Наполнить прошлые `days` дней. Возвращает число созданных записей."""
+                      days: int = 14, now: datetime | None = None) -> int:
+    """Наполнить прошлые `days` дней. Возвращает число созданных записей.
+
+    `now` инжектируется тестами (конвенция проекта — время тестируемо):
+    сколько истории попадёт в сегодняшний день, зависит от часа прогона."""
     with tenant_transaction(session_factory, clinic_id) as session:
         if _already_seeded(session):
             log.info("демо-история уже есть — пропускаю")
@@ -87,14 +96,21 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
         if not doctors or not services:
             log.warning("демо-история: нет активных врачей или услуг")
             return 0
-        now = datetime.now(tz)
+        now = now.astimezone(tz) if now is not None else datetime.now(tz)
         today = now.date()
+        # дни, закрытые владельцем: живая запись туда не пустила бы
+        # (scheduling.engine смотрит holiday), значит и сидер не должен
+        closed = set(session.execute(
+            text("SELECT date FROM holiday WHERE date >= :first"),
+            {"first": today - timedelta(days=days)}).scalars())
         created = 0
         # включая сегодня (offset=0): владелец жмёт «📊 Статистика», а консоль
         # открывает сводку ЗА ДЕНЬ — пустой сегодняшний день снова показывал
         # покупателю нули (живой тык 28.07)
         for offset in range(days, -1, -1):
             day = today - timedelta(days=offset)
+            if day in closed:
+                continue
             per_day, nightly = DAILY_PLAN[offset % len(DAILY_PLAN)]
             if offset <= days // 2:
                 per_day += RECENT_BONUS
@@ -162,10 +178,15 @@ def _day_shifts(doctor, day: date, tz: ZoneInfo) -> list[tuple]:
 
 
 def _fit_into_shift(start: datetime, minutes: int, shifts) -> datetime | None:
-    """Ближайшее начало приёма, целиком помещающегося в смену;
-    None — рабочее время дня исчерпано."""
+    """Ближайшее начало приёма на сетке слотов, целиком помещающегося
+    в смену; None — рабочее время дня исчерпано.
+
+    Сетка обязательна: живая запись предлагает слоты через SLOT_STEP от
+    начала смены, и приём в 09:40 виден владельцу как чужеродный."""
     for lo, hi in shifts:
         candidate = max(start, lo)
+        steps = -(-int((candidate - lo).total_seconds() // 60) // SLOT_STEP_MIN)
+        candidate = lo + timedelta(minutes=steps * SLOT_STEP_MIN)
         if candidate + timedelta(minutes=minutes) <= hi:
             return candidate
     return None
@@ -188,11 +209,19 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
     if not_after is not None and finish > not_after:
         return 0  # сегодняшний день наполняем только прошедшими часами
     cursors[doctor_id] = finish + timedelta(minutes=doctor.buffer_min)
-    # оформление — накануне: ночные заявки и есть «пока клиника спала»
-    booked_at = datetime.combine(day - timedelta(days=1), datetime.min.time(),
-                                 tz).replace(hour=_hour_for(index, after_hours))
-    if not_after is not None and booked_at > not_after:
-        booked_at = not_after - timedelta(hours=1)
+    if not_after is None:
+        # оформление — накануне: ночные заявки и есть «пока клиника спала»
+        booked_at = datetime.combine(
+            day - timedelta(days=1), datetime.min.time(),
+            tz).replace(hour=_hour_for(index, after_hours))
+    else:
+        # сегодняшний день оформляется сегодня же: сводка за день считает
+        # confirm-аудиты и created_at (stats.py), а не время приёма — с
+        # оформлением «вчера» первый экран покупателя оставался пустым
+        # даже при прошедших приёмах (повторное ревью сидера, блокер)
+        earliest = datetime.combine(day, datetime.min.time(), tz).replace(
+            hour=EARLIEST_BOOKING_HOUR)
+        booked_at = max(start - timedelta(hours=SAME_DAY_LEAD_HOURS), earliest)
     # вернувшийся пациент повторяет чат прошлого визита
     chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
                         else created)

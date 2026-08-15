@@ -82,7 +82,11 @@ class CalendarSync:
                     FROM appointment a
                     LEFT JOIN service s ON s.id = a.service_id
                     LEFT JOIN patient p ON p.id = a.patient_id
-                    WHERE a.doctor_id = :doctor AND a.source != 'gcal_import'
+                    WHERE a.doctor_id = :doctor
+                      -- gcal_import уже живёт в календаре; demo_history —
+                      -- витрина статистики: её откат удаляет строки напрямую,
+                      -- и экспортированные события осиротели бы в Google
+                      AND a.source NOT IN ('gcal_import', 'demo_history')
                       AND ((a.status = 'booked'
                             AND (a.gcal_event_id IS NULL
                                  OR a.gcal_synced_range IS DISTINCT FROM a.time_range))
@@ -299,7 +303,10 @@ class CalendarSync:
                            a.buffer_min, lower(a.time_range) AS start,
                            s.name AS service
                     FROM appointment a LEFT JOIN service s ON s.id = a.service_id
-                    WHERE a.doctor_id = :doctor AND a.source != 'gcal_import'
+                    -- demo_history не переносим: живого пациента за ней нет,
+                    -- уведомление о переносе ушло бы в несуществующий чат
+                    WHERE a.doctor_id = :doctor
+                      AND a.source NOT IN ('gcal_import', 'demo_history')
                       AND a.status IN ('hold', 'booked')
                       AND tstzrange(lower(a.time_range),
                                     upper(a.time_range)
