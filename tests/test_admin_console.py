@@ -757,3 +757,26 @@ def test_doctor_card_hero_style(app_session_factory, admin_engine, clinic_a,
     assert "📆 Календарь:" in body
     assert "🟢 Активен" in body
     assert "📅" in body
+
+
+def test_sched_days_belong_to_the_doctor_they_were_picked_for(
+        app_session_factory, admin_engine, clinic_a, doctor_a):
+    """Старая кнопка «Далее» другого врача не должна применять чужой выбор.
+
+    Дни лежали в диалоге без привязки к врачу: выбрали пн+вт для одного,
+    затем тапнули «Далее» в прежнем сообщении второго — и его график
+    переписывался чужими днями (ревью волны C)."""
+    from conftest import make_doctor
+    other = make_doctor(admin_engine, clinic_a, name="Второй",
+                        intervals={"wed": [["09:00", "18:00"]]})
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:mon")
+    # старое сообщение второго врача: «Далее» без нового выбора дней
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{other}")
+    send_admin(worker, app_session_factory, clinic_a, "10:00-14:00")
+
+    wi = wi_of(admin_engine, clinic_a, other)
+    assert "mon" not in wi, f"чужой выбор дней применён: {wi}"
+    assert wi["wed"] == [["09:00", "18:00"]], "график второго врача изменён"
