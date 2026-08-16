@@ -1,9 +1,11 @@
 # Узбекские тексты бота — проверка носителем
 
-Все фразы, которые бот Navbat говорит пациенту по-узбекски. Тексты писались
-как черновик — нужна проверка живым носителем до пилота (чеклист v1.0,
-пункт D.4). Источник: `src/navbat/dialog/replies.py` — все 67 пар строк
-бота живут только там, вне файла узбекского текста в коде нет (проверено).
+Все фразы, которые Navbat говорит по-узбекски: пациенту (разделы 1–12, 14)
+и владельцу клиники в админ-консоли (раздел 15). Тексты писались как
+черновик — нужна проверка живым носителем до пилота (чеклист v1.0, пункт
+D.4; карта готовности, №20). Источники: `src/navbat/dialog/replies.py` и
+`src/navbat/telegram/admin_texts.py` — весь узбекский код-базы живёт только
+там, и `tests/test_replies_uz.py` не даёт добавить строку мимо этого файла.
 
 > **Раунд 1 (07.06.2026) ПРОВЕДЁН** кросс-проверкой LLM (Gemini + Claude,
 > промпт docs/UZ_LLM_PROMPT.md): внесено 16 правок — терминология «qabul»
@@ -357,6 +359,200 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `braces` | Брекеты | **Breket** | |
 | `checkup` | Осмотр | **Ko'rik** | |
 | `xray` | Снимок | **Rentgen** | |
+
+---
+
+## 14. Пациентские строки, добавленные после раунда 2
+
+Разделы 1–12 писались 07–09.06.2026. С тех пор появились лист ожидания,
+выбор даты сеткой, FAQ-слой, кнопка администратора и пауза бота — эти
+строки носитель ещё не видел.
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `no_slots_calendar` | В ближайшие две недели свободного времени нет — вот более дальние даты: | **Yaqin ikki haftada bo'sh vaqt yo'q — mana uzoqroq sanalar:** | |
+| `no_slots_horizon` | Свободного времени не видно даже на три месяца вперёд — загляните позже или напишите «позовите администратора». | **Uch oy oldinga ham bo'sh vaqt ko'rinmayapti — keyinroq urinib ko'ring yoki «administratorni chaqiring» deb yozing.** | |
+| `btn_pick_date` | 📅 Выбрать дату | **📅 Sanani tanlash** | |
+| `btn_back_calendar` | ◀ К датам | **◀ Sanalarga** | |
+| `btn_join_waitlist` | 🔔 Сообщить, когда освободится | **🔔 Bo'shaganda xabar bering** | |
+| `waitlist_joined` | 🔔 Вы в очереди — пришлю первое освободившееся время. | **🔔 Siz navbatdasiz — bo'shagan birinchi vaqtni yuboraman.** | |
+| `waitlist_already` | 🔔 Вы уже в очереди — как только освободится, сразу напишу. | **🔔 Siz allaqachon navbatdasiz — bo'shashi bilan yozaman.** | |
+| `waitlist_left` | Хорошо, убрал вас из очереди ожидания. | **Mayli, sizni kutish navbatidan chiqardim.** | |
+| `waitlist_slot_offer` | 🔔 Освободилось время на «{service}»: {when}. Записать вас? | **🔔 «{service}» uchun vaqt bo'shadi: {when}. Yozib qo'yaymi?** | |
+| `btn_waitlist_leave` | Я больше не жду | **Endi kutmayman** | |
+| `cal_no_free_days_month` | В этом месяце свободных дней нет | **Bu oyda bo'sh kunlar yo'q** | |
+| `cal_no_slots` | Свободного времени нет | **Bo'sh vaqt yo'q** | |
+| `cal_past_day` | Этот день уже прошёл | **Bu kun o'tib ketdi** | |
+| `llm_off_menu` | Сейчас запись принимается через кнопки меню — выберите нужное действие. | **Hozir yozilish menyu tugmalari orqali qabul qilinadi — kerakli amalni tanlang.** | |
+| `bot_paused` | Запись через бота временно приостановлена. Позвоните в клинику или загляните позже. | **Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga qo'ng'iroq qiling yoki keyinroq urinib ko'ring.** | |
+| `outside_hours` | Клиника работает с {open} до {close}. | **Klinika {open} dan {close} gacha ishlaydi.** | |
+| `hours_today` | 🕐 Сегодня клиника работает с {open} до {close}. | **🕐 Bugun klinika {open} dan {close} gacha ishlaydi.** | |
+| `hours_next` | 🕐 Сегодня клиника не работает. Ближайший рабочий день — {date}: с {open} до {close}. | **🕐 Bugun klinika ishlamaydi. Eng yaqin ish kuni — {date}: {open} dan {close} gacha.** | |
+| `clinic_address` | 📍 Наш адрес: {address} | **📍 Manzilimiz: {address}** | |
+| `clinic_payment` | 💳 Оплата: {info} | **💳 To'lov: {info}** | |
+| `clinic_phone` | 📞 Телефон: {phone} | **📞 Telefon: {phone}** | |
+| `about_header` | ℹ️ <b>{clinic}</b> | **ℹ️ <b>{clinic}</b>** | |
+| `not_understood` | 🤔 Я не понял. Помогу записаться, перенести или отменить приём — выберите действие в меню. Нужен человек — напишите «позовите администратора». | **🤔 Tushunmadim. Qabulga yozilish, uni ko'chirish yoki bekor qilishda yordam beraman — menyudan amalni tanlang. Administrator kerak bo'lsa — «administratorni chaqiring» deb yozing.** | |
+| `btn_call_admin` | 👤 Позвать администратора | **👤 Administratorni chaqirish** | |
+| `btn_back_to_bot` | ↩️ Вернуться к записи | **↩️ Yozilishga qaytish** | |
+| `escalated_closed` | 👤 Передаю администратору. Клиника сейчас закрыта — он ответит вам здесь утром. | **👤 Administratorga uzataman. Klinika hozir yopiq — u sizga ertalab shu yerda javob beradi.** | |
+| `confirm_retry` | Техническая заминка — подтвердить запись не получилось. Пожалуйста, выберите время ещё раз: | **Texnik nosozlik — qabulni tasdiqlab bo'lmadi. Iltimos, vaqtni yana tanlang:** | |
+| `btn_menu_about` | ℹ️ О клинике | **ℹ️ Klinika haqida** | |
+
+---
+
+## 15. Админ-консоль (владелец клиники)
+
+Кнопочная консоль в админ-чате: ею пользуется не пациент, а владелец или
+администратор клиники. Тон другой — короткие деловые формулировки, но то же
+обращение на «siz». Узбекский здесь целиком черновик, вычитки не проходил.
+
+### Верхнее меню и язык
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `btn_services` | 💊 Услуги | **💊 Xizmatlar** | |
+| `btn_doctors` | 🧑‍⚕️ Врачи | **🧑‍⚕️ Shifokorlar** | |
+| `btn_about` | 🏥 О клинике | **🏥 Klinika haqida** | |
+| `btn_dayoff` | 📅 Выходные | **📅 Dam olish kunlari** | |
+| `btn_stats` | 📊 Статистика | **📊 Statistika** | |
+| `btn_pause` | ⏸ Пауза | **⏸ Pauza** | |
+| `btn_resume` | ▶️ Возобновить | **▶️ Davom ettirish** | |
+| `btn_lang` | 🌐 O'zbekcha | **🌐 Русский** | |
+| `console_title` | 🛠 <b>Админ-консоль</b> ⏎ Выберите раздел 👇 | **🛠 <b>Admin-konsol</b> ⏎ Bo'limni tanlang 👇** | |
+| `console_paused` | ⏸ <i>Бот на паузе.</i> ⏎  ⏎ | **⏸ <i>Bot pauzada.</i> ⏎  ⏎** | |
+| `lang_switched` | ✅ Язык консоли: русский | **✅ Konsol tili: o'zbekcha** | |
+| `btn_services_back` | ◀ Услуги | **◀ Xizmatlar** | |
+| `btn_doctors_back` | ◀ Врачи | **◀ Shifokorlar** | |
+| `btn_dayoff_add` | ➕ Закрыть день | **➕ Kunni yopish** | |
+### Общие кнопки и статусы
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `btn_cancel` | ✖ Отмена | **✖ Bekor qilish** | |
+| `btn_back` | ◀ Назад | **◀ Orqaga** | |
+| `btn_home` | ◀ Меню | **◀ Menyu** | |
+| `btn_hide` | ⛔ Скрыть | **⛔ Yashirish** | |
+| `btn_show` | ✅ Показать | **✅ Ko'rsatish** | |
+| `btn_delete` | 🗑 Удалить совсем | **🗑 Butunlay o'chirish** | |
+| `btn_delete_yes` | 🗑 Да, удалить | **🗑 Ha, o'chirish** | |
+| `badge_active_f` | 🟢 Активна | **🟢 Faol** | |
+| `badge_active_m` | 🟢 Активен | **🟢 Faol** | |
+| `badge_hidden_f` | ⚪ Скрыта | **⚪ Yashirilgan** | |
+| `badge_hidden_m` | ⚪ Скрыт | **⚪ Yashirilgan** | |
+### Услуги и цены
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `services_title` | 💊 <b>Услуги</b> ⏎ Выберите услугу 👇 | **💊 <b>Xizmatlar</b> ⏎ Xizmatni tanlang 👇** | |
+| `btn_svc_add` | + Добавить услугу | **+ Xizmat qo'shish** | |
+| `svc_hidden_item` | ⚪ {name} (скрыта) | **⚪ {name} (yashirilgan)** | |
+| `svc_card` | {emoji} <b>{name}</b> ⏎  ⏎ 💰 Цена: {price} ⏎ ⏱ Длительность: {duration} ⏎ {badge} | **{emoji} <b>{name}</b> ⏎  ⏎ 💰 Narxi: {price} ⏎ ⏱ Davomiyligi: {duration} ⏎ {badge}** | |
+| `price_unset` | не задана | **kiritilmagan** | |
+| `sum` | {value} сум | **{value} so'm** | |
+| `minutes` | {value} мин | **{value} daqiqa** | |
+| `btn_price_edit` | 💰 Изм. цену | **💰 Narxi** | |
+| `btn_dur_edit` | ⏱ Изм. длит. | **⏱ Davomiyligi** | |
+| `svc_hidden_notice` | ⛔ Услуга скрыта | **⛔ Xizmat yashirildi** | |
+| `svc_shown_notice` | ✅ Услуга снова доступна | **✅ Xizmat yana mavjud** | |
+| `svc_delete_confirm` | 🗑 Удалить услугу навсегда? Отменить это будет нельзя. | **🗑 Xizmat butunlay o'chirilsinmi? Buni qaytarib bo'lmaydi.** | |
+| `svc_deleted` | ✅ Услуга удалена | **✅ Xizmat o'chirildi** | |
+| `dur_prompt` | ⏱ <b>{label}</b> ⏎ Текущая длительность: {current} ⏎  ⏎ Введите длительность в минутах ({lo}–{hi}), например 30. | **⏱ <b>{label}</b> ⏎ Hozirgi davomiyligi: {current} ⏎  ⏎ Davomiyligini daqiqada kiriting ({lo}–{hi}), masalan 30.** | |
+| `dur_unknown` | неизвестно | **noma'lum** | |
+| `dur_invalid` | ⚠️ Длительность — целое число от {lo} до {hi} минут. | **⚠️ Davomiyligi — {lo} dan {hi} gacha butun son (daqiqa).** | |
+| `dur_saved` | ✅ Длительность «{label}»: {duration} | **✅ «{label}» davomiyligi: {duration}** | |
+| `svcadd_all_present` | ✅ Все услуги из каталога уже добавлены. | **✅ Katalogdagi barcha xizmatlar allaqachon qo'shilgan.** | |
+| `svcadd_catalog` | Добавить услугу из каталога: | **Katalogdan xizmat qo'shish:** | |
+| `svcadd_prompt` | ➕ <b>{label}</b> ⏎ Введите длительность приёма в минутах ({lo}–{hi}), например 30. | **➕ <b>{label}</b> ⏎ Qabul davomiyligini daqiqada kiriting ({lo}–{hi}), masalan 30.** | |
+| `svcadd_retry` | Введите длительность в минутах ({lo}–{hi}): | **Davomiyligini daqiqada kiriting ({lo}–{hi}):** | |
+| `svcadd_done` | ✅ Услуга «{label}» добавлена, {duration} | **✅ «{label}» xizmati qo'shildi, {duration}** | |
+| `price_prompt` | 💰 <b>{label}</b> ⏎ Текущая цена: {current} ⏎  ⏎ Введите новую цену в сумах, например 400000. | **💰 <b>{label}</b> ⏎ Hozirgi narxi: {current} ⏎  ⏎ Yangi narxni so'mda kiriting, masalan 400000.** | |
+| `price_invalid` | ⚠️ Цена — целое число сум больше нуля, например 400000. ⏎ Введите ещё раз или нажмите «Отмена». | **⚠️ Narx — noldan katta butun son (so'm), masalan 400000. ⏎ Qaytadan kiriting yoki «Bekor qilish» tugmasini bosing.** | |
+| `price_saved` | ✅ Цена «{label}»: {price} | **✅ «{label}» narxi: {price}** | |
+### О клинике
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `faq_title` | 🏥 <b>О клинике</b> ⏎ Выберите поле 👇 | **🏥 <b>Klinika haqida</b> ⏎ Maydonni tanlang 👇** | |
+| `faq_btn_address` | 📍 Адрес | **📍 Manzil** | |
+| `faq_btn_payment` | 💳 Оплата | **💳 To'lov** | |
+| `faq_btn_phone` | 📞 Телефон | **📞 Telefon** | |
+| `faq_name_address` | Адрес | **Manzil** | |
+| `faq_name_payment` | Условия оплаты | **To'lov shartlari** | |
+| `faq_name_phone` | Телефон | **Telefon** | |
+| `faq_unset` | не задано | **kiritilmagan** | |
+| `faq_prompt` | 🏥 <b>{title}</b> ⏎ Текущее значение: {current} ⏎  ⏎ Введите новое значение или нажмите «Отмена». | **🏥 <b>{title}</b> ⏎ Hozirgi qiymati: {current} ⏎  ⏎ Yangi qiymatni kiriting yoki «Bekor qilish» tugmasini bosing.** | |
+| `faq_invalid` | ⚠️ Введите непустой текст до {limit} символов. | **⚠️ {limit} belgigacha bo'sh bo'lmagan matn kiriting.** | |
+| `faq_saved` | ✅ {title} обновлено | **✅ {title} yangilandi** | |
+### Врачи
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `doctors_title` | 🧑‍⚕️ <b>Врачи</b> ⏎ Выберите врача 👇 | **🧑‍⚕️ <b>Shifokorlar</b> ⏎ Shifokorni tanlang 👇** | |
+| `btn_doc_add` | + Добавить врача | **+ Shifokor qo'shish** | |
+| `doc_noname` | (без имени) | **(ismsiz)** | |
+| `doc_placeholder` | [врач {short_id}] | **[shifokor {short_id}]** | |
+| `doc_hidden_item` | ⚪ {name} (скрыт) | **⚪ {name} (yashirilgan)** | |
+| `doc_card` | 🧑‍⚕️ <b>{name}</b> ⏎  ⏎ ⏲ Буфер: {buffer} ⏎ 📆 Календарь: {calendar} ⏎ {badge} ⏎  ⏎ 📅 <b>График</b> ⏎ {schedule} | **🧑‍⚕️ <b>{name}</b> ⏎  ⏎ ⏲ Bufer: {buffer} ⏎ 📆 Kalendar: {calendar} ⏎ {badge} ⏎  ⏎ 📅 <b>Ish jadvali</b> ⏎ {schedule}** | |
+| `cal_linked` | привязан | **ulangan** | |
+| `cal_unlinked` | не привязан | **ulanmagan** | |
+| `btn_doc_name` | 👤 Имя | **👤 Ismi** | |
+| `btn_doc_buffer` | ⏲ Буфер | **⏲ Bufer** | |
+| `btn_doc_sched` | 📅 Расписание | **📅 Ish jadvali** | |
+| `dname_prompt` | 👤 <b>Имя врача</b> ⏎  ⏎ Введите имя (до {limit} символов): | **👤 <b>Shifokor ismi</b> ⏎  ⏎ Ismni kiriting ({limit} belgigacha):** | |
+| `dname_invalid` | Имя — непустая строка до {limit} символов. | **Ism — {limit} belgigacha bo'sh bo'lmagan matn.** | |
+| `dname_saved` | ✅ Имя обновлено: {name} | **✅ Ism yangilandi: {name}** | |
+| `dbuf_prompt` | ⏲ <b>Буфер</b> ⏎  ⏎ Введите буфер в минутах ({lo}–{hi}), например 10: | **⏲ <b>Bufer</b> ⏎  ⏎ Buferni daqiqada kiriting ({lo}–{hi}), masalan 10:** | |
+| `dbuf_invalid` | Буфер — целое число от {lo} до {hi}. | **Bufer — {lo} dan {hi} gacha butun son.** | |
+| `dbuf_saved` | ✅ Буфер: {buffer} | **✅ Bufer: {buffer}** | |
+| `docadd_prompt` | 🧑‍⚕️ <b>Новый врач</b> ⏎  ⏎ Введите имя: | **🧑‍⚕️ <b>Yangi shifokor</b> ⏎  ⏎ Ismni kiriting:** | |
+| `doc_added` | ✅ Врач «{name}» добавлен | **✅ «{name}» shifokor qo'shildi** | |
+| `doc_hidden_notice` | ⛔ Врач скрыт | **⛔ Shifokor yashirildi** | |
+| `doc_hidden_bookings` | ⏎ ⚠️ Будущих записей к нему: {count} — они остаются в силе, перенесите их сами | **⏎ ⚠️ Unga kelgusi yozuvlar: {count} — ular bekor qilinmadi, o'zingiz ko'chiring** | |
+| `doc_shown_notice` | ✅ Врач снова в записи | **✅ Shifokor yana yozuvda** | |
+| `doc_delete_confirm` | 🗑 Удалить врача навсегда? Отменить это будет нельзя. | **🗑 Shifokor butunlay o'chirilsinmi? Buni qaytarib bo'lmaydi.** | |
+| `doc_deleted` | ✅ Врач удалён | **✅ Shifokor o'chirildi** | |
+### Расписание
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `sched_title` | 📅 <b>Расписание</b> ⏎ Выберите шаблон или задайте свой 👇 ⏎  ⏎ Шаблон задаёт неделю целиком, «Свой график» меняет только выбранные дни. | **📅 <b>Ish jadvali</b> ⏎ Shablonni tanlang yoki o'zingiznikini kiriting 👇 ⏎  ⏎ Shablon butun haftani belgilaydi, «O'z jadvali» faqat tanlangan kunlarni o'zgartiradi.** | |
+| `btn_sched_custom` | 📝 Свой график | **📝 O'z jadvali** | |
+| `sched_tpl_workweek` | Пн–Пт 09–18 | **Du–Ju 09–18** | |
+| `sched_tpl_six_days` | Пн–Сб 09–13 / 14–18 | **Du–Sh 09–13 / 14–18** | |
+| `sched_tpl_late` | Пн–Пт 10:00–19:00 | **Du–Ju 10:00–19:00** | |
+| `sched_saved` | ✅ Расписание задано | **✅ Ish jadvali belgilandi** | |
+| `sched_days_title` | 📅 <b>Свой график</b> ⏎ Отметьте дни, которые меняем 👇 ⏎  ⏎ Остальные дни останутся как есть. | **📅 <b>O'z jadvali</b> ⏎ O'zgartiriladigan kunlarni belgilang 👇 ⏎  ⏎ Qolgan kunlar o'z holicha qoladi.** | |
+| `btn_sched_next` | Далее → | **Keyingi →** | |
+| `sched_pick_day` | Выберите хотя бы один рабочий день. | **Kamida bitta ish kunini tanlang.** | |
+| `sched_pick_any_day` | Выберите хотя бы один день. | **Kamida bitta kunni tanlang.** | |
+| `sched_shifts_prompt` | Дни: {days} ⏎  ⏎ Введите смены через запятую, например: ⏎ <code>09:00-13:00, 14:00-18:00</code> ⏎  ⏎ Остальные дни недели останутся как есть. | **Kunlar: {days} ⏎  ⏎ Smenalarni vergul bilan kiriting, masalan: ⏎ <code>09:00-13:00, 14:00-18:00</code> ⏎  ⏎ Haftaning qolgan kunlari o'z holicha qoladi.** | |
+| `sched_shifts_invalid` | ⚠️ Формат: <code>09:00-13:00, 14:00-18:00</code> ⏎ Введите ещё раз: | **⚠️ Format: <code>09:00-13:00, 14:00-18:00</code> ⏎ Qaytadan kiriting:** | |
+| `btn_sched_dayoff` | 🚫 Сделать выходным | **🚫 Dam olish kuni qilish** | |
+| `sched_dayoff_saved` | ✅ Дни сделаны выходными | **✅ Kunlar dam olish kuni qilindi** | |
+| `sched_dayoff_last` | ⚠️ Так у врача не останется ни одного рабочего дня. ⏎  ⏎ Чтобы убрать врача из записи целиком, нажмите «⛔ Скрыть» в его карточке. | **⚠️ Unda shifokorda birorta ham ish kuni qolmaydi. ⏎  ⏎ Shifokorni yozuvdan butunlay olib tashlash uchun uning kartochkasida «⛔ Yashirish» tugmasini bosing.** | |
+| `day_off` | выходной | **dam olish** | |
+| `week_off` | выходной всю неделю | **butun hafta dam olish** | |
+| `weekday_mon` | Пн | **Du** | |
+| `weekday_tue` | Вт | **Se** | |
+| `weekday_wed` | Ср | **Ch** | |
+| `weekday_thu` | Чт | **Pa** | |
+| `weekday_fri` | Пт | **Ju** | |
+| `weekday_sat` | Сб | **Sh** | |
+| `weekday_sun` | Вс | **Ya** | |
+### Выходные дни
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `dayoff_title` | 📅 <b>Выходные</b> ⏎ | **📅 <b>Dam olish kunlari</b> ⏎** | |
+| `dayoff_intro` | Ближайшие закрытые дни (тап — снова открыть): | **Yaqin yopiq kunlar (bosing — yana ochiladi):** | |
+| `dayoff_empty` | 📅 Закрытых дней нет — клиника работает по графику. | **📅 Yopiq kunlar yo'q — klinika jadval bo'yicha ishlaydi.** | |
+| `dayoff_prompt` | 📅 Введите дату и (по желанию) причину: ⏎ <code>21.03 Навруз</code> | **📅 Sanani va (xohlasangiz) sababni kiriting: ⏎ <code>21.03 Navro'z</code>** | |
+| `dayoff_invalid` | ⚠️ Формат: <code>21.03 причина</code> (день.месяц). Повторите или нажмите «Отмена». | **⚠️ Format: <code>21.03 sabab</code> (kun.oy). Qaytaring yoki «Bekor qilish» tugmasini bosing.** | |
+| `dayoff_closed` | ✅ {date} — выходной | **✅ {date} — dam olish kuni** | |
+| `dayoff_reopened` | ✅ День снова рабочий | **✅ Kun yana ish kuni** | |
+| `dayoff_booked_warning` | ⏎  ⏎ ⚠️ На этот день уже есть записи: {count} ({times}). ⏎ Бот их не отменяет и напоминания придут — перенесите или отмените их сами. | **⏎  ⏎ ⚠️ Bu kunga yozuvlar bor: {count} ({times}). ⏎ Bot ularni bekor qilmaydi va eslatmalar boradi — o'zingiz ko'chiring yoki bekor qiling.** | |
+| `dayoff_warning_more` | и ещё {count} | **va yana {count}** | |
 
 ---
 
