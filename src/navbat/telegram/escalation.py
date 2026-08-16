@@ -10,6 +10,7 @@ import os
 from datetime import date, datetime
 
 from navbat.dialog.replies import service_label
+from navbat.telegram.admin_texts import DEFAULT_LANG, plain
 from navbat.telegram.api import TelegramAPIError
 
 log = logging.getLogger("navbat.escalation")
@@ -64,9 +65,13 @@ class TelegramEscalation:
     """Шлёт алерт ВСЕМ админ-чатам клиники (M4). Веер скрыт здесь — вызыватели
     просто зовут notify(), не зная про список."""
 
-    def __init__(self, api, admin_chat_id=None) -> None:
+    def __init__(self, api, admin_chat_id=None, lang_of=None) -> None:
         self._api = api
         self._admin_chat_ids = _as_chat_tuple(admin_chat_id)
+        # язык конкретного админ-чата (карта, №16): алерт приходит владельцу
+        # на том же языке, на котором он держит консоль. Без резолвера —
+        # русский, чтобы CLI и тесты не тянули за собой БД
+        self._lang_of = lang_of or (lambda chat: DEFAULT_LANG)
         # владелец системы (не клиники): системные алерты дублируются ему
         raw_owner = os.environ.get("NAVBAT_OWNER_CHAT_ID", "")
         self._owner_chat = int(raw_owner) if raw_owner.lstrip("-").isdigit() else None
@@ -76,11 +81,10 @@ class TelegramEscalation:
             log.warning("эскалация chat=%s (админ-чаты не заданы): %s | %s",
                         chat_id, reason, context)
             return
-        message = (f"Эскалация: чат {chat_id}\n"
-                   f"Причина: {reason}\n"
-                   f"Что хотел пациент: {summarize_context(context)}\n"
-                   f"Снять: /release {chat_id}")
         for admin_chat in self._admin_chat_ids:
+            message = plain("alert_escalation", self._lang_of(admin_chat),
+                            chat=chat_id, reason=reason,
+                            context=summarize_context(context))
             try:
                 self._api.send_message(admin_chat, message)
             except TelegramAPIError as e:
@@ -96,9 +100,9 @@ class TelegramEscalation:
             log.info("FYI chat=%s (админ-чаты не заданы): %s | %s",
                      chat_id, reason, context)
             return
-        message = (f"🟡 К сведению: {reason}\n"
-                   f"Что хотел пациент: {summarize_context(context)}")
         for admin_chat in self._admin_chat_ids:
+            message = plain("alert_fyi", self._lang_of(admin_chat),
+                            reason=reason, context=summarize_context(context))
             try:
                 self._api.send_message(admin_chat, message)
             except TelegramAPIError as e:
@@ -113,17 +117,23 @@ class TelegramEscalation:
         плюс техническая часть. Так администратор узнаёт, что синк стоит
         или пациенту не дошло напоминание, но покупатель на показе не
         читает текст исключения (ревью волны B, блокер 2)."""
-        owner_text = f"⚠ Системный алерт\n{reason}"
-        if detail:
-            owner_text += f"\n{detail}"
         targets = list(self._admin_chat_ids)
         for chat in targets:
             # владелец системы часто и есть админ-чат клиники (пилот на одном
             # аккаунте) — ему техническая часть нужна, остальным нет
-            is_owner = chat == self._owner_chat
-            self._send_alert(chat, owner_text if is_owner else f"⚠ {reason}",
-                             reason)
+            lang = self._lang_of(chat)
+            if chat == self._owner_chat:
+                text = plain("alert_system", lang, reason=reason)
+                if detail:
+                    text += f"\n{detail}"
+            else:
+                text = plain("alert_ops", lang, reason=reason)
+            self._send_alert(chat, text, reason)
         if self._owner_chat and self._owner_chat not in targets:
+            owner_text = plain("alert_system", self._lang_of(self._owner_chat),
+                               reason=reason)
+            if detail:
+                owner_text += f"\n{detail}"
             self._send_alert(self._owner_chat, owner_text, reason)
         if not targets and not self._owner_chat:
             log.warning("операционный алерт (чаты не заданы): %s | %s",
@@ -143,7 +153,6 @@ class TelegramEscalation:
         текст исключения в том же чате, что у него на экране (карта, №10).
         Фолбэк сохранён — потерять «бэкапы не снимаются» хуже, чем показать
         его клинике."""
-        message = f"⚠ Системный алерт\n{reason}"
         targets = ([self._owner_chat] if self._owner_chat
                    else list(self._admin_chat_ids))
         if not targets:
@@ -151,6 +160,7 @@ class TelegramEscalation:
                         reason, context)
             return
         for chat in targets:
+            message = plain("alert_system", self._lang_of(chat), reason=reason)
             try:
                 self._api.send_message(chat, message)
             except TelegramAPIError as e:

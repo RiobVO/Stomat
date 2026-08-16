@@ -152,12 +152,23 @@ class CalendarSync:
             log.warning("календарь %s: syncToken протух, full resync", calendar_id)
             events, next_token = self._api.list_events(calendar_id, sync_token=None)
         moved = False
+        stuck = False  # хоть одно ручное событие не удалось записать
         for event in events:
             if _own_marker(event):
                 self._reconcile_own(calendar_id, event)
             else:
-                moved = self._apply_manual(doctor_id, event, buffer_min) or moved
-        if next_token:
+                event_moved, written = self._apply_manual(doctor_id, event,
+                                                          buffer_min)
+                moved = event_moved or moved
+                stuck = stuck or not written
+        # незаписанное событие обязано прийти снова: инкрементальный синк
+        # отдаёт только изменения, и продвинутый токен терял бы его навсегда
+        # (ревью исправлений волны C). Живой hold истечёт за 3 минуты —
+        # следующий цикл заберёт блок
+        if stuck:
+            log.warning("календарь %s: событие не записано — токен не двигаю",
+                        calendar_id)
+        if next_token and not stuck:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
                 session.execute(
                     text("UPDATE doctor SET gcal_sync_token = :token WHERE id = :id"),
@@ -200,8 +211,12 @@ class CalendarSync:
                                   "переносы — через бота", {"appointment": str(row.id)})
 
     def _apply_manual(self, doctor_id: uuid.UUID, event: dict,
-                      buffer_min: int) -> bool:
-        """Одно ручное событие → БД. True — случился конфликт-перенос."""
+                      buffer_min: int) -> tuple[bool, bool]:
+        """Одно ручное событие → БД.
+
+        Возвращает (был ли конфликт-перенос, записано ли событие). Второй
+        флаг решает судьбу syncToken: незаписанное событие обязано прийти
+        снова, иначе оно теряется навсегда."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             existing = session.execute(
                 text("SELECT id, status, lower(time_range) AS start, "
@@ -218,26 +233,29 @@ class CalendarSync:
                              "gcal_event_id = NULL WHERE id = :id"),
                         {"id": existing.id},
                     )
-            return False
+            return False, True
 
         span = _event_span(event, self._clinic_tz())
         if span is None:
+            # событие без времени не станет валидным и в следующий раз —
+            # держать из-за него токен бессмысленно
             log.warning("событие %s без времени — пропущено", event.get("id"))
-            return False
+            return False, True
         all_day = "date" in event.get("start", {})
         manual_buffer = 0 if all_day else buffer_min
         if self._try_write_manual(existing, doctor_id, event["id"], span, manual_buffer):
-            return False
+            return False, True
         # ручное легло поверх записи бота — приоритет у ручного (BRIEF):
         # двигаем записи бота, потом вставляем блок повторно
         moved = self._resolve_conflict(doctor_id, span, manual_buffer)
-        if not self._try_write_manual(existing, doctor_id, event["id"], span,
-                                      manual_buffer):
+        written = self._try_write_manual(existing, doctor_id, event["id"], span,
+                                         manual_buffer)
+        if not written:
             # живой hold: не трогаем (пациент выбирает прямо сейчас),
             # hold истечёт за 3 минуты — заберём блок следующим циклом
             log.warning("событие %s: конфликт не разрешён (живой hold?) — "
                         "повтор следующим циклом", event["id"])
-        return moved
+        return moved, written
 
     def _try_write_manual(self, existing, doctor_id: uuid.UUID, event_id: str,
                           span: tuple[datetime, datetime], buffer_min: int) -> bool:

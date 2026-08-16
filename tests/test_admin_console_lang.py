@@ -249,3 +249,60 @@ def test_digest_renders_in_chat_language(app_session_factory, admin_engine,
     ru = render_digest_short(sample, "ru")
     uz = render_digest_short(sample, "uz")
     assert CYRILLIC.search(ru) and not CYRILLIC.search(uz), uz
+
+
+def test_release_confirmation_uses_admin_language(app_session_factory,
+                                                  admin_engine, clinic_a):
+    """Подтверждение админу шло на языке ПАЦИЕНТА: узбекский владелец,
+    снявший эскалацию русскоязычного пациента, получал русский ответ."""
+    from sqlalchemy import text as _text
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    _switch_to_uz(worker, app_session_factory, clinic_a)
+    with admin_engine.begin() as conn:
+        conn.execute(_text(
+            "INSERT INTO conversation (clinic_id, tg_chat_id, fsm_state, context) "
+            "VALUES (:c, 321, 'escalated', '{\"lang\": \"ru\"}'::jsonb)"),
+            {"c": clinic_a})
+    send_admin(worker, app_session_factory, clinic_a, "/release 321")
+
+    body = last_to(api, ADMIN_CHAT)
+    assert not CYRILLIC.search(body), f"ответ админу по-русски: {body}"
+
+
+def test_dayoff_usage_does_not_double_escape_reason(app_session_factory,
+                                                    clinic_a, doctor_a,
+                                                    service_cleaning):
+    """Причина проходила через at() дважды: «<ремонт>» показывался как
+    «&lt;ремонт&gt;» — запрещённое вложение шаблона в шаблон."""
+    from datetime import date, timedelta
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    target = date.today() + timedelta(days=6)
+    send_admin(worker, app_session_factory, clinic_a,
+               f"/dayoff {target:%d.%m} <ремонт>")
+    send_admin(worker, app_session_factory, clinic_a, "/dayoff")
+
+    body = last_to(api, ADMIN_CHAT)
+    assert "&amp;lt;" not in body, f"двойное экранирование: {body}"
+    assert "&lt;ремонт&gt;" in body, body
+    assert "{" not in body, f"неподставленный плейсхолдер: {body}"
+
+
+def test_missing_doctor_shows_its_own_reason(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a):
+    """Врача удалил второй администратор, пока первый выбирал дни: причина
+    отказа не «не останется рабочих дней», а «врача больше нет»."""
+    from sqlalchemy import text as _text
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:mon")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    with admin_engine.begin() as conn:
+        conn.execute(_text("DELETE FROM doctor WHERE id = :d"), {"d": doctor_a})
+
+    click(worker, app_session_factory, clinic_a, f"adm:sched:off:{doctor_a}")
+
+    body = (api.edited[-1][2] if api.edited else last_to(api, ADMIN_CHAT))
+    assert "рабочего дня" not in body, f"причина подменена: {body}"

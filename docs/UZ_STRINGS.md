@@ -632,6 +632,19 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_preview_ru` | 🇷🇺 По-русски | **🇷🇺 Rus tilida** | |
 | `btn_preview_uz` | 🇺🇿 По-узбекски | **🇺🇿 O'zbek tilida** | |
 
+### Алерты администратору
+
+Уходят без HTML-разметки; `{reason}` подставляет причину, она пока приходит по-русски из служебных путей.
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `doc_missing` | ⚠️ Этого врача уже нет — возможно, его удалили в другом чате. | **⚠️ Bu shifokor endi yo'q — boshqa chatda o'chirilgan bo'lishi mumkin.** | |
+| `svc_missing` | ⚠️ Этой услуги уже нет — возможно, её удалили в другом чате. | **⚠️ Bu xizmat endi yo'q — boshqa chatda o'chirilgan bo'lishi mumkin.** | |
+| `alert_escalation` | Эскалация: чат {chat} ⏎ Причина: {reason} ⏎ Что хотел пациент: {context} ⏎ Снять: /release {chat} | **Murojaat: chat {chat} ⏎ Sababi: {reason} ⏎ Bemor nima xohlagan: {context} ⏎ Yopish: /release {chat}** | |
+| `alert_fyi` | 🟡 К сведению: {reason} ⏎ Что хотел пациент: {context} | **🟡 Ma'lumot uchun: {reason} ⏎ Bemor nima xohlagan: {context}** | |
+| `alert_ops` | ⚠ {reason} | **⚠ {reason}** | |
+| `alert_system` | ⚠ Системный алерт ⏎ {reason} | **⚠ Tizim ogohlantirishi ⏎ {reason}** | |
+
 ---
 
 ## 13. Отдельные вопросы носителю

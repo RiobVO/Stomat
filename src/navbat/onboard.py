@@ -75,6 +75,11 @@ class EntityInUse(ValueError):
     """На сущность ссылаются записи — физическое удаление запрещено."""
 
 
+class EntityMissing(ValueError):
+    """Сущности уже нет: её удалил второй администратор, пока первый
+    держал экран открытым."""
+
+
 def _parse_hhmm(s: str) -> tuple[int, int]:
     h, _, m = str(s).partition(":")
     hh, mm = int(h), int(m)
@@ -236,7 +241,7 @@ def set_doctor_schedule_days(session_factory, clinic_id: uuid.UUID,
             text("SELECT working_intervals FROM doctor WHERE id = :d "
                  "FOR UPDATE"), {"d": doctor_id}).first()
         if row is None:
-            raise ValueError(f"врач {doctor_id} не найден в клинике {clinic_id}")
+            raise EntityMissing(f"врач {doctor_id} не найден в клинике {clinic_id}")
         schedule = dict(row[0] or {})
         for day in days:
             if shifts is None:

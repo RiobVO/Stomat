@@ -478,11 +478,13 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "ru": "{date} и так рабочий.",
         "uz": "{date} allaqachon ish kuni.",
     },
+    # без {upcoming}: список закрытых дней приклеивается склейкой — он уже
+    # прошёл экранирование, второй проход дал бы «&amp;lt;» (ревью, дефект 5)
     "dayoff_usage": {
         "ru": "Формат: /dayoff DD.MM [причина] — закрыть день, "
-              "/dayopen DD.MM — снова открыть.\n{upcoming}",
+              "/dayopen DD.MM — снова открыть.",
         "uz": "Format: /dayoff DD.MM [sabab] — kunni yopish, "
-              "/dayopen DD.MM — yana ochish.\n{upcoming}",
+              "/dayopen DD.MM — yana ochish.",
     },
     "dayoff_upcoming": {
         "ru": "Ближайшие выходные: {days}",
@@ -519,6 +521,14 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "ru": "⚠️ Врач ещё доступен пациентам — сначала скройте его.",
         "uz": "⚠️ Shifokor hali bemorlarga ochiq — avval uni yashiring.",
     },
+    "doc_missing": {
+        "ru": "⚠️ Этого врача уже нет — возможно, его удалили в другом чате.",
+        "uz": "⚠️ Bu shifokor endi yo'q — boshqa chatda o'chirilgan bo'lishi mumkin.",
+    },
+    "svc_missing": {
+        "ru": "⚠️ Этой услуги уже нет — возможно, её удалили в другом чате.",
+        "uz": "⚠️ Bu xizmat endi yo'q — boshqa chatda o'chirilgan bo'lishi mumkin.",
+    },
     "svc_in_use": {
         "ru": "⚠️ Услугу нельзя удалить: на неё ссылаются записи.",
         "uz": "⚠️ Xizmatni o'chirib bo'lmaydi: unga yozuvlar bog'langan.",
@@ -526,6 +536,27 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "doc_in_use": {
         "ru": "⚠️ Врача нельзя удалить: на него ссылаются записи.",
         "uz": "⚠️ Shifokorni o'chirib bo'lmaydi: unga yozuvlar bog'langan.",
+    },
+    # каркас алертов админ-чату. Алерты уходят PLAIN (без parse_mode) —
+    # подставляем через plain(), иначе «&» превратится в «&amp;»
+    "alert_escalation": {
+        "ru": "Эскалация: чат {chat}\n"
+              "Причина: {reason}\n"
+              "Что хотел пациент: {context}\n"
+              "Снять: /release {chat}",
+        "uz": "Murojaat: chat {chat}\n"
+              "Sababi: {reason}\n"
+              "Bemor nima xohlagan: {context}\n"
+              "Yopish: /release {chat}",
+    },
+    "alert_fyi": {
+        "ru": "🟡 К сведению: {reason}\nЧто хотел пациент: {context}",
+        "uz": "🟡 Ma'lumot uchun: {reason}\nBemor nima xohlagan: {context}",
+    },
+    "alert_ops": {"ru": "⚠ {reason}", "uz": "⚠ {reason}"},
+    "alert_system": {
+        "ru": "⚠ Системный алерт\n{reason}",
+        "uz": "⚠ Tizim ogohlantirishi\n{reason}",
     },
     "release_usage": {
         "ru": "Формат: /release <chat_id> (число из алерта эскалации)",
@@ -570,6 +601,33 @@ def at(key: str, lang: str, **kwargs) -> str:
     safe = {k: html.escape(str(v), quote=False) for k, v in kwargs.items()}
     template = TEMPLATES[key].get(lang) or TEMPLATES[key][DEFAULT_LANG]
     return template.format(**safe) if safe else template
+
+
+def plain(key: str, lang: str, **kwargs) -> str:
+    """То же, что at(), но БЕЗ экранирования: алерты админ-чату уходят
+    без parse_mode, и html.escape превратил бы «&» в «&amp;»."""
+    template = TEMPLATES[key].get(lang) or TEMPLATES[key][DEFAULT_LANG]
+    return template.format(**kwargs) if kwargs else template
+
+
+def admin_lang_resolver(session_factory, clinic_id):
+    """Функция «chat_id → язык консоли» для алертов (карта, №16).
+
+    Отдельно от AdminConsole: нотификатор создаётся раньше воркера и
+    не должен знать про консоль."""
+    from navbat.db.base import tenant_transaction
+    from navbat.dialog.conversation import load_conversation
+
+    def resolve(chat_id: int) -> str:
+        try:
+            with tenant_transaction(session_factory, clinic_id) as session:
+                conv = load_conversation(session, chat_id)
+        except Exception:  # алерт важнее языка — молча падаем на русский
+            return DEFAULT_LANG
+        lang = conv.context.extras.get("adm_lang")
+        return lang if lang in LANGS else DEFAULT_LANG
+
+    return resolve
 
 
 def menu_key(label: str) -> str | None:

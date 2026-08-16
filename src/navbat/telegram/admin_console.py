@@ -148,6 +148,8 @@ def _failure_key(error: Exception, kind: str) -> str:
     русский текст исключения нельзя (ревью волны C)."""
     if isinstance(error, onboard.EntityActive):
         return f"{kind}_still_active"
+    if isinstance(error, onboard.EntityMissing):
+        return f"{kind}_missing"
     return f"{kind}_in_use"
 
 
@@ -939,11 +941,13 @@ class AdminConsole:
         try:
             onboard.set_doctor_schedule_days(self._sf, self._cid, doc_id,
                                              selected, None)
-        except ValueError:
-            # дни приходят с наших же кнопок — единственная достижимая
-            # причина отказа это пустая неделя
+        except ValueError as error:
+            # дни приходят с наших же кнопок, но врача мог удалить второй
+            # администратор — причину выбираем по типу ошибки
+            key = ("doc_missing" if isinstance(error, onboard.EntityMissing)
+                   else "sched_dayoff_last")
             self._edit_or_send(chat_id, message_id, Reply(
-                at("sched_dayoff_last", lang),
+                at(key, lang),
                 button_rows=((Button(at("btn_back", lang),
                                      f"adm:doc:{doc_id_str}"),),)))
             return

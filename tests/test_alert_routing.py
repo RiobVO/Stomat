@@ -179,3 +179,36 @@ def test_owner_in_admin_chats_still_gets_detail(monkeypatch):
     assert "KeyError" not in to_other, "второй админ-чат — без трассировки"
     assert len([1 for chat, _, _ in api.sent if chat == ADMIN_CHAT]) == 1, \
         "дубля сообщения быть не должно"
+
+
+def test_alert_frame_uses_admin_chat_language(app_session_factory, admin_engine,
+                                              clinic_a):
+    """Каркас алерта («Эскалация», «Причина», «Снять») уходил только
+    по-русски — узбекский владелец видел русский экран ровно там, где
+    бот его зовёт (ревью исправлений волны C)."""
+    from navbat.db.base import tenant_transaction
+    from navbat.dialog.conversation import load_conversation, save_conversation
+
+    admin_chat = 909
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = load_conversation(session, admin_chat)
+        conv.context.extras["adm_lang"] = "uz"
+        save_conversation(session, conv)
+
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(
+        api, admin_chat_id=admin_chat,
+        lang_of=lambda chat: _admin_lang(app_session_factory, clinic_a, chat))
+    escalation.notify(555, "bemor odam so'radi", {})
+
+    body = api.sent[-1][1]
+    assert "Эскалация" not in body and "Причина" not in body, body
+    assert "/release 555" in body, "подсказка снятия обязана остаться"
+
+
+def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:
+    from navbat.db.base import tenant_transaction
+    from navbat.dialog.conversation import load_conversation
+    with tenant_transaction(session_factory, clinic_id) as session:
+        conv = load_conversation(session, chat_id)
+    return conv.context.extras.get("adm_lang", "ru")
