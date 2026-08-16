@@ -37,7 +37,7 @@ from navbat.dialog.booking_flow import _BookingFlowMixin
 from navbat.dialog.calendar_flow import _CalendarFlowMixin
 from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
-    Conversation, load_conversation, save_conversation)
+    Conversation, DialogContext, load_conversation, save_conversation)
 from navbat.dialog.dialog_common import (
     MAX_NLU_FAILURES,
     NEAREST_DAY_SCAN,
@@ -109,6 +109,23 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         self._no_slots_fyi_date: object | None = None
 
     # ── Входные точки ────────────────────────────────────────────────────
+
+    def preview_screens(self, lang: str) -> list[Reply]:
+        """Экраны пациента для показа владельцу (карта, №14).
+
+        Админ-чат — чистая консоль, и владелец на встрече не может «дать
+        попробую» со своего телефона. Здесь те же рендеры, что видит
+        пациент, но без побочных эффектов: ни диалога, ни записей —
+        conversation не сохраняется, состояние не трогается."""
+        conv = Conversation(chat_id=0, context=DialogContext(lang=lang))
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            greeting = Reply(
+                t("greeting", lang, clinic=self._clinic_name(session))
+                + "\n\n" + t("menu_hint", lang),
+                menu=menu_rows(lang))
+            return [greeting,
+                    self._price_list(session, conv),
+                    self._about_clinic(session, conv)]
 
     def handle_text(self, chat_id: int, message: str) -> Reply:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
