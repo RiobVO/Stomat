@@ -171,3 +171,44 @@ def test_event_span_naive_datetime_assumed_clinic_local():
     # naive 09:00 в Ташкенте == 04:00 UTC — сравнение с aware не бросает
     import datetime as _dt
     assert lo < _dt.datetime(2026, 6, 15, 5, 0, tzinfo=_dt.timezone.utc)
+
+
+def test_manual_event_wins_over_demo_history(app_session_factory, admin_engine,
+                                             clinic_a, doctor_a,
+                                             service_cleaning):
+    """Демо-история не должна съедать событие врача.
+
+    Синтетика исключена из переноса (живого пациента за ней нет), и
+    пересекающееся ручное событие переставало вставляться из-за exclusion
+    constraint — а syncToken всё равно продвигался, и событие терялось
+    навсегда (ревью волны C)."""
+    import uuid as _uuid
+    from datetime import timedelta
+
+    from sqlalchemy import text as _text
+
+    bind_calendar(admin_engine, doctor_a)
+    start = at_tashkent(next_monday() - timedelta(days=7), "10:00")
+    with admin_engine.begin() as conn:
+        conn.execute(_text(
+            "INSERT INTO appointment (id, clinic_id, doctor_id, service_id, "
+            "time_range, buffer_min, status, source, tg_chat_id) VALUES "
+            "(:i, :c, :d, :s, tstzrange(:lo, :hi, '[)'), 10, 'booked', "
+            "'demo_history', -900000000)"),
+            {"i": _uuid.uuid4(), "c": clinic_a, "d": doctor_a,
+             "s": service_cleaning, "lo": start,
+             "hi": start + timedelta(minutes=30)})
+    sync, api = make_sync(app_session_factory, clinic_a)
+    api.seed_manual_event(start=start, end=start + timedelta(minutes=30))
+
+    sync.sync_doctor(doctor_a)
+
+    with admin_engine.begin() as conn:
+        imported = conn.execute(_text(
+            "SELECT count(*) FROM appointment WHERE source = 'gcal_import'"
+        )).scalar_one()
+        demo_alive = conn.execute(_text(
+            "SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+            "AND status = 'booked'")).scalar_one()
+    assert imported == 1, "событие врача потеряно из-за синтетики"
+    assert demo_alive == 0, "демо-запись должна уступить настоящему событию"

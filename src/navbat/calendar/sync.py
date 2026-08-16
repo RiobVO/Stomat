@@ -283,6 +283,10 @@ class CalendarSync:
     def _resolve_conflict(self, doctor_id: uuid.UUID,
                           span: tuple[datetime, datetime],
                           manual_buffer: int) -> bool:
+        # синтетика уступает молча: переносить её некуда и некому сообщать,
+        # а оставленная на месте она блокирует вставку ручного события —
+        # и оно теряется навсегда, потому что syncToken уже продвинулся
+        self._drop_demo_history(doctor_id, span, manual_buffer)
         victims = self._find_victims(doctor_id, span, manual_buffer)
         booked = [v for v in victims if v.status == "booked"]
         if not booked:
@@ -292,6 +296,30 @@ class CalendarSync:
         for victim in booked:
             self._relocate(scheduler, doctor_id, victim, span, manual_buffer)
         return True
+
+    def _drop_demo_history(self, doctor_id: uuid.UUID,
+                           span: tuple[datetime, datetime],
+                           manual_buffer: int) -> None:
+        """Снять демо-записи, пересекающиеся с ручным событием."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            dropped = session.execute(
+                text("""
+                    UPDATE appointment SET status = 'cancelled'
+                    WHERE doctor_id = :doctor AND source = 'demo_history'
+                      AND status IN ('hold', 'booked')
+                      AND tstzrange(lower(time_range),
+                                    upper(time_range)
+                                    + (buffer_min * interval '1 minute'), '[)')
+                          && tstzrange(:start,
+                                       :finish + (:buffer * interval '1 minute'),
+                                       '[)')
+                """),
+                {"doctor": doctor_id, "start": span[0], "finish": span[1],
+                 "buffer": manual_buffer},
+            ).rowcount
+        if dropped:
+            log.info("демо-история: снято записей под ручное событие — %d",
+                     dropped)
 
     def _find_victims(self, doctor_id: uuid.UUID,
                       span: tuple[datetime, datetime], manual_buffer: int):
