@@ -33,6 +33,7 @@ from navbat.dialog.escalation import (
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
 from navbat.telegram.admin_console import AdminConsole, booked_warning
+from navbat.telegram.admin_texts import at
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
@@ -142,35 +143,49 @@ class UpdateWorker:
             if "text" in message:
                 if (message["text"].split()[:1] == ["/stats"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._stats_reply(message["text"]))
+                    self._send(chat_id,
+                               self._stats_reply(message["text"],
+                                                 self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/release"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._release_reply(message["text"]))
+                    self._send(chat_id,
+                               self._release_reply(message["text"],
+                                                   self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/dayoff"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._dayoff_reply(message["text"]))
+                    self._send(chat_id,
+                               self._dayoff_reply(message["text"],
+                                                  self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/dayopen"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._dayopen_reply(message["text"]))
+                    self._send(chat_id,
+                               self._dayopen_reply(message["text"],
+                                                   self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/forget"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._forget_reply(message["text"]))
+                    self._send(chat_id,
+                               self._forget_reply(message["text"],
+                                                  self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/pause"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._pause_reply(message["text"]))
+                    self._send(chat_id,
+                               self._pause_reply(message["text"],
+                                                 self._admin_lang(chat_id)))
                     return
                 if (message["text"].strip() == "/resume"
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._resume_reply())
+                    self._send(chat_id, self._resume_reply(self._admin_lang(chat_id)))
                     return
                 if (message["text"].split()[:1] == ["/llm"]
                         and chat_id in self._admin_chat_ids):
-                    self._send(chat_id, self._llm_reply(message["text"]))
+                    self._send(chat_id,
+                               self._llm_reply(message["text"],
+                                               self._admin_lang(chat_id)))
                     return
                 if chat_id in self._admin_chat_ids:
                     # админ-чат = чистая консоль: владелец НИКОГДА не попадает
@@ -218,7 +233,7 @@ class UpdateWorker:
                 # (например, старая пациентская a:N) кнопка НЕ уходит в
                 # пациентский диалог — подтверждаем и показываем админ-меню
                 self._api.answer_callback_query(callback["id"])
-                self._send(chat_id, self._admin.main_menu())
+                self._send(chat_id, self._admin.main_menu(chat_id))
                 return
             if self._bot_paused():
                 self._api.answer_callback_query(callback["id"])
@@ -251,31 +266,34 @@ class UpdateWorker:
                 f"WHERE id = current_setting('app.clinic_id')::uuid"),
                 {"v": value})
 
-    def _pause_reply(self, command: str) -> Reply:
+    def _admin_lang(self, chat_id: int) -> str:
+        """Язык админ-чата (карта, №16): ответы команд идут на нём же."""
+        return self._admin._lang(chat_id)
+
+    def _pause_reply(self, command: str, lang: str = "ru") -> Reply:
         """Пауза бота: /pause [причина] (C-4). Пациенты получают вежливое
         сообщение, напоминания продолжают ходить, /resume — обратно."""
-        # причина — текст админа: ответ уходит с parse_mode=HTML (П-7)
-        reason = html.escape(command.partition(" ")[2].strip(), quote=False)
+        # причина — текст админа: at() её экранирует, ответ уходит с HTML (П-7)
+        reason = command.partition(" ")[2].strip()
         self._set_clinic_flag("bot_paused", True)
-        suffix = f" ({reason})" if reason else ""
-        return Reply(f"[OK] бот на паузе{suffix}. Пациентам отвечаем "
-                     f"«запись временно по телефону». Вернуть: /resume")
+        key = "paused_ok_reason" if reason else "paused_ok"
+        return Reply(at(key, lang, reason=reason) if reason
+                     else at(key, lang))
 
-    def _resume_reply(self) -> Reply:
+    def _resume_reply(self, lang: str = "ru") -> Reply:
         self._set_clinic_flag("bot_paused", False)
-        return Reply("[OK] бот снова принимает запись")
+        return Reply(at("resumed_ok", lang))
 
-    def _llm_reply(self, command: str) -> Reply:
+    def _llm_reply(self, command: str, lang: str = "ru") -> Reply:
         """Рубильник NLU: /llm off — кнопки работают, свободный текст → меню."""
         arg = command.split()[1:2]
         if arg == ["off"]:
             self._set_clinic_flag("llm_enabled", False)
-            return Reply("[OK] LLM выключен: кнопки работают, свободный "
-                         "текст уходит в меню. Вернуть: /llm on")
+            return Reply(at("llm_off_ok", lang))
         if arg == ["on"]:
             self._set_clinic_flag("llm_enabled", True)
-            return Reply("[OK] LLM включён")
-        return Reply("Формат: /llm on | /llm off")
+            return Reply(at("llm_on_ok", lang))
+        return Reply(at("llm_usage", lang))
 
     def _bot_paused(self) -> bool:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -289,7 +307,7 @@ class UpdateWorker:
             lang = get_chat_lang(session, chat_id)
         return Reply(t("bot_paused", lang))
 
-    def _release_reply(self, command: str) -> Reply:
+    def _release_reply(self, command: str, lang: str = "ru") -> Reply:
         """Снятие эскалации админом: /release <chat_id> (Ф1.5, BRIEF разд. 14.A).
 
         Conversation → idle, счётчик сбоев NLU в ноль; пациенту уходит главное
@@ -297,7 +315,7 @@ class UpdateWorker:
         """
         parts = command.split()
         if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
-            return Reply("Формат: /release <chat_id> (число из алерта эскалации)")
+            return Reply(at("release_usage", lang))
         target = int(parts[1])
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             row = session.execute(
@@ -306,10 +324,10 @@ class UpdateWorker:
                 {"chat": target},
             ).one_or_none()
             if row is None:
-                return Reply(f"Чат {target} не найден.")
+                return Reply(at("release_not_found", lang, chat=target))
             if row.fsm_state != "escalated":
-                return Reply(f"Чат {target} не в эскалации "
-                             f"(состояние: {row.fsm_state}).")
+                return Reply(at("release_not_escalated", lang, chat=target,
+                                state=row.fsm_state))
             session.execute(
                 text("UPDATE conversation SET fsm_state = 'idle', "
                      "context = jsonb_set(context, '{nlu_failures}', '0', true) "
@@ -318,9 +336,9 @@ class UpdateWorker:
             )
         lang = row.lang or "ru"
         self._send(target, Reply(t("menu_hint", lang), menu=menu_rows(lang)))
-        return Reply(f"[OK] эскалация снята: чат {target}")
+        return Reply(at("release_ok", lang, chat=target))
 
-    def _forget_reply(self, command: str) -> Reply:
+    def _forget_reply(self, command: str, lang: str = "ru") -> Reply:
         """Анонимизация пациента по запросу: /forget <chat_id> (Ф1.5, D.2).
 
         Имя/контакт стираются, диалог и сырые сообщения удаляются; история
@@ -330,7 +348,7 @@ class UpdateWorker:
         """
         parts = command.split()
         if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
-            return Reply("Формат: /forget <chat_id> — анонимизировать пациента")
+            return Reply(at("forget_usage", lang))
         target = int(parts[1])
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             reminders = session.execute(
@@ -353,11 +371,8 @@ class UpdateWorker:
                 text("DELETE FROM message_queue WHERE tg_chat_id = :chat"),
                 {"chat": target}).rowcount
         if not any((reminders, patients, appointments, dialogs, messages)):
-            return Reply(f"Чат {target} не найден — данных нет.")
-        return Reply(
-            f"[OK] чат {target}: пациент анонимизирован, диалог и сообщения "
-            f"удалены. Будущие записи не отменены — отмените отдельно, "
-            f"если пациент просил.")
+            return Reply(at("forget_not_found", lang, chat=target))
+        return Reply(at("forget_ok", lang, chat=target))
 
     # ── Выходные дни: клиника сама закрывает/открывает (Ф1.5) ────────────
 
@@ -369,7 +384,7 @@ class UpdateWorker:
             ).scalar_one())
         return datetime.now(tz).date()
 
-    def _dayoff_reply(self, command: str) -> Reply:
+    def _dayoff_reply(self, command: str, lang: str = "ru") -> Reply:
         """Закрыть день: /dayoff DD.MM [причина].
 
         Предзаполненного календаря праздников нет (решение 06.06.2026):
@@ -380,14 +395,15 @@ class UpdateWorker:
         today = self._clinic_today()
         target = self._parse_ddmm(parts[1], today) if len(parts) > 1 else None
         if target is None:
-            return Reply(self._dayoff_usage(today))
+            return Reply(self._dayoff_usage(today, lang))
         reason = parts[2].strip() if len(parts) > 2 else None
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             exists = session.execute(
                 text("SELECT 1 FROM holiday WHERE date = :d"), {"d": target}
             ).scalar_one_or_none()
             if exists:
-                return Reply(f"{target:%d.%m.%Y} уже выходной.")
+                return Reply(at("dayoff_already", lang,
+                                date=f"{target:%d.%m.%Y}"))
             session.execute(
                 text("INSERT INTO holiday (clinic_id, date, reason) VALUES "
                      "(current_setting('app.clinic_id')::uuid, :d, :r)"),
@@ -395,26 +411,28 @@ class UpdateWorker:
             )
             # закрытие дня записи не отменяет (решение владельца) — но владелец
             # обязан узнать о них здесь, а не от пришедшего пациента (карта, №7)
-            warning = booked_warning(session, target)
-        # причина — текст админа: ответ уходит с parse_mode=HTML (П-7)
-        label = f" ({html.escape(reason, quote=False)})" if reason else ""
-        return Reply(f"[OK] {target:%d.%m.%Y} — выходной{label}{warning}")
+            warning = booked_warning(session, target, lang)
+        # причина — текст админа: at() её экранирует, ответ уходит с HTML (П-7)
+        label = at("reason_suffix", lang, reason=reason) if reason else ""
+        return Reply(at("dayoff_ok", lang, date=f"{target:%d.%m.%Y}")
+                     + label + warning)
 
-    def _dayopen_reply(self, command: str) -> Reply:
+    def _dayopen_reply(self, command: str, lang: str = "ru") -> Reply:
         """Снова открыть закрытый день: /dayopen DD.MM."""
         parts = command.split()
         today = self._clinic_today()
         target = self._parse_ddmm(parts[1], today) if len(parts) == 2 else None
         if target is None:
-            return Reply(self._dayoff_usage(today))
+            return Reply(self._dayoff_usage(today, lang))
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             deleted = session.execute(
                 text("DELETE FROM holiday WHERE date = :d RETURNING id"),
                 {"d": target},
             ).first()
         if deleted is None:
-            return Reply(f"{target:%d.%m.%Y} и так рабочий.")
-        return Reply(f"[OK] {target:%d.%m.%Y} снова рабочий")
+            return Reply(at("dayopen_already", lang,
+                            date=f"{target:%d.%m.%Y}"))
+        return Reply(at("dayopen_ok", lang, date=f"{target:%d.%m.%Y}"))
 
     @staticmethod
     def _parse_ddmm(raw: str, today: date) -> date | None:
@@ -433,7 +451,7 @@ class UpdateWorker:
                 return candidate
         return None  # 31.02 и прочие несуществующие даты
 
-    def _dayoff_usage(self, today: date) -> str:
+    def _dayoff_usage(self, today: date, lang: str = "ru") -> str:
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             rows = session.execute(
                 text("SELECT date, reason FROM holiday WHERE date >= :t "
@@ -444,24 +462,22 @@ class UpdateWorker:
             days = "; ".join(
                 f"{row.date:%d.%m.%Y}" + (f" ({row.reason})" if row.reason else "")
                 for row in rows)
-            upcoming = f"Ближайшие выходные: {days}"
+            upcoming = at("dayoff_upcoming", lang, days=days)
         else:
-            upcoming = "Закрытых дней впереди нет."
-        return ("Формат: /dayoff DD.MM [причина] — закрыть день, "
-                "/dayopen DD.MM — снова открыть.\n" + upcoming)
+            upcoming = at("dayoff_none_ahead", lang)
+        return at("dayoff_usage", lang, upcoming=upcoming)
 
-    def _stats_reply(self, command: str = "/stats") -> Reply:
+    def _stats_reply(self, command: str = "/stats", lang: str = "ru") -> Reply:
         """Сводка владельца (П-6): /stats — день, /stats 7|30 — период."""
         args = command.split()[1:2]
         days = 1
         if args:
             if not args[0].isdigit() or not 1 <= int(args[0]) <= 90:
-                return Reply("Формат: /stats [дней], например /stats 7 "
-                             "или /stats 30")
+                return Reply(at("stats_usage", lang))
             days = int(args[0])
-        return self._stats_view(days)
+        return self._stats_view(days, lang)
 
-    def _stats_view(self, days: int) -> Reply:
+    def _stats_view(self, days: int, lang: str = "ru") -> Reply:
         from navbat.stats import collect_stats, render_stats
 
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
@@ -476,8 +492,8 @@ class UpdateWorker:
             # второй collect дёшев — объёмы одной клиники малы
             prev = collect_stats(session, first - timedelta(days=days),
                                  first - timedelta(days=1), tz)
-        return Reply(render_stats(stats, first, today, prev=prev),
-                     button_rows=(_period_buttons(days),))
+        return Reply(render_stats(stats, first, today, prev=prev, lang=lang),
+                     button_rows=(_period_buttons(days, lang),))
 
     def _handle_stats_callback(self, callback: dict, chat_id: int,
                                data: str) -> None:
@@ -485,13 +501,15 @@ class UpdateWorker:
         сводка дня НОВЫМ сообщением (дайджест с вопросами остаётся в чате)."""
         self._api.answer_callback_query(callback["id"])
         suffix = data[len("stats:"):]
+        lang = self._admin_lang(chat_id)
         if suffix == "full":
-            self._send(chat_id, self._stats_reply())
+            self._send(chat_id, self._stats_reply(lang=lang))
             return
         message_id = callback["message"].get("message_id")
         if suffix.isdigit() and 1 <= int(suffix) <= 90 and message_id is not None:
             edit_reply(self._api, self._session_factory, self._clinic_id,
-                       chat_id, message_id, self._stats_view(int(suffix)))
+                       chat_id, message_id,
+                       self._stats_view(int(suffix), lang))
 
     def _rate_verdict(self, chat_id: int, current_queue_id: int) -> str:
         """ok | warn | silent: защита кошелька от залпа сообщений (BRIEF).
@@ -532,12 +550,15 @@ class UpdateWorker:
             ).scalar_one_or_none()
 
 
-def _period_buttons(active: int) -> tuple[Button, ...]:
+def _period_buttons(active: int, lang: str = "ru") -> tuple[Button, ...]:
     """Ряд периодов сводки (В): активный помечен ✓; callback'и сырые stats:N —
     мимо tg_actions, переживают перезапись map'а (как cal: в П-4)."""
+    labels = ((1, at("btn_period_today", lang)),
+              (7, at("btn_period", lang, days=7)),
+              (30, at("btn_period", lang, days=30)))
     return tuple(
         Button(f"{label} ✓" if days == active else label, f"stats:{days}")
-        for days, label in ((1, "📅 День"), (7, "7 дней"), (30, "30 дней")))
+        for days, label in labels)
 
 
 def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID,

@@ -403,9 +403,10 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 
 ## 15. Админ-консоль (владелец клиники)
 
-Кнопочная консоль в админ-чате: ею пользуется не пациент, а владелец или
-администратор клиники. Тон другой — короткие деловые формулировки, но то же
-обращение на «siz». Узбекский здесь целиком черновик, вычитки не проходил.
+Кнопочная консоль в админ-чате, сводка владельца и ответы админ-команд: ими
+пользуется не пациент, а владелец или администратор клиники. Тон другой —
+короткие деловые формулировки, но то же обращение на «siz». Узбекский здесь
+целиком черновик, вычитки не проходил.
 
 ### Верхнее меню и язык
 
@@ -469,6 +470,9 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `price_prompt` | 💰 <b>{label}</b> ⏎ Текущая цена: {current} ⏎  ⏎ Введите новую цену в сумах, например 400000. | **💰 <b>{label}</b> ⏎ Hozirgi narxi: {current} ⏎  ⏎ Yangi narxni so'mda kiriting, masalan 400000.** | |
 | `price_invalid` | ⚠️ Цена — целое число сум больше нуля, например 400000. ⏎ Введите ещё раз или нажмите «Отмена». | **⚠️ Narx — noldan katta butun son (so'm), masalan 400000. ⏎ Qaytadan kiriting yoki «Bekor qilish» tugmasini bosing.** | |
 | `price_saved` | ✅ Цена «{label}»: {price} | **✅ «{label}» narxi: {price}** | |
+| `svc_exists` | ⚠️ Такая услуга уже есть в клинике. | **⚠️ Bunday xizmat klinikada allaqachon bor.** | |
+| `svc_still_active` | ⚠️ Услуга ещё доступна пациентам — сначала скройте её. | **⚠️ Xizmat hali bemorlarga ochiq — avval uni yashiring.** | |
+| `svc_in_use` | ⚠️ Услугу нельзя удалить: на неё ссылаются записи. | **⚠️ Xizmatni o'chirib bo'lmaydi: unga yozuvlar bog'langan.** | |
 ### О клинике
 
 | Ключ | Русский | Узбекский (черновик) | Правка |
@@ -512,6 +516,8 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `doc_shown_notice` | ✅ Врач снова в записи | **✅ Shifokor yana yozuvda** | |
 | `doc_delete_confirm` | 🗑 Удалить врача навсегда? Отменить это будет нельзя. | **🗑 Shifokor butunlay o'chirilsinmi? Buni qaytarib bo'lmaydi.** | |
 | `doc_deleted` | ✅ Врач удалён | **✅ Shifokor o'chirildi** | |
+| `doc_still_active` | ⚠️ Врач ещё доступен пациентам — сначала скройте его. | **⚠️ Shifokor hali bemorlarga ochiq — avval uni yashiring.** | |
+| `doc_in_use` | ⚠️ Врача нельзя удалить: на него ссылаются записи. | **⚠️ Shifokorni o'chirib bo'lmaydi: unga yozuvlar bog'langan.** | |
 ### Расписание
 
 | Ключ | Русский | Узбекский (черновик) | Правка |
@@ -553,6 +559,78 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `dayoff_reopened` | ✅ День снова рабочий | **✅ Kun yana ish kuni** | |
 | `dayoff_booked_warning` | ⏎  ⏎ ⚠️ На этот день уже есть записи: {count} ({times}). ⏎ Бот их не отменяет и напоминания придут — перенесите или отмените их сами. | **⏎  ⏎ ⚠️ Bu kunga yozuvlar bor: {count} ({times}). ⏎ Bot ularni bekor qilmaydi va eslatmalar boradi — o'zingiz ko'chiring yoki bekor qiling.** | |
 | `dayoff_warning_more` | и ещё {count} | **va yana {count}** | |
+| `dayoff_ok` | [OK] {date} — выходной | **[OK] {date} — dam olish kuni** | |
+| `dayoff_already` | {date} уже выходной. | **{date} allaqachon dam olish kuni.** | |
+| `dayopen_ok` | [OK] {date} снова рабочий | **[OK] {date} yana ish kuni** | |
+| `dayopen_already` | {date} и так рабочий. | **{date} allaqachon ish kuni.** | |
+| `dayoff_usage` | Формат: /dayoff DD.MM [причина] — закрыть день, /dayopen DD.MM — снова открыть. ⏎ {upcoming} | **Format: /dayoff DD.MM [sabab] — kunni yopish, /dayopen DD.MM — yana ochish. ⏎ {upcoming}** | |
+| `dayoff_upcoming` | Ближайшие выходные: {days} | **Yaqin dam olish kunlari: {days}** | |
+| `dayoff_none_ahead` | Закрытых дней впереди нет. | **Oldinda yopiq kunlar yo'q.** | |
+### Сводка владельца и вечерний дайджест
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `stats_header_day` | 📊 <b>Сводка за {date}</b> | **📊 <b>{date} kunlik hisobot</b>** | |
+| `stats_header_range` | 📊 <b>Сводка за {days} дн. ({first}–{last})</b> | **📊 <b>{days} kunlik hisobot ({first}–{last})</b>** | |
+| `stats_value_title` | 💰 Ценность | **💰 Qiymat** | |
+| `stats_booked` | • записей подтверждено: {count}{trend}{after} | **• tasdiqlangan yozuvlar: {count}{trend}{after}** | |
+| `stats_after_hours` | (из них {count} — вне рабочих часов) | **(shundan {count} tasi — ish vaqtidan tashqari)** | |
+| `stats_prevented` | • предотвращено неявок: {count} (слотов на ≈ {money} сум освобождено заранее) | **• oldi olingan kelmasliklar: {count} (≈ {money} so'mlik vaqt oldindan bo'shatildi)** | |
+| `stats_cancelled` | • отмен: {count}{trend} | **• bekor qilingan: {count}{trend}** | |
+| `stats_escalated` | • эскалаций к администратору: {count} | **• administratorga murojaatlar: {count}** | |
+| `stats_clients` | 👥 Клиенты ⏎ • новых: {new} · вернувшихся: {returning} | **👥 Mijozlar ⏎ • yangi: {new} · qaytgan: {returning}** | |
+| `stats_top_doctors` | 👨‍⚕️ Топ врачей | **👨‍⚕️ Eng band shifokorlar** | |
+| `stats_doctor_line` | • {name} — {count} зап. (≈ {money} сум) | **• {name} — {count} ta yozuv (≈ {money} so'm)** | |
+| `stats_hit_service` | ✨ Хит-услуга ⏎ • {service} — {count} зап. | **✨ Eng ommabop xizmat ⏎ • {service} — {count} ta yozuv** | |
+| `stats_waitlist` | 🔔 Очередь ожидания ⏎ • сейчас ждут слота: {count} | **🔔 Kutish navbati ⏎ • hozir vaqt kutayotganlar: {count}** | |
+| `stats_tech` | ⚙️ Служебное ⏎ • напоминаний: {reminders} · LLM: {requests} запросов, {tokens} токенов, сбоев: {failures}, repair: {repairs} | **⚙️ Texnik ⏎ • eslatmalar: {reminders} · LLM: {requests} so'rov, {tokens} token, xato: {failures}, repair: {repairs}** | |
+| `stats_p95` | · p95 ответа: {seconds} с (SLA &lt; 5 с) | **· javob p95: {seconds} s (SLA &lt; 5 s)** | |
+| `digest_title` | 📊 <b>Итог дня</b> | **📊 <b>Kun yakuni</b>** | |
+| `digest_booked` | • записей: {count}{after} | **• yozuvlar: {count}{after}** | |
+| `digest_prevented` | • предотвращено неявок: {count} (≈ {money} сум) | **• oldi olingan kelmasliklar: {count} (≈ {money} so'm)** | |
+| `digest_escalated` | • эскалаций: {count} | **• murojaatlar: {count}** | |
+| `digest_waitlist` | ⏎ • 🔔 в очереди ожидания: {count} | **⏎ • 🔔 kutish navbatida: {count}** | |
+| `digest_more` | 📊 Подробнее | **📊 Batafsil** | |
+| `questions_title` | ❓ <b>Вопросы без ответа ({count})</b> | **❓ <b>Javobsiz savollar ({count})</b>** | |
+| `questions_more` | ⏎ … и ещё {count} | **⏎ … va yana {count}** | |
+| `stats_usage` | Формат: /stats — за сегодня, /stats 7 — за неделю или /stats 30 | **Format: /stats — bugun uchun, /stats 7 — hafta uchun yoki /stats 30** | |
+| `btn_period` | {days} дней | **{days} kun** | |
+| `btn_period_today` | 📅 День | **📅 Bugun** | |
+### Команды администратора
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `paused_ok` | [OK] бот на паузе. Пациентам отвечаем «запись временно по телефону». Вернуть: /resume | **[OK] bot pauzada. Bemorlarga «yozuv vaqtincha telefon orqali» deb javob beramiz. Qaytarish: /resume** | |
+| `paused_ok_reason` | [OK] бот на паузе ({reason}). Пациентам отвечаем «запись временно по телефону». Вернуть: /resume | **[OK] bot pauzada ({reason}). Bemorlarga «yozuv vaqtincha telefon orqali» deb javob beramiz. Qaytarish: /resume** | |
+| `resumed_ok` | [OK] бот снова принимает запись | **[OK] bot yana yozuvni qabul qilmoqda** | |
+| `llm_off_ok` | [OK] свободный текст выключен — работают только кнопки | **[OK] erkin matn o'chirildi — faqat tugmalar ishlaydi** | |
+| `llm_on_ok` | [OK] свободный текст снова понимает NLU | **[OK] erkin matnni yana NLU tushunadi** | |
+| `llm_usage` | Формат: /llm on\|off | **Format: /llm on\|off** | |
+| `action_failed` | ⚠️ Не получилось: {reason} | **⚠️ Bajarilmadi: {reason}** | |
+| `release_usage` | Формат: /release <chat_id> (число из алерта эскалации) | **Format: /release <chat_id> (murojaat xabaridagi raqam)** | |
+| `release_not_found` | Чат {chat} не найден. | **{chat} chat topilmadi.** | |
+| `release_not_escalated` | Чат {chat} не в эскалации (состояние: {state}). | **{chat} chat murojaatda emas (holati: {state}).** | |
+| `release_ok` | [OK] эскалация снята: чат {chat} | **[OK] murojaat yopildi: chat {chat}** | |
+| `forget_usage` | Формат: /forget <chat_id> — анонимизировать пациента | **Format: /forget <chat_id> — bemor ma'lumotlarini o'chirish** | |
+| `forget_not_found` | Чат {chat} не найден — данных нет. | **{chat} chat topilmadi — ma'lumot yo'q.** | |
+| `forget_ok` | [OK] чат {chat}: пациент анонимизирован, диалог и сообщения удалены. Будущие записи не отменены — отмените отдельно, если пациент просил. | **[OK] chat {chat}: bemor ma'lumotlari o'chirildi, suhbat va xabarlar tozalandi. Kelgusi yozuvlar bekor qilinmadi — bemor so'ragan bo'lsa, alohida bekor qiling.** | |
+### Прочее
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `reason_suffix` | ({reason}) | **({reason})** | |
+
+### Превью «глазами пациента»
+
+| Ключ | Русский | Узбекский (черновик) | Правка |
+|---|---|---|---|
+| `btn_preview` | 👁 Глазами пациента | **👁 Bemor ko'zi bilan** | |
+| `preview_head` | 👁 <b>Так вас видит пациент</b> ⏎ Язык пациента: {language} ⏎ <i>Это картинка: записи не создаются.</i> ⏎  ⏎ | **👁 <b>Bemor sizni shunday ko'radi</b> ⏎ Bemor tili: {language} ⏎ <i>Bu ko'rinish: yozuv yaratilmaydi.</i> ⏎  ⏎** | |
+| `preview_menu` | ⏎  ⏎ <i>Кнопки пациента:</i> {buttons} | **⏎  ⏎ <i>Bemor tugmalari:</i> {buttons}** | |
+| `preview_lang_ru` | русский | **rus tili** | |
+| `preview_lang_uz` | узбекский | **o'zbek tili** | |
+| `btn_preview_ru` | 🇷🇺 По-русски | **🇷🇺 Rus tilida** | |
+| `btn_preview_uz` | 🇺🇿 По-узбекски | **🇺🇿 O'zbek tilida** | |
 
 ---
 

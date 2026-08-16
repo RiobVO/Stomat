@@ -61,6 +61,14 @@ def test_console_has_no_hardcoded_user_strings():
                     and isinstance(first.value, ast.Constant)
                     and isinstance(first.value.value, str)):
                 docstrings.add(id(first.value))
+    # аргументы log.* — диагностика для разработчика, она по-русски
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "log"):
+            for arg in node.args:
+                if isinstance(arg, ast.Constant):
+                    docstrings.add(id(arg))
     cyrillic = re.compile(r"[А-Яа-яЁё]")
     leftovers = [
         f"{node.lineno}: {node.value[:60]!r}"
@@ -158,3 +166,86 @@ def test_uzbek_cancel_word_clears_pending(app_session_factory, admin_engine,
     send_admin(worker, app_session_factory, clinic_a, "bekor")
 
     assert "adm_pending" not in (context_of(admin_engine, ADMIN_CHAT) or {})
+
+
+# ── язык доходит до всех ответов админу (ревью волны C) ───────────────────
+
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
+def _switch_to_uz(worker, sf, clinic):
+    send_admin(worker, sf, clinic, at.TEMPLATES["btn_lang"]["ru"])
+
+
+def test_stats_button_answers_in_uzbek(app_session_factory, clinic_a,
+                                       service_cleaning):
+    """«📊 Statistika» отвечала русской сводкой — узбекский обрывался ровно
+    на самом ценном экране владельца."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    _switch_to_uz(worker, app_session_factory, clinic_a)
+    send_admin(worker, app_session_factory, clinic_a,
+               at.TEMPLATES["btn_stats"]["uz"])
+
+    body = last_to(api, ADMIN_CHAT)
+    assert not CYRILLIC.search(body), f"сводка по-русски: {body}"
+
+
+def test_pause_and_resume_answer_in_uzbek(app_session_factory, clinic_a):
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    _switch_to_uz(worker, app_session_factory, clinic_a)
+    send_admin(worker, app_session_factory, clinic_a,
+               at.TEMPLATES["btn_pause"]["uz"])
+    paused_body = last_to(api, ADMIN_CHAT)
+
+    assert not CYRILLIC.search(paused_body), f"пауза по-русски: {paused_body}"
+    assert at.TEMPLATES["btn_resume"]["uz"] in flat(last_menu(api))
+
+    send_admin(worker, app_session_factory, clinic_a,
+               at.TEMPLATES["btn_resume"]["uz"])
+    assert not CYRILLIC.search(last_to(api, ADMIN_CHAT))
+
+
+def test_slash_commands_answer_in_uzbek(app_session_factory, clinic_a,
+                                        doctor_a, service_cleaning):
+    """Слэш-команды — аварийный выход из консоли, и он тоже на языке чата."""
+    from datetime import date, timedelta
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    _switch_to_uz(worker, app_session_factory, clinic_a)
+    target = date.today() + timedelta(days=7)
+    for command in (f"/dayoff {target:%d.%m}", f"/dayopen {target:%d.%m}",
+                    "/pause", "/resume", "/llm off", "/llm on", "/stats 7"):
+        send_admin(worker, app_session_factory, clinic_a, command)
+        body = last_to(api, ADMIN_CHAT)
+        assert not CYRILLIC.search(body), f"{command} → по-русски: {body}"
+
+
+def test_onboard_error_reaches_admin_in_uzbek(app_session_factory,
+                                              admin_engine, clinic_a,
+                                              service_cleaning):
+    """Ошибки слоя данных приходили русским текстом внутрь узбекской консоли."""
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    _switch_to_uz(worker, app_session_factory, clinic_a)
+    # услуга уже есть в клинике — add_service поднимет ValueError
+    click(worker, app_session_factory, clinic_a, "adm:svcadd:cleaning")
+    send_admin(worker, app_session_factory, clinic_a, "30")
+
+    # ответ на текстовый ввод всегда уходит новым сообщением, не правкой
+    body = last_to(api, ADMIN_CHAT)
+    assert not CYRILLIC.search(body), f"ошибка по-русски: {body}"
+
+
+def test_digest_renders_in_chat_language(app_session_factory, admin_engine,
+                                         clinic_a, doctor_a, service_cleaning):
+    """Вечерняя сводка идёт веером по админ-чатам — каждому на его языке."""
+    from navbat.stats import DailyStats, render_digest_short
+
+    sample = DailyStats(booked=3, cancelled=0, escalated=0, reminders_sent=0,
+                        llm_requests=0, llm_tokens=0, nlu_failures=0,
+                        nlu_repairs=0, prevented_noshows=1, saved_revenue=350000)
+    ru = render_digest_short(sample, "ru")
+    uz = render_digest_short(sample, "uz")
+    assert CYRILLIC.search(ru) and not CYRILLIC.search(uz), uz

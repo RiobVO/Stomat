@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from navbat.dialog.doctors_repo import doctor_list
 from navbat.dialog.replies import service_label
 from navbat.scheduling.calendar_rules import open_bounds
+from navbat.telegram.admin_texts import at
 
 DIGEST_HOUR = 21  # локальный час отправки вечерней сводки
 
@@ -254,82 +255,84 @@ def _trend(cur: int, prev: int) -> str:
 
 
 def render_stats(stats: DailyStats, day: date, last: date | None = None,
-                 prev: DailyStats | None = None) -> str:
+                 prev: DailyStats | None = None, lang: str = "ru") -> str:
     """Рендер владельца (П-6): ценность сверху, техника одной строкой внизу.
 
     prev — окно того же размера непосредственно перед периодом: даёт тренды
     на записях и отменах (В). Пустые секции v2 не показываем — «0 врачей»
-    не информация.
+    не информация. lang — язык админ-чата (карта, №16).
     """
     if last is None or last == day:
-        header = f"📊 <b>Сводка за {day:%d.%m}</b>"
+        header = at("stats_header_day", lang, date=f"{day:%d.%m}")
     else:
-        days = (last - day).days + 1
-        header = f"📊 <b>Сводка за {days} дн. ({day:%d.%m}–{last:%d.%m})</b>"
-    after = (f" (из них {stats.after_hours_booked} — вне рабочих часов)"
+        header = at("stats_header_range", lang, days=(last - day).days + 1,
+                    first=f"{day:%d.%m}", last=f"{last:%d.%m}")
+    after = (at("stats_after_hours", lang, count=stats.after_hours_booked)
              if stats.after_hours_booked else "")
-    # «&lt;» — сводка уходит с parse_mode=HTML, голый «<» ломает парсер Telegram
-    p95_part = (f" · p95 ответа: {stats.p95_response_sec} с (SLA &lt; 5 с)"
+    # «&lt;» внутри шаблона — сводка уходит с parse_mode=HTML, голый «<»
+    # ломает парсер Telegram
+    p95_part = (at("stats_p95", lang, seconds=stats.p95_response_sec)
                 if stats.p95_response_sec is not None else "")
     booked_trend = _trend(stats.booked, prev.booked) if prev else ""
     cancelled_trend = _trend(stats.cancelled, prev.cancelled) if prev else ""
 
     sections: list[str] = []  # блоки v2 между «Ценностью» и «Служебным»
     if stats.new_patients or stats.returning_patients:
-        sections.append(f"👥 Клиенты\n• новых: {stats.new_patients} · "
-                        f"вернувшихся: {stats.returning_patients}")
+        sections.append(at("stats_clients", lang, new=stats.new_patients,
+                           returning=stats.returning_patients))
     if stats.top_doctors:
-        # имена расшифрованы из БД — экранируем, сводка уходит с HTML (П-7)
+        # имена расшифрованы из БД — at() их экранирует, сводка уходит с HTML
         lines = "\n".join(
-            f"• {html.escape(name, quote=False)} — {cnt} зап. "
-            f"(≈ {_money(revenue)} сум)"
+            at("stats_doctor_line", lang, name=name, count=cnt,
+               money=_money(revenue))
             for name, cnt, revenue in stats.top_doctors)
-        sections.append(f"👨‍⚕️ Топ врачей\n{lines}")
+        sections.append(at("stats_top_doctors", lang) + "\n" + lines)
     if stats.hit_service:
         key, cnt = stats.hit_service
-        sections.append(f"✨ Хит-услуга\n• {service_label(key, 'ru')} — "
-                        f"{cnt} зап.")
+        sections.append(at("stats_hit_service", lang,
+                           service=service_label(key, lang), count=cnt))
     if stats.waitlist_waiting:
-        sections.append(f"🔔 Очередь ожидания\n• сейчас ждут слота: "
-                        f"{stats.waitlist_waiting}")
+        sections.append(at("stats_waitlist", lang,
+                           count=stats.waitlist_waiting))
     middle = "".join(f"{section}\n" for section in sections)
 
     return (f"{header}\n"
-            f"💰 Ценность\n"
-            f"• записей подтверждено: {stats.booked}{booked_trend}{after}\n"
-            f"• предотвращено неявок: {stats.prevented_noshows} "
-            f"(слотов на ≈ {_money(stats.saved_revenue)} сум освобождено заранее)\n"
-            f"• отмен: {stats.cancelled}{cancelled_trend}\n"
-            f"• эскалаций к администратору: {stats.escalated}\n"
-            f"{middle}"
-            f"⚙️ Служебное\n"
-            f"• напоминаний: {stats.reminders_sent} · LLM: {stats.llm_requests} "
-            f"запросов, {stats.llm_tokens} токенов, "
-            f"сбоев: {stats.nlu_failures}, repair: {stats.nlu_repairs}"
+            + at("stats_value_title", lang) + "\n"
+            + at("stats_booked", lang, count=stats.booked,
+                 trend=booked_trend, after=after) + "\n"
+            + at("stats_prevented", lang, count=stats.prevented_noshows,
+                 money=_money(stats.saved_revenue)) + "\n"
+            + at("stats_cancelled", lang, count=stats.cancelled,
+                 trend=cancelled_trend) + "\n"
+            + at("stats_escalated", lang, count=stats.escalated) + "\n"
+            + middle
+            + at("stats_tech", lang, reminders=stats.reminders_sent,
+                 requests=stats.llm_requests, tokens=stats.llm_tokens,
+                 failures=stats.nlu_failures, repairs=stats.nlu_repairs)
             + p95_part)
 
 
-def render_digest_short(stats: DailyStats) -> str:
+def render_digest_short(stats: DailyStats, lang: str = "ru") -> str:
     """Короткий вечерний дайджест (В): три строки ценности, без ⚙️-техники.
 
     Полная сводка дня — за кнопкой «📊 Подробнее» (stats:full), владелец
     раскрывает детали сам, когда интересно.
     """
-    after = (f" (из них {stats.after_hours_booked} — вне рабочих часов)"
+    after = (at("stats_after_hours", lang, count=stats.after_hours_booked)
              if stats.after_hours_booked else "")
-    queue = (f"\n• 🔔 в очереди ожидания: {stats.waitlist_waiting}"
+    queue = (at("digest_waitlist", lang, count=stats.waitlist_waiting)
              if stats.waitlist_waiting else "")
-    return (f"📊 <b>Итог дня</b>\n"
-            f"• записей: {stats.booked}{after}\n"
-            f"• предотвращено неявок: {stats.prevented_noshows} "
-            f"(≈ {_money(stats.saved_revenue)} сум)\n"
-            f"• эскалаций: {stats.escalated}{queue}")
+    return (at("digest_title", lang) + "\n"
+            + at("digest_booked", lang, count=stats.booked, after=after) + "\n"
+            + at("digest_prevented", lang, count=stats.prevented_noshows,
+                 money=_money(stats.saved_revenue)) + "\n"
+            + at("digest_escalated", lang, count=stats.escalated) + queue)
 
 
 QUESTIONS_IN_DIGEST = 10  # cap: дайджест — сводка, не лог
 
 
-def render_questions(questions: list[str]) -> str:
+def render_questions(questions: list[str], lang: str = "ru") -> str:
     """Блок «вопросы без ответа» для дайджеста (П-2б): владелец видит
     спрос, не дёргаясь днём. Тексты уже анонимны (телефоны замаскированы);
     экранируем — дайджест уходит с parse_mode=HTML, пациентский «<» не
@@ -337,8 +340,9 @@ def render_questions(questions: list[str]) -> str:
     shown = questions[:QUESTIONS_IN_DIGEST]
     lines = "\n".join(f"• {html.escape(q, quote=False)}" for q in shown)
     tail = len(questions) - len(shown)
-    suffix = f"\n… и ещё {tail}" if tail > 0 else ""
-    return f"❓ <b>Вопросы без ответа ({len(questions)})</b>\n{lines}{suffix}"
+    suffix = at("questions_more", lang, count=tail) if tail > 0 else ""
+    return (at("questions_title", lang, count=len(questions))
+            + f"\n{lines}{suffix}")
 
 
 def should_send_digest(now_local: datetime, last_digest: date | None,

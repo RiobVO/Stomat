@@ -30,6 +30,21 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "btn_resume": {"ru": "▶️ Возобновить", "uz": "▶️ Davom ettirish"},
     # кнопка языка предлагает ДРУГОЙ язык — тумблер без лишнего экрана
     "btn_lang": {"ru": "🌐 O'zbekcha", "uz": "🌐 Русский"},
+    "btn_preview": {"ru": "👁 Глазами пациента", "uz": "👁 Bemor ko'zi bilan"},
+    "preview_head": {
+        "ru": "👁 <b>Так вас видит пациент</b>\nЯзык пациента: {language}\n"
+              "<i>Это картинка: записи не создаются.</i>\n\n",
+        "uz": "👁 <b>Bemor sizni shunday ko'radi</b>\nBemor tili: {language}\n"
+              "<i>Bu ko'rinish: yozuv yaratilmaydi.</i>\n\n",
+    },
+    "preview_menu": {
+        "ru": "\n\n<i>Кнопки пациента:</i> {buttons}",
+        "uz": "\n\n<i>Bemor tugmalari:</i> {buttons}",
+    },
+    "preview_lang_ru": {"ru": "русский", "uz": "rus tili"},
+    "preview_lang_uz": {"ru": "узбекский", "uz": "o'zbek tili"},
+    "btn_preview_ru": {"ru": "🇷🇺 По-русски", "uz": "🇷🇺 Rus tilida"},
+    "btn_preview_uz": {"ru": "🇺🇿 По-узбекски", "uz": "🇺🇿 O'zbek tilida"},
     "console_title": {
         "ru": "🛠 <b>Админ-консоль</b>\nВыберите раздел 👇",
         "uz": "🛠 <b>Admin-konsol</b>\nBo'limni tanlang 👇",
@@ -331,6 +346,219 @@ TEMPLATES: dict[str, dict[str, str]] = {
               "ko'chiring yoki bekor qiling.",
     },
     "dayoff_warning_more": {"ru": " и ещё {count}", "uz": " va yana {count}"},
+
+    # ── сводка владельца и вечерний дайджест ─────────────────────────────
+    "stats_header_day": {
+        "ru": "📊 <b>Сводка за {date}</b>",
+        "uz": "📊 <b>{date} kunlik hisobot</b>",
+    },
+    "stats_header_range": {
+        "ru": "📊 <b>Сводка за {days} дн. ({first}–{last})</b>",
+        "uz": "📊 <b>{days} kunlik hisobot ({first}–{last})</b>",
+    },
+    "stats_value_title": {"ru": "💰 Ценность", "uz": "💰 Qiymat"},
+    "stats_booked": {
+        "ru": "• записей подтверждено: {count}{trend}{after}",
+        "uz": "• tasdiqlangan yozuvlar: {count}{trend}{after}",
+    },
+    "stats_after_hours": {
+        "ru": " (из них {count} — вне рабочих часов)",
+        "uz": " (shundan {count} tasi — ish vaqtidan tashqari)",
+    },
+    "stats_prevented": {
+        "ru": "• предотвращено неявок: {count} "
+              "(слотов на ≈ {money} сум освобождено заранее)",
+        "uz": "• oldi olingan kelmasliklar: {count} "
+              "(≈ {money} so'mlik vaqt oldindan bo'shatildi)",
+    },
+    "stats_cancelled": {
+        "ru": "• отмен: {count}{trend}",
+        "uz": "• bekor qilingan: {count}{trend}",
+    },
+    "stats_escalated": {
+        "ru": "• эскалаций к администратору: {count}",
+        "uz": "• administratorga murojaatlar: {count}",
+    },
+    "stats_clients": {
+        "ru": "👥 Клиенты\n• новых: {new} · вернувшихся: {returning}",
+        "uz": "👥 Mijozlar\n• yangi: {new} · qaytgan: {returning}",
+    },
+    "stats_top_doctors": {"ru": "👨‍⚕️ Топ врачей", "uz": "👨‍⚕️ Eng band shifokorlar"},
+    "stats_doctor_line": {
+        "ru": "• {name} — {count} зап. (≈ {money} сум)",
+        "uz": "• {name} — {count} ta yozuv (≈ {money} so'm)",
+    },
+    "stats_hit_service": {
+        "ru": "✨ Хит-услуга\n• {service} — {count} зап.",
+        "uz": "✨ Eng ommabop xizmat\n• {service} — {count} ta yozuv",
+    },
+    "stats_waitlist": {
+        "ru": "🔔 Очередь ожидания\n• сейчас ждут слота: {count}",
+        "uz": "🔔 Kutish navbati\n• hozir vaqt kutayotganlar: {count}",
+    },
+    "stats_tech": {
+        "ru": "⚙️ Служебное\n• напоминаний: {reminders} · LLM: {requests} "
+              "запросов, {tokens} токенов, сбоев: {failures}, repair: {repairs}",
+        "uz": "⚙️ Texnik\n• eslatmalar: {reminders} · LLM: {requests} "
+              "so'rov, {tokens} token, xato: {failures}, repair: {repairs}",
+    },
+    "stats_p95": {
+        "ru": " · p95 ответа: {seconds} с (SLA &lt; 5 с)",
+        "uz": " · javob p95: {seconds} s (SLA &lt; 5 s)",
+    },
+    "digest_title": {"ru": "📊 <b>Итог дня</b>", "uz": "📊 <b>Kun yakuni</b>"},
+    "digest_booked": {
+        "ru": "• записей: {count}{after}",
+        "uz": "• yozuvlar: {count}{after}",
+    },
+    "digest_prevented": {
+        "ru": "• предотвращено неявок: {count} (≈ {money} сум)",
+        "uz": "• oldi olingan kelmasliklar: {count} (≈ {money} so'm)",
+    },
+    "digest_escalated": {
+        "ru": "• эскалаций: {count}",
+        "uz": "• murojaatlar: {count}",
+    },
+    "digest_waitlist": {
+        "ru": "\n• 🔔 в очереди ожидания: {count}",
+        "uz": "\n• 🔔 kutish navbatida: {count}",
+    },
+    "digest_more": {"ru": "📊 Подробнее", "uz": "📊 Batafsil"},
+    "questions_title": {
+        "ru": "❓ <b>Вопросы без ответа ({count})</b>",
+        "uz": "❓ <b>Javobsiz savollar ({count})</b>",
+    },
+    "questions_more": {"ru": "\n… и ещё {count}", "uz": "\n… va yana {count}"},
+
+    # ── ответы админ-команд (слэш-путь и кнопки) ─────────────────────────
+    "paused_ok": {
+        "ru": "[OK] бот на паузе. Пациентам отвечаем «запись временно "
+              "по телефону». Вернуть: /resume",
+        "uz": "[OK] bot pauzada. Bemorlarga «yozuv vaqtincha telefon "
+              "orqali» deb javob beramiz. Qaytarish: /resume",
+    },
+    # причина отдельным шаблоном: вложенный at() экранировал бы её дважды
+    "paused_ok_reason": {
+        "ru": "[OK] бот на паузе ({reason}). Пациентам отвечаем «запись "
+              "временно по телефону». Вернуть: /resume",
+        "uz": "[OK] bot pauzada ({reason}). Bemorlarga «yozuv vaqtincha "
+              "telefon orqali» deb javob beramiz. Qaytarish: /resume",
+    },
+    "resumed_ok": {
+        "ru": "[OK] бот снова принимает запись",
+        "uz": "[OK] bot yana yozuvni qabul qilmoqda",
+    },
+    "llm_off_ok": {
+        "ru": "[OK] свободный текст выключен — работают только кнопки",
+        "uz": "[OK] erkin matn o'chirildi — faqat tugmalar ishlaydi",
+    },
+    "llm_on_ok": {
+        "ru": "[OK] свободный текст снова понимает NLU",
+        "uz": "[OK] erkin matnni yana NLU tushunadi",
+    },
+    "llm_usage": {
+        "ru": "Формат: /llm on|off",
+        "uz": "Format: /llm on|off",
+    },
+    "dayoff_ok": {
+        "ru": "[OK] {date} — выходной",
+        "uz": "[OK] {date} — dam olish kuni",
+    },
+    # причина отдельным шаблоном: at() внутри at() экранировал бы её дважды
+    "reason_suffix": {"ru": " ({reason})", "uz": " ({reason})"},
+    "dayoff_already": {
+        "ru": "{date} уже выходной.",
+        "uz": "{date} allaqachon dam olish kuni.",
+    },
+    "dayopen_ok": {
+        "ru": "[OK] {date} снова рабочий",
+        "uz": "[OK] {date} yana ish kuni",
+    },
+    "dayopen_already": {
+        "ru": "{date} и так рабочий.",
+        "uz": "{date} allaqachon ish kuni.",
+    },
+    "dayoff_usage": {
+        "ru": "Формат: /dayoff DD.MM [причина] — закрыть день, "
+              "/dayopen DD.MM — снова открыть.\n{upcoming}",
+        "uz": "Format: /dayoff DD.MM [sabab] — kunni yopish, "
+              "/dayopen DD.MM — yana ochish.\n{upcoming}",
+    },
+    "dayoff_upcoming": {
+        "ru": "Ближайшие выходные: {days}",
+        "uz": "Yaqin dam olish kunlari: {days}",
+    },
+    "dayoff_none_ahead": {
+        "ru": "Закрытых дней впереди нет.",
+        "uz": "Oldinda yopiq kunlar yo'q.",
+    },
+    "stats_usage": {
+        "ru": "Формат: /stats — за сегодня, /stats 7 — за неделю "
+              "или /stats 30",
+        "uz": "Format: /stats — bugun uchun, /stats 7 — hafta uchun "
+              "yoki /stats 30",
+    },
+    "btn_period": {"ru": "{days} дней", "uz": "{days} kun"},
+    "btn_period_today": {"ru": "📅 День", "uz": "📅 Bugun"},
+
+    # ошибки слоя данных: текст исключения технический и русский, владельцу
+    # достаточно знать, что действие не выполнено
+    "action_failed": {
+        "ru": "⚠️ Не получилось: {reason}",
+        "uz": "⚠️ Bajarilmadi: {reason}",
+    },
+    "svc_exists": {
+        "ru": "⚠️ Такая услуга уже есть в клинике.",
+        "uz": "⚠️ Bunday xizmat klinikada allaqachon bor.",
+    },
+    "svc_still_active": {
+        "ru": "⚠️ Услуга ещё доступна пациентам — сначала скройте её.",
+        "uz": "⚠️ Xizmat hali bemorlarga ochiq — avval uni yashiring.",
+    },
+    "doc_still_active": {
+        "ru": "⚠️ Врач ещё доступен пациентам — сначала скройте его.",
+        "uz": "⚠️ Shifokor hali bemorlarga ochiq — avval uni yashiring.",
+    },
+    "svc_in_use": {
+        "ru": "⚠️ Услугу нельзя удалить: на неё ссылаются записи.",
+        "uz": "⚠️ Xizmatni o'chirib bo'lmaydi: unga yozuvlar bog'langan.",
+    },
+    "doc_in_use": {
+        "ru": "⚠️ Врача нельзя удалить: на него ссылаются записи.",
+        "uz": "⚠️ Shifokorni o'chirib bo'lmaydi: unga yozuvlar bog'langan.",
+    },
+    "release_usage": {
+        "ru": "Формат: /release <chat_id> (число из алерта эскалации)",
+        "uz": "Format: /release <chat_id> (murojaat xabaridagi raqam)",
+    },
+    "release_not_found": {
+        "ru": "Чат {chat} не найден.",
+        "uz": "{chat} chat topilmadi.",
+    },
+    "release_not_escalated": {
+        "ru": "Чат {chat} не в эскалации (состояние: {state}).",
+        "uz": "{chat} chat murojaatda emas (holati: {state}).",
+    },
+    "release_ok": {
+        "ru": "[OK] эскалация снята: чат {chat}",
+        "uz": "[OK] murojaat yopildi: chat {chat}",
+    },
+    "forget_usage": {
+        "ru": "Формат: /forget <chat_id> — анонимизировать пациента",
+        "uz": "Format: /forget <chat_id> — bemor ma'lumotlarini o'chirish",
+    },
+    "forget_not_found": {
+        "ru": "Чат {chat} не найден — данных нет.",
+        "uz": "{chat} chat topilmadi — ma'lumot yo'q.",
+    },
+    "forget_ok": {
+        "ru": "[OK] чат {chat}: пациент анонимизирован, диалог и сообщения "
+              "удалены. Будущие записи не отменены — отмените отдельно, "
+              "если пациент просил.",
+        "uz": "[OK] chat {chat}: bemor ma'lumotlari o'chirildi, suhbat va "
+              "xabarlar tozalandi. Kelgusi yozuvlar bekor qilinmadi — bemor "
+              "so'ragan bo'lsa, alohida bekor qiling.",
+    },
 }
 
 
@@ -350,7 +578,8 @@ def menu_key(label: str) -> str | None:
     Reply-клавиатура остаётся у админа на экране и после смены языка:
     тап по старой кнопке обязан сработать, а не молча открыть меню."""
     for key in ("btn_services", "btn_doctors", "btn_about", "btn_dayoff",
-                "btn_stats", "btn_pause", "btn_resume", "btn_lang"):
+                "btn_stats", "btn_pause", "btn_resume", "btn_lang",
+                "btn_preview"):
         if any(TEMPLATES[key][lang] == label for lang in LANGS):
             return key
     return None

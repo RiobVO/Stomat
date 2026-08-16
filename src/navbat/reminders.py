@@ -42,6 +42,7 @@ from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
     collect_daily_stats, render_digest_short, render_questions,
     should_send_digest)
+from navbat.telegram.admin_texts import at
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.worker import send_reply
@@ -277,6 +278,16 @@ class ReminderService:
 
     # ── Вечерняя сводка админу ───────────────────────────────────────────
 
+    def _admin_lang(self, chat_id: int) -> str:
+        """Язык консоли этого админ-чата: сводка идёт веером, и каждый
+        получатель читает её на своём языке (карта, №16)."""
+        from navbat.dialog.conversation import load_conversation
+        from navbat.telegram.admin_texts import DEFAULT_LANG, LANGS
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            conv = load_conversation(session, chat_id)
+        lang = conv.context.extras.get("adm_lang")
+        return lang if lang in LANGS else DEFAULT_LANG
+
     def maybe_send_digest(self, now_local=None) -> bool:
         """Раз в день после DIGEST_HOUR; отметка — clinic.last_digest_date."""
         if not self._digest_chat_ids or self._tg_api is None:
@@ -297,17 +308,19 @@ class ReminderService:
             stats = collect_daily_stats(session, moment.date(), tz)
             questions = questions_repo.for_day(session, moment.date(),
                                                row.timezone)
-        # короткий дайджест (В): три строки ценности; полная сводка дня —
-        # за кнопкой «Подробнее» (сырой stats:full — map tg_actions не нужен)
-        digest = render_digest_short(stats)
-        if questions:
-            # вопросы, на которые бот не ответил (П-2б): спрос для владельца
-            digest += "\n\n" + render_questions(questions)
         try:
             for chat in self._digest_chat_ids:  # сводка всем админ-чатам (M4)
+                # у каждого админ-чата свой язык консоли (карта, №16)
+                lang = self._admin_lang(chat)
+                # короткий дайджест (В): три строки ценности; полная сводка
+                # дня — за кнопкой «Подробнее» (сырой stats:full, map не нужен)
+                digest = render_digest_short(stats, lang)
+                if questions:
+                    # вопросы, на которые бот не ответил (П-2б): спрос владельцу
+                    digest += "\n\n" + render_questions(questions, lang)
                 self._tg_api.send_message(
                     chat, digest, parse_mode="HTML",
-                    buttons=(Button("📊 Подробнее", "stats:full"),))
+                    buttons=(Button(at("digest_more", lang), "stats:full"),))
         except Exception as e:
             log.warning("вечерняя сводка не доставлена: %s", e)
             return False
