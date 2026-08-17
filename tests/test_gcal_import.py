@@ -341,3 +341,38 @@ def test_overlapping_manual_events_do_not_freeze_sync_token(
         )).scalar_one()
     assert imported == 1, "первое событие обязано импортироваться"
     assert token is not None, "токен застрял на неисполнимом событии"
+
+
+def test_recreated_manual_event_survives_batch_order(app_session_factory,
+                                                     admin_engine, clinic_a,
+                                                     doctor_a, service_cleaning):
+    """Админ вписал новую встречу поверх старой и снёс старую.
+
+    Оба изменения приходят одним инкрементом, а порядок Google не
+    гарантирует. Если новое событие обработать раньше удаления старого, оно
+    упрётся в ещё живой импорт, будет сочтено неисполнимым — и потеряется
+    навсегда вместе с продвинутым syncToken: в базе слот свободен, в
+    календаре врача приём стоит."""
+    from datetime import timedelta
+
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    old_event = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                      end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+    assert len(import_rows(admin_engine)) == 1
+
+    # порядок действий админа: сначала новая встреча, потом снос старой
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:00") + timedelta(hours=1))
+    api.delete_event(CAL, old_event)
+
+    sync.sync_doctor(doctor_a)
+
+    alive = [r for r in import_rows(admin_engine) if r.status == "booked"]
+    assert len(alive) == 1 and alive[0].gcal_event_id != old_event, \
+        "новое событие врача потеряно"
+    starts = free_starts(app_session_factory, clinic_a, doctor_a, service_cleaning, day)
+    assert at_tashkent(day, "09:30") not in starts, \
+        "слот свободен в боте, хотя в календаре врача идёт приём"

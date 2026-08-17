@@ -175,3 +175,40 @@ def test_reschedule_after_send_rearms_reminder(app_session_factory, admin_engine
     send_at = {r.kind: r.send_at for r in rows}
     assert send_at["1440m"] == new_start - timedelta(hours=24)
     assert send_at["120m"] == new_start - timedelta(hours=2)
+
+
+def test_delivery_does_not_bury_rearmed_reminder(monkeypatch, app_session_factory,
+                                                 admin_engine, clinic_a, doctor_a,
+                                                 service_cleaning):
+    """Запись переехала, пока напоминание отправлялось.
+
+    Отметка «отправлено» относится к той версии напоминания, которую взяли
+    в работу. Если за время отправки его перевзвели на новое время, гасить
+    его нельзя — иначе о переносе пациенту никто не напомнит."""
+    import navbat.reminders as reminders_module
+
+    day = far_monday()
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, day, "09:00", chat_id=CHAT)
+    service, _, _ = make_service_obj(
+        app_session_factory, clinic_a, offsets=(timedelta(hours=24),))
+    service.reconcile()
+    ripen_all(admin_engine)
+
+    new_start = at_tashkent(day, "15:00")
+    original_send_reply = reminders_module.send_reply
+
+    def send_then_reschedule(*args, **kwargs):
+        result = original_send_reply(*args, **kwargs)
+        # запись переносят ровно между отправкой и отметкой «sent»
+        sched.reschedule(appointment_id, new_start)
+        service.reconcile()
+        return result
+
+    monkeypatch.setattr(reminders_module, "send_reply", send_then_reschedule)
+    service.send_due()
+
+    rows = reminder_rows(admin_engine)
+    assert [r.status for r in rows] == ["pending"], \
+        "перевзведённое напоминание погашено отметкой об отправке"
+    assert rows[0].send_at == new_start - timedelta(hours=24)

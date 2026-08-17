@@ -157,7 +157,12 @@ class CalendarSync:
             events, next_token = self._api.list_events(calendar_id, sync_token=None)
         moved = False
         stuck = False  # хоть одно ручное событие не удалось записать
-        for event in events:
+        # удаления применяем первыми: админ мог вписать новую встречу поверх
+        # старой и снести старую — одним инкрементом и в произвольном порядке
+        # (Google его не гарантирует). Обработанное раньше удаления новое
+        # событие упёрлось бы в ещё живой импорт, было бы сочтено неисполнимым
+        # и потерялось навсегда вместе с продвинутым токеном
+        for event in sorted(events, key=lambda e: e.get("status") != "cancelled"):
             if _own_marker(event):
                 self._reconcile_own(calendar_id, event)
             else:
