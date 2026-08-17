@@ -1002,8 +1002,17 @@ class AdminConsole:
             self._clear_sched_days(chat_id)
             return self._doctors_menu(lang)
         # только выбранные дни: прежняя перезапись целиком стирала остальные
-        onboard.set_doctor_schedule_days(self._sf, self._cid, doc_id,
-                                         selected, shifts)
+        try:
+            onboard.set_doctor_schedule_days(self._sf, self._cid, doc_id,
+                                             selected, shifts)
+        except ValueError as error:
+            # врача мог удалить второй администратор, пока владелец набирал
+            # смены: это ответ владельцу, а не исключение в очередь
+            log.warning("график врача %s не сохранён: %s", doc_id_str, error)
+            self._clear_pending(chat_id)
+            self._clear_sched_days(chat_id)
+            return self._doctors_menu(lang,
+                                      notice=at(_failure_key(error, "doc"), lang))
         self._clear_pending(chat_id)
         self._clear_sched_days(chat_id)
         return self._doctor_card(doc_id_str, lang,

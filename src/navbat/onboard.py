@@ -389,7 +389,7 @@ def delete_service(session_factory, clinic_id: uuid.UUID, name: str) -> None:
         ).one_or_none()
         sid = row.id if row is not None else None
         if sid is None:
-            raise ValueError(f"услуга {name!r} не найдена в клинике {clinic_id}")
+            raise EntityMissing(f"услуга {name!r} не найдена в клинике {clinic_id}")
         if row.is_active:
             raise EntityActive("услуга доступна пациентам — сначала скройте её")
         refs = session.execute(

@@ -306,3 +306,41 @@ def test_missing_doctor_shows_its_own_reason(app_session_factory, admin_engine,
 
     body = (api.edited[-1][2] if api.edited else last_to(api, ADMIN_CHAT))
     assert "рабочего дня" not in body, f"причина подменена: {body}"
+
+
+def test_missing_doctor_during_shift_input_does_not_crash(app_session_factory,
+                                                          admin_engine,
+                                                          clinic_a, doctor_a):
+    """Врач исчез, пока владелец набирал смены: ввод обязан ответить
+    причиной, а не улететь исключением в очередь (ревью, 4-й проход)."""
+    from sqlalchemy import text as _text
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    click(worker, app_session_factory, clinic_a, f"adm:sched:custom:{doctor_a}")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:day:{doctor_a}:mon")
+    click(worker, app_session_factory, clinic_a, f"adm:sched:next:{doctor_a}")
+    with admin_engine.begin() as conn:
+        conn.execute(_text("DELETE FROM doctor WHERE id = :d"), {"d": doctor_a})
+
+    send_admin(worker, app_session_factory, clinic_a, "09:00-18:00")
+
+    body = last_to(api, ADMIN_CHAT)
+    assert "уже нет" in body, f"владельцу не объяснили причину: {body}"
+
+
+def test_deleting_vanished_service_reports_it_is_gone(app_session_factory,
+                                                      admin_engine, clinic_a,
+                                                      service_cleaning):
+    """Услугу удалил второй администратор — причина «её уже нет»,
+    а не «на неё ссылаются записи»."""
+    from sqlalchemy import text as _text
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    with admin_engine.begin() as conn:
+        conn.execute(_text("DELETE FROM service WHERE id = :s"),
+                     {"s": service_cleaning})
+
+    click(worker, app_session_factory, clinic_a, "adm:svc:cleaning:delyes")
+
+    body = (api.edited[-1][2] if api.edited else last_to(api, ADMIN_CHAT))
+    assert "ссылаются" not in body, f"неверная причина: {body}"
