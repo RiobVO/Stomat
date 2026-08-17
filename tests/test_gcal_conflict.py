@@ -57,11 +57,11 @@ def test_manual_event_over_booking_moves_it_and_notifies(
 
     # ручной блок встал
     assert import_count(admin_engine) == 1
-    # ботовская переехала: старая отменена, новая — на 10:00
-    # (09:30 не подходит: буфер 10 мин после ручного приёма)
+    # ботовская переехала на 10:00 (09:30 не подходит: буфер 10 мин после
+    # ручного приёма) — той же записью, а не «отмена + новая»
     rows = bot_rows(admin_engine)
-    assert [r.status for r in rows] == ["cancelled", "booked"]
-    assert rows[1].start == at_tashkent(day, "10:00")
+    assert [r.status for r in rows] == ["booked"]
+    assert rows[0].start == at_tashkent(day, "10:00")
 
     # пациент уведомлён, с кнопками альтернатив
     assert tg_api.sent, "пациент должен получить уведомление о переносе"
@@ -79,11 +79,12 @@ def test_manual_event_over_booking_moves_it_and_notifies(
     # админ уведомлён
     assert notifier.calls
 
-    # календарь согласован: старое событие бота удалено, новое — на 10:00
+    # календарь согласован: событие бота сдвинуто на 10:00 (patch, не пересоздание)
     confirmed = [e for e in api.events(CAL).values()
                  if e["status"] == "confirmed" and "extendedProperties" in e]
     assert len(confirmed) == 1
     assert confirmed[0]["start"]["dateTime"] == at_tashkent(day, "10:00").isoformat()
+    assert api.insert_calls == 1, "перенос жертвы — patch события, не новое"
 
 
 def test_no_alternative_slot_cancels_and_notifies(app_session_factory, admin_engine,
@@ -114,13 +115,50 @@ def test_no_alternative_slot_cancels_and_notifies(app_session_factory, admin_eng
     assert notifier.calls
 
 
-def test_relocate_hold_failure_does_not_silently_lose_patient(
+def test_relocation_reserves_replacement_before_cancelling_victim(
         monkeypatch, app_session_factory, admin_engine, clinic_a, doctor_a,
         service_cleaning):
-    # H2: слот, выбранный для переноса вытесненной записи, перехвачен
-    # конкурентной бронью между find_free_slots и hold → SlotTakenError.
-    # Жертва уже отменена (cancel закоммичен) — её НЕЛЬЗЯ терять молча:
-    # пациент и админ обязаны быть уведомлены, а sync_doctor не падать.
+    """H2 crash-window: отмена жертвы раньше замены теряла запись пациента.
+
+    Перенос шёл тремя транзакциями (cancel → hold → confirm): падение
+    процесса между ними оставляло пациента без записи навсегда — жертва
+    отменена, замены нет, следующий цикл синка её уже не увидит.
+    Инвариант: пока замена не существует, запись пациента не отменяется."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning, day, "09:00",
+         chat_id=CHAT)
+    sync, api, notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)  # событие бота уехало в календарь
+
+    from navbat.scheduling.engine import SchedulingEngine
+
+    original_cancel = SchedulingEngine.cancel
+
+    def dying_cancel(self, appointment_id, actor=None):
+        # процесс умирает сразу ПОСЛЕ коммита отмены — худший момент краша
+        original_cancel(self, appointment_id, actor)
+        raise RuntimeError("процесс убит сразу после отмены жертвы")
+
+    monkeypatch.setattr(SchedulingEngine, "cancel", dying_cancel)
+
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+
+    # запись пациента цела и переехала — одной строкой, без промежуточной отмены
+    rows = bot_rows(admin_engine)
+    assert [r.status for r in rows] == ["booked"], "запись пациента потеряна"
+    assert rows[0].start == at_tashkent(day, "10:00")
+    assert tg_api.sent, "пациент должен узнать о переносе"
+
+
+def test_relocate_failure_does_not_silently_lose_patient(
+        monkeypatch, app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    # Слот, выбранный для переноса, перехвачен конкурентной бронью между
+    # find_free_slots и переносом → SlotTakenError. Пациента НЕЛЬЗЯ терять
+    # молча: он и админ обязаны быть уведомлены, а sync_doctor не падать.
     bind_calendar(admin_engine, doctor_a)
     day = next_monday()
     book(app_session_factory, clinic_a, doctor_a, service_cleaning, day, "09:00",
@@ -131,10 +169,10 @@ def test_relocate_hold_failure_does_not_silently_lose_patient(
     from navbat.scheduling.engine import SchedulingEngine
     from navbat.scheduling.errors import SlotTakenError
 
-    def failing_hold(self, *args, **kwargs):
+    def failing_reschedule(self, *args, **kwargs):
         raise SlotTakenError("слот перехвачен конкурентной записью")
 
-    monkeypatch.setattr(SchedulingEngine, "hold", failing_hold)
+    monkeypatch.setattr(SchedulingEngine, "reschedule", failing_reschedule)
 
     # админ вписал пациента с улицы прямо поверх записи бота
     api.seed_manual_event(start=at_tashkent(day, "09:00"),
@@ -147,6 +185,39 @@ def test_relocate_hold_failure_does_not_silently_lose_patient(
     # но пациент и админ уведомлены — деградация в «перенести некуда», не тишина
     assert tg_api.sent, "пациент должен быть уведомлён при сорванном переносе"
     assert notifier.calls, "админ должен быть уведомлён при сорванном переносе"
+
+
+def test_victim_gone_before_relocation_is_not_reported_as_cancelled(
+        monkeypatch, app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Пациент сам отменил запись между сканом жертв и переносом.
+
+    Переносить нечего: синк не падает и не рассказывает пациенту про
+    отмену, которой бот не делал."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, day, "09:00", chat_id=CHAT)
+    sync, api, notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+
+    from navbat.scheduling.engine import SchedulingEngine
+
+    original_reschedule = SchedulingEngine.reschedule
+
+    def cancel_then_reschedule(self, appt_id, new_start):
+        # гонка: запись ушла из-под переноса ровно перед ним
+        sched.cancel(appt_id)
+        return original_reschedule(self, appt_id, new_start)
+
+    monkeypatch.setattr(SchedulingEngine, "reschedule", cancel_then_reschedule)
+
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)  # не бросает
+
+    assert [r.status for r in bot_rows(admin_engine)] == ["cancelled"]
+    assert not tg_api.sent, "пациенту нечего сообщать: он отменил запись сам"
 
 
 def test_conflict_with_live_hold_waits_for_expiry(app_session_factory, admin_engine,
@@ -173,4 +244,33 @@ def test_conflict_with_live_hold_waits_for_expiry(app_session_factory, admin_eng
         conn.execute(text("UPDATE appointment SET hold_expires_at = "
                           "now() - interval '1 minute' WHERE status = 'hold'"))
     sync.sync_doctor(doctor_a)
+    assert import_count(admin_engine) == 1
+
+
+def test_partial_overlap_relocates_into_slot_freed_by_the_move(
+        app_session_factory, admin_engine, clinic_a, service_cleaning):
+    """Ручное событие перекрывает запись частично.
+
+    Соседний слот занят только самой жертвой — переезжая, она его и
+    освобождает. Резерв замены до отмены не должен стоить пациенту дня
+    ожидания: слот дня остаётся в выборе."""
+    # окно врача — ровно два слота: 09:00 и 09:30
+    doctor = make_doctor(admin_engine, clinic_a,
+                         intervals={"mon": [["09:00", "10:00"]]})
+    bind_calendar(admin_engine, doctor)
+    day = next_monday()
+    book(app_session_factory, clinic_a, doctor, service_cleaning, day, "09:30",
+         chat_id=CHAT)
+    sync, api, notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor)
+
+    # приём с улицы на 09:50–10:20 — хвост записи бота задет, начало свободно
+    api.seed_manual_event(start=at_tashkent(day, "09:50"),
+                          end=at_tashkent(day, "10:20"))
+    sync.sync_doctor(doctor)
+
+    rows = bot_rows(admin_engine)
+    assert [r.status for r in rows] == ["booked"]
+    assert rows[0].start == at_tashkent(day, "09:00"), \
+        "пациента унесло дальше, хотя слот 09:00 освобождается самим переносом"
     assert import_count(admin_engine) == 1

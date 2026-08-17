@@ -61,9 +61,13 @@ class SchedulingEngine:
         service_id: uuid.UUID,
         day: date,
         step_min: int = DEFAULT_STEP_MIN,
+        exclude_appointment_id: uuid.UUID | None = None,
     ) -> list[Slot]:
+        """exclude_appointment_id — искать слот ДЛЯ этой записи: собственное
+        время она не занимает (перенос вытесненной записи, calendar/sync.py)."""
         with self._txn() as session:
-            return self._free_slots(session, doctor_id, service_id, day, step_min)
+            return self._free_slots(session, doctor_id, service_id, day, step_min,
+                                    exclude_appointment_id)
 
     # ── Запись ───────────────────────────────────────────────────────────
 
@@ -200,6 +204,7 @@ class SchedulingEngine:
         service_id: uuid.UUID,
         day: date,
         step_min: int,
+        exclude_appointment_id: uuid.UUID | None = None,
     ) -> list[Slot]:
         candidates, buffer_min = self._grid(session, doctor_id, service_id, day, step_min)
         if not candidates:
@@ -212,10 +217,12 @@ class SchedulingEngine:
                 WHERE doctor_id = :doctor
                   AND (status = 'booked'
                        OR (status = 'hold' AND hold_expires_at > now()))
+                  AND id IS DISTINCT FROM CAST(:exclude AS uuid)
                   AND time_range && tstzrange(:win_lo, :win_hi, '[)')
             """),
             {
                 "doctor": doctor_id,
+                "exclude": exclude_appointment_id,
                 "win_lo": candidates[0][0] - BUSY_WINDOW_MARGIN,
                 "win_hi": candidates[-1][1] + BUSY_WINDOW_MARGIN,
             },

@@ -35,3 +35,20 @@ def test_booked_slot_disappears_with_buffer(sched, doctor_a, service_cleaning):
     # буфер 10 мин: запись «живёт» до 09:40 → слот 09:30 тоже недоступен
     assert at_tashkent(day, "09:30") not in starts
     assert at_tashkent(day, "10:00") in starts
+
+
+def test_excluded_appointment_does_not_block_its_own_slots(sched, doctor_a,
+                                                           service_cleaning):
+    """Поиск слота ДЛЯ записи: её собственное время не считается занятым.
+
+    Нужен переносу вытесненной записи (calendar/sync.py): она освобождает
+    старое время тем же переносом, поэтому соседний слот, задетый только ею,
+    обязан остаться в выборе."""
+    day = next_monday()
+    appt_id = sched.hold(doctor_a, service_cleaning, at_tashkent(day, "09:00"))
+    sched.confirm(appt_id)
+
+    starts = {s.start for s in sched.find_free_slots(
+        doctor_a, service_cleaning, day, exclude_appointment_id=appt_id)}
+    assert at_tashkent(day, "09:00") in starts
+    assert at_tashkent(day, "09:30") in starts
