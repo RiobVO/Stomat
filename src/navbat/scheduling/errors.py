@@ -21,5 +21,10 @@ class AppointmentNotFoundError(SchedulingError):
     """Запись не найдена (или не видна в текущем тенант-контексте)."""
 
 
+class AppointmentChangedError(SchedulingError):
+    """Запись изменилась после того, как вызывающий снял снимок: его решение
+    основано на устаревших данных и применяться не должно."""
+
+
 class DuplicateMessageError(SchedulingError):
     """Дубль Telegram-сообщения: (tg_chat_id, tg_message_id) уже обработан."""

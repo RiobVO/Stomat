@@ -100,8 +100,13 @@ class ReminderService:
                           AND a.source != 'gcal_import'
                           AND lower(a.time_range) - :offset > now()
                         ON CONFLICT (appointment_id, kind) DO UPDATE
-                        SET send_at = EXCLUDED.send_at
-                        WHERE reminder.status = 'pending'
+                        -- запись переехала: напоминание взводится заново даже
+                        -- если старое уже ушло, иначе о новом времени пациенту
+                        -- никто не напомнит (перенос сохраняет appointment.id).
+                        -- failed не воскрешаем: по нему уже был алерт админу
+                        SET send_at = EXCLUDED.send_at, status = 'pending',
+                            attempts = 0
+                        WHERE reminder.status IN ('pending', 'sent')
                           AND reminder.send_at IS DISTINCT FROM EXCLUDED.send_at
                     """),
                     {"kind": _kind(offset), "offset": offset},

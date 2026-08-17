@@ -205,10 +205,10 @@ def test_victim_gone_before_relocation_is_not_reported_as_cancelled(
 
     original_reschedule = SchedulingEngine.reschedule
 
-    def cancel_then_reschedule(self, appt_id, new_start):
+    def cancel_then_reschedule(self, appt_id, new_start, **kwargs):
         # гонка: запись ушла из-под переноса ровно перед ним
         sched.cancel(appt_id)
-        return original_reschedule(self, appt_id, new_start)
+        return original_reschedule(self, appt_id, new_start, **kwargs)
 
     monkeypatch.setattr(SchedulingEngine, "reschedule", cancel_then_reschedule)
 
@@ -274,3 +274,38 @@ def test_partial_overlap_relocates_into_slot_freed_by_the_move(
     assert rows[0].start == at_tashkent(day, "09:00"), \
         "пациента унесло дальше, хотя слот 09:00 освобождается самим переносом"
     assert import_count(admin_engine) == 1
+
+
+def test_patient_reschedule_wins_over_stale_relocation(
+        monkeypatch, app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Пациент перенёс запись сам за миг до переноса синком.
+
+    Синк действует по снимку, снятому до этого: применять свой перенос к
+    изменившейся записи он не вправе — иначе выбор пациента молча затирается,
+    а сам он получает «вас вытеснили» на ровном месте."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning, day, "09:00",
+         chat_id=CHAT)
+    sync, api, notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+
+    original_reschedule = SchedulingEngine.reschedule
+    patient_choice = at_tashkent(day, "12:00")
+
+    def racing_reschedule(self, appt_id, new_start, **kwargs):
+        # пациент успел первым — снимок синка устарел
+        original_reschedule(self, appt_id, patient_choice)
+        return original_reschedule(self, appt_id, new_start, **kwargs)
+
+    monkeypatch.setattr(SchedulingEngine, "reschedule", racing_reschedule)
+
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+
+    rows = bot_rows(admin_engine)
+    assert [r.status for r in rows] == ["booked"]
+    assert rows[0].start == patient_choice, "выбор пациента затёрт переносом синка"
+    assert not tg_api.sent, "пациента никто не вытеснял — извиняться не за что"

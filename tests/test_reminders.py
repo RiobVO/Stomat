@@ -146,3 +146,32 @@ def test_send_failures_go_to_dead_letter_with_alert(app_session_factory,
     assert [r.status for r in reminder_rows(admin_engine)] == ["failed"]
     assert notifier.calls, "dead letter напоминания — алерт админу"
     assert service.send_due() == 0
+
+
+def test_reschedule_after_send_rearms_reminder(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a, service_cleaning):
+    """Запись перенесли после того, как напоминание уже ушло.
+
+    Пациент обязан получить новое — на новое время. Раньше перенос
+    вытесненной записи создавал новую строку appointment, и напоминание
+    заводилось само собой; атомарный перенос сохраняет id, а ON CONFLICT
+    обновлял только pending — второго напоминания не было бы вовсе."""
+    day = far_monday()
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, day, "09:00", chat_id=CHAT)
+    service, api, _ = make_service_obj(app_session_factory, clinic_a)
+    service.reconcile()
+    ripen_all(admin_engine)
+    assert service.send_due() == 2
+    assert [r.status for r in reminder_rows(admin_engine)] == ["sent", "sent"]
+
+    new_start = at_tashkent(day, "15:00")
+    sched.reschedule(appointment_id, new_start)
+    service.reconcile()
+
+    rows = reminder_rows(admin_engine)
+    assert [r.status for r in rows] == ["pending", "pending"], \
+        "напоминание не перевзведено — пациент не узнает о новом времени"
+    send_at = {r.kind: r.send_at for r in rows}
+    assert send_at["1440m"] == new_start - timedelta(hours=24)
+    assert send_at["120m"] == new_start - timedelta(hours=2)
