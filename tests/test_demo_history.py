@@ -89,17 +89,24 @@ def test_seed_is_idempotent(app_session_factory, admin_engine, priced_clinic):
 
 def test_history_stays_in_the_past(app_session_factory, admin_engine,
                                    priced_clinic):
-    clinic_a = priced_clinic
     """Демо-история не должна занимать слоты, которые показываются вживую:
-    будущие записи ломают сценарий «выберите время»."""
-    seed_demo_history(app_session_factory, clinic_a, days=14)
+    будущие записи ломают сценарий «выберите время».
+
+    Сравниваем с ИНЖЕКТИРОВАННЫМ «сейчас», а не с серверным now(), и берём
+    момент ВНУТРИ первого приёма смены — 09:15. Иначе регрессия «проверяю
+    начало приёма вместо конца» не ловится вовсе: буфер врача и округление до
+    получасовой сетки уносят следующий слот далеко за «сейчас», и тест
+    остаётся зелёным на сломанном коде (проверено откатом, ре-ревью)."""
+    clinic_a = priced_clinic
+    now = datetime.now(TZ).replace(hour=9, minute=15, second=0, microsecond=0)
+    seed_demo_history(app_session_factory, clinic_a, days=14, now=now)
 
     with admin_engine.begin() as conn:
-        future = conn.execute(text(
-            "SELECT count(*) FROM appointment WHERE upper(time_range) > now()"
-        )).scalar_one()
-    # именно upper: приём, ИДУЩИЙ сейчас, занимает слот живого сценария так же,
-    # как будущий — проверка по lower пропустила бы такую регрессию
+        # именно upper: приём, ИДУЩИЙ сейчас, занимает слот живого сценария
+        # так же, как будущий — проверка по lower пропустила бы регрессию
+        future = conn.execute(
+            text("SELECT count(*) FROM appointment WHERE upper(time_range) > :now"),
+            {"now": now}).scalar_one()
     assert future == 0
 
 
@@ -192,6 +199,41 @@ def test_cli_refuses_non_demo_clinic(monkeypatch, capsys):
                          "--clinic", "11111111-1111-4111-8111-111111111111"])
     with pytest.raises(SystemExit):
         onboard.main()
+
+
+def test_cli_says_when_there_is_nothing_to_seed(monkeypatch, admin_engine):
+    """Ноль созданных записей значит одно из двух: окно уже наполнено или
+    наливать некуда (врачи и услуги скрыты, слоты заняты чужими событиями).
+    Второе молчаливое «демо-история уже есть» скрывало проблему: владелец шёл
+    на показ с пустой витриной, считая, что история на месте (ре-ревью)."""
+    import sys as _sys
+
+    from navbat import onboard
+
+    with admin_engine.begin() as conn:  # клиника есть, врачей и услуг нет
+        conn.execute(
+            text("INSERT INTO clinic (id, name, salt, timezone) VALUES "
+                 "(:id, 'Navbat Demo', 'test-salt', 'Asia/Tashkent')"),
+            {"id": onboard.DEMO_CLINIC_ID})
+    monkeypatch.setattr(_sys, "argv", ["onboard", "--demo-history"])
+
+    with pytest.raises(SystemExit) as exc:
+        onboard.main()
+
+    assert "уже есть" not in str(exc.value), str(exc.value)
+
+
+def test_cli_survives_missing_demo_clinic(monkeypatch):
+    """Сеять историю до `--demo` — типовой промах порядка команд. Ответ должен
+    быть понятной строкой, а не трейсбеком NoResultFound из чтения таймзоны."""
+    import sys as _sys
+
+    from navbat import onboard
+
+    monkeypatch.setattr(_sys, "argv", ["onboard", "--demo-history"])
+    with pytest.raises(SystemExit) as exc:
+        onboard.main()
+    assert "[FAIL]" in str(exc.value), str(exc.value)
 
 
 def test_no_active_waitlist_rows(app_session_factory, admin_engine,
