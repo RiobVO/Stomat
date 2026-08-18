@@ -229,6 +229,7 @@ class CalendarSync:
         ручное событие внахлёст — идём дальше, оно неисполнимо)."""
         moved = False
         pending = list(events)
+        untangled = False
         while pending:
             deferred = []
             for event in pending:
@@ -240,7 +241,14 @@ class CalendarSync:
             if not deferred:
                 return moved, False
             if len(deferred) == len(pending):
-                break  # проход не сдвинул ничего — дальше только финальный
+                # проход не сдвинул ничего. Либо события батча держат друг
+                # друга старыми привязками (два приёма поменялись временами —
+                # ни один не ляжет ни в каком порядке), либо мешает чужое:
+                # первое развязываем один раз, второе разбирает финал
+                if untangled or not self._untangle_batch(doctor_id, deferred,
+                                                         buffer_min):
+                    break
+                untangled = True
             pending = deferred
 
         stuck = False
@@ -321,14 +329,78 @@ class CalendarSync:
                         "повтор следующим циклом", event["id"])
         return moved, written
 
+    def _untangle_batch(self, doctor_id: uuid.UUID, events: list[dict],
+                        buffer_min: int) -> bool:
+        """Развязать взаимную блокировку внутри батча.
+
+        Два приёма поменялись временами: правка каждого упирается в старую
+        строку другого, и в базе навсегда оставались зеркальные привязки.
+        Цена такого рассинхрона не косметическая — снос одного приёма
+        освобождал бы ЧУЖОЙ слот, и бот записал бы пациента поверх второго.
+
+        Снимаем импорт-строки ровно тех событий, что мешают друг другу и
+        сами есть в этом батче: их вставят заново на новых временах.
+        Строки удаляются, а не отменяются, — иначе повторная вставка
+        наткнётся на них же."""
+        wanted: dict[str, tuple[tuple[datetime, datetime], int]] = {}
+        for event in events:
+            if event.get("status") == "cancelled":
+                continue
+            span = _event_span(event, self._clinic_tz())
+            if span is None:
+                continue
+            wanted[event["id"]] = (
+                span, 0 if "date" in event.get("start", {}) else buffer_min)
+
+        tangled: set[str] = set()
+        for event_id, (span, manual_buffer) in wanted.items():
+            tangled |= self._blocking_import_ids(doctor_id, span, manual_buffer,
+                                                 event_id) & wanted.keys()
+        # строка, уже совпадающая с новым состоянием своего события, никуда
+        # не денется: снимать её бессмысленно — это честное пересечение двух
+        # ручных приёмов, а не устаревшая привязка
+        tangled = {event_id for event_id in tangled
+                   if self._import_span(doctor_id, event_id) != wanted[event_id][0]}
+        if not tangled:
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(
+                text("DELETE FROM appointment WHERE doctor_id = :doctor "
+                     "AND source = 'gcal_import' AND gcal_event_id = ANY(:ids)"),
+                {"doctor": doctor_id, "ids": list(tangled)},
+            )
+        log.info("календарь: события %s поменялись временами — привязки сняты "
+                 "и будут записаны заново", sorted(tangled))
+        return True
+
+    def _import_span(self, doctor_id: uuid.UUID,
+                     event_id: str) -> tuple[datetime, datetime] | None:
+        """Интервал, на котором событие сейчас стоит в базе."""
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            row = session.execute(
+                text("SELECT lower(time_range) AS start, upper(time_range) AS finish "
+                     "FROM appointment WHERE doctor_id = :doctor "
+                     "AND source = 'gcal_import' AND status IN ('hold', 'booked') "
+                     "AND gcal_event_id = :event"),
+                {"doctor": doctor_id, "event": event_id},
+            ).one_or_none()
+        return (row.start, row.finish) if row else None
+
     def _blocked_by_import(self, doctor_id: uuid.UUID,
                            span: tuple[datetime, datetime], manual_buffer: int,
                            event_id: str) -> bool:
         """Мешает ли уже импортированное ручное событие (а не запись бота)."""
+        return bool(self._blocking_import_ids(doctor_id, span, manual_buffer,
+                                              event_id))
+
+    def _blocking_import_ids(self, doctor_id: uuid.UUID,
+                             span: tuple[datetime, datetime], manual_buffer: int,
+                             event_id: str) -> set[str]:
+        """id импортированных ручных событий, перекрывающих интервал."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
-            return bool(session.execute(
+            return set(session.execute(
                 text("""
-                    SELECT 1 FROM appointment
+                    SELECT gcal_event_id FROM appointment
                     WHERE doctor_id = :doctor AND source = 'gcal_import'
                       AND status IN ('hold', 'booked')
                       AND gcal_event_id IS DISTINCT FROM :event
@@ -338,11 +410,10 @@ class CalendarSync:
                           && tstzrange(:start,
                                        :finish + (:buffer * interval '1 minute'),
                                        '[)')
-                    LIMIT 1
                 """),
                 {"doctor": doctor_id, "start": span[0], "finish": span[1],
                  "buffer": manual_buffer, "event": event_id},
-            ).scalar_one_or_none())
+            ).scalars())
 
     def _try_write_manual(self, existing, doctor_id: uuid.UUID, event_id: str,
                           span: tuple[datetime, datetime], buffer_min: int) -> bool:
