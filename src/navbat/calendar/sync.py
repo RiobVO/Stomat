@@ -27,7 +27,12 @@ from navbat.calendar.api import ResyncRequired
 from navbat.crypto import decrypt_text
 from navbat.db.base import tenant_transaction
 from navbat.dialog.conversation import load_conversation, save_conversation
-from navbat.dialog.escalation import fyi_alert, EscalationNotifier, LoggingEscalation
+from navbat.dialog.escalation import (
+    EscalationNotifier,
+    LoggingEscalation,
+    fyi_alert,
+    ops_alert,
+)
 from navbat.dialog.replies import Button, Reply, service_label, t
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.scheduling.errors import (
@@ -155,21 +160,11 @@ class CalendarSync:
         except ResyncRequired:
             log.warning("календарь %s: syncToken протух, full resync", calendar_id)
             events, next_token = self._api.list_events(calendar_id, sync_token=None)
-        moved = False
-        stuck = False  # хоть одно ручное событие не удалось записать
-        # удаления применяем первыми: админ мог вписать новую встречу поверх
-        # старой и снести старую — одним инкрементом и в произвольном порядке
-        # (Google его не гарантирует). Обработанное раньше удаления новое
-        # событие упёрлось бы в ещё живой импорт, было бы сочтено неисполнимым
-        # и потерялось навсегда вместе с продвинутым токеном
-        for event in sorted(events, key=lambda e: e.get("status") != "cancelled"):
+        for event in events:
             if _own_marker(event):
                 self._reconcile_own(calendar_id, event)
-            else:
-                event_moved, written = self._apply_manual(doctor_id, event,
-                                                          buffer_min)
-                moved = event_moved or moved
-                stuck = stuck or not written
+        moved, stuck = self._apply_manual_batch(
+            doctor_id, [e for e in events if not _own_marker(e)], buffer_min)
         # незаписанное событие обязано прийти снова: инкрементальный синк
         # отдаёт только изменения, и продвинутый токен терял бы его навсегда
         # (ревью исправлений волны C). Живой hold истечёт за 3 минуты —
@@ -219,13 +214,52 @@ class CalendarSync:
                       "событие записи сдвинули в календаре — вернул; "
                                   "переносы — через бота", {"appointment": str(row.id)})
 
+    def _apply_manual_batch(self, doctor_id: uuid.UUID, events: list[dict],
+                            buffer_min: int) -> tuple[bool, bool]:
+        """Ручные события батча — проходами, пока проход даёт прогресс.
+
+        Порядок выдачи Google не гарантирован, а события внутри батча
+        зависят друг от друга: новая встреча, вписанная на место старой,
+        ложится в базу только после того, как обработают удаление или
+        переезд старой. Один проход в «неудачном» порядке терял такое
+        событие навсегда — вместе с продвинутым токеном.
+
+        Оставшиеся после прохода без прогресса разбираются финально: там
+        решается судьба токена (живой hold — ждём и держим токен, чужое
+        ручное событие внахлёст — идём дальше, оно неисполнимо)."""
+        moved = False
+        pending = list(events)
+        while pending:
+            deferred = []
+            for event in pending:
+                event_moved, written = self._apply_manual(doctor_id, event,
+                                                          buffer_min, final=False)
+                moved = event_moved or moved
+                if not written:
+                    deferred.append(event)
+            if not deferred:
+                return moved, False
+            if len(deferred) == len(pending):
+                break  # проход не сдвинул ничего — дальше только финальный
+            pending = deferred
+
+        stuck = False
+        for event in pending:
+            event_moved, written = self._apply_manual(doctor_id, event, buffer_min,
+                                                      final=True)
+            moved = event_moved or moved
+            stuck = stuck or not written
+        return moved, stuck
+
     def _apply_manual(self, doctor_id: uuid.UUID, event: dict,
-                      buffer_min: int) -> tuple[bool, bool]:
+                      buffer_min: int, final: bool = True) -> tuple[bool, bool]:
         """Одно ручное событие → БД.
 
         Возвращает (был ли конфликт-перенос, записано ли событие). Второй
         флаг решает судьбу syncToken: незаписанное событие обязано прийти
-        снова, иначе оно теряется навсегда."""
+        снова, иначе оно теряется навсегда. final=False — промежуточный
+        проход батча: неудача означает «отложить», причину разбирает
+        финальный проход."""
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             existing = session.execute(
                 text("SELECT id, status, lower(time_range) AS start, "
@@ -260,6 +294,10 @@ class CalendarSync:
         written = self._try_write_manual(existing, doctor_id, event["id"], span,
                                          manual_buffer)
         if not written:
+            if not final:
+                # мешающее событие может уйти дальше в этом же батче —
+                # причину разберём, когда проходы перестанут давать прогресс
+                return moved, False
             # Кто мешает: живой hold истечёт за 3 минуты — тогда ждём и
             # держим токен. А вот другое ручное событие внахлёст не уйдёт
             # никогда (вытеснять импортированное нечем), и удерживать из-за
@@ -268,6 +306,16 @@ class CalendarSync:
                                        event["id"]):
                 log.warning("событие %s пересекается с другим ручным событием "
                             "— в БД не попадёт, слот уже занят им", event["id"])
+                # токен продвинется, и событие больше не придёт: календарь
+                # врача и база расходятся навсегда. Администратор обязан
+                # знать — один раз, повторов не будет по той же причине
+                tz = self._clinic_tz()
+                ops_alert(
+                    self._notifier,
+                    f"в календаре два приёма на одно время "
+                    f"({span[0].astimezone(tz):%d.%m %H:%M}) — бот учитывает "
+                    f"только первый, второй в записи не виден",
+                    {"event": event["id"]})
                 return moved, True
             log.warning("событие %s: конфликт не разрешён (живой hold?) — "
                         "повтор следующим циклом", event["id"])
