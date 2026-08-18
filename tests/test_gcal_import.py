@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from conftest import at_tashkent, next_monday
+from conftest import at_tashkent, make_doctor, next_monday
 from navbat.scheduling.engine import SchedulingEngine
 from test_dialog_booking import RecordingNotifier
 from test_gcal_export import (
@@ -472,3 +472,98 @@ def test_swapped_manual_events_end_up_where_google_has_them(
     assert at_tashkent(day, "11:00") in starts, "снятый приём не освободил слот"
     assert at_tashkent(day, "09:00") not in starts, \
         "освободился чужой слот — бот запишет пациента поверх приёма"
+
+
+def test_swap_blocked_by_live_hold_keeps_everything(app_session_factory,
+                                                    admin_engine, clinic_a,
+                                                    doctor_a, service_cleaning):
+    """Перестановку некуда применить: целевое время держит живой hold.
+
+    Разрывать привязки «наполовину» нельзя — слот, занятый в календаре
+    врача, оказался бы свободен в базе. Ничего не трогаем и держим токен:
+    hold истечёт за три минуты, и следующий цикл доведёт дело."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    first = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                  end=at_tashkent(day, "09:30"))
+    second = api.seed_manual_event(start=at_tashkent(day, "11:00"),
+                                   end=at_tashkent(day, "11:30"))
+    sync.sync_doctor(doctor_a)
+
+    with admin_engine.begin() as conn:
+        token_before = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+
+    sched = SchedulingEngine(app_session_factory, clinic_a)
+    sched.hold(doctor_a, service_cleaning, at_tashkent(day, "14:00"), tg_chat_id=777)
+    # first занимает время second, а second уезжает на слот с живым hold
+    api.move_event(CAL, first, at_tashkent(day, "11:00"), at_tashkent(day, "11:30"))
+    api.move_event(CAL, second, at_tashkent(day, "14:00"), at_tashkent(day, "14:30"))
+
+    sync.sync_doctor(doctor_a)
+
+    placed = {r.gcal_event_id: r.start for r in import_rows(admin_engine)
+              if r.status == "booked"}
+    assert placed == {first: at_tashkent(day, "09:00"),
+                      second: at_tashkent(day, "11:00")}, \
+        "привязки порваны — слот освободился, хотя приём в календаре идёт"
+    with admin_engine.begin() as conn:
+        token = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor_a}).scalar_one()
+    assert token == token_before,         "токен продвинулся — перестановка больше не придёт"
+
+    # hold протух — следующий цикл доводит перестановку до конца
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE appointment SET hold_expires_at = "
+                          "now() - interval '1 minute' WHERE status = 'hold'"))
+    sync.sync_doctor(doctor_a)
+
+    placed = {r.gcal_event_id: r.start for r in import_rows(admin_engine)
+              if r.status == "booked"}
+    assert placed == {first: at_tashkent(day, "11:00"),
+                      second: at_tashkent(day, "14:00")}
+
+
+def test_swap_with_overlapping_targets_keeps_coverage(app_session_factory,
+                                                      admin_engine, clinic_a,
+                                                      service_cleaning):
+    """Приёмы «поменялись местами» так, что новые интервалы сами внахлёст.
+
+    Реальность противоречива, и развязать её нельзя: двум пересекающимся
+    строкам constraint не даст жить. Бот обязан сохранить покрытие (ничего
+    не освободить зря), сказать об этом администратору — и не залипнуть на
+    токене навсегда, иначе инкремент превращается в вечный полный обход."""
+    doctor = make_doctor(admin_engine, clinic_a, buffer_min=0)
+    bind_calendar(admin_engine, doctor)
+    day = next_monday()
+    notifier = RecordingNotifier()
+    api = FakeCalendarAPI()
+    sync = CalendarSync(app_session_factory, clinic_a, api=api, notifier=notifier)
+    first = api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                                  end=at_tashkent(day, "10:00"))
+    second = api.seed_manual_event(start=at_tashkent(day, "10:00"),
+                                   end=at_tashkent(day, "11:00"))
+    sync.sync_doctor(doctor)
+    with admin_engine.begin() as conn:
+        token_before = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor}).scalar_one()
+
+    api.move_event(CAL, first, at_tashkent(day, "09:30"), at_tashkent(day, "11:00"))
+    api.move_event(CAL, second, at_tashkent(day, "09:00"), at_tashkent(day, "10:00"))
+
+    sync.sync_doctor(doctor)
+
+    starts = free_starts(app_session_factory, clinic_a, doctor, service_cleaning, day)
+    busy = {at_tashkent(day, hhmm)
+            for hhmm in ("09:00", "09:30", "10:00", "10:30")}
+    assert not (busy & starts), "освободились слоты, занятые в календаре врача"
+    with admin_engine.begin() as conn:
+        token = conn.execute(text(
+            "SELECT gcal_sync_token FROM doctor WHERE id = :d"),
+            {"d": doctor}).scalar_one()
+    assert token != token_before, "токен залип — инкремент больше не продвинется"
+    assert notifier.calls, "администратор не узнал о пересечении приёмов"
