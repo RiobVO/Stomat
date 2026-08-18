@@ -43,6 +43,26 @@ class Slot:
     end: datetime
 
 
+def lock_doctor(session: Session, doctor_id: uuid.UUID) -> None:
+    """Advisory-лок на врача до конца транзакции.
+
+    Убирает дедлок: конкурентные INSERT ждут внутри проверки exclusion
+    constraint чужую транзакцию, а confirm/reschedule (UPDATE строк в
+    predicate constraint) перепроверяют constraint навстречу — взаимное
+    ожидание. Сериализация записей по врачу решает это структурно; масштаб
+    клиники (1–4 кресла) её не почувствует. cancel лок не берёт: строка
+    уходит из partial-индекса, перепроверки нет.
+
+    Берут ВСЕ, кто пишет занятость врача, и берут ПЕРВЫМ: синк календаря
+    тоже (calendar/sync.py) — иначе порядок захвата инвертируется и Postgres
+    рвёт одну из транзакций дедлоком.
+    """
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:d AS text), 0))"),
+        {"d": doctor_id},
+    )
+
+
 class SchedulingEngine:
     def __init__(
         self,
@@ -295,19 +315,7 @@ class SchedulingEngine:
         raise InvalidSlotError(f"{start.isoformat()} вне рабочей сетки врача")
 
     def _lock_doctor(self, session: Session, doctor_id: uuid.UUID) -> None:
-        """Advisory-лок на врача до конца транзакции.
-
-        Убирает дедлок: конкурентные INSERT ждут внутри проверки exclusion
-        constraint чужую транзакцию, а confirm/reschedule (UPDATE строк в
-        predicate constraint) перепроверяют constraint навстречу — взаимное
-        ожидание. Сериализация записей по врачу решает это структурно; масштаб
-        клиники (1–4 кресла) её не почувствует. cancel лок не берёт: строка
-        уходит из partial-индекса, перепроверки нет.
-        """
-        session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:d AS text), 0))"),
-            {"d": doctor_id},
-        )
+        lock_doctor(session, doctor_id)
 
     def _doctor_buffer(self, session: Session, doctor_id) -> int:
         return session.execute(

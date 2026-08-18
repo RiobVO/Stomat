@@ -107,3 +107,56 @@ def test_reschedule_does_not_deadlock_with_concurrent_doctor_write(
 
     assert not _is_deadlock(err.get("resched")), f"reschedule в дедлоке: {err.get('resched')}"
     assert not _is_deadlock(b_err), f"конкурентная запись в дедлоке: {b_err}"
+
+
+def test_calendar_import_takes_doctor_lock_first(app_session_factory, admin_engine,
+                                                 clinic_a, doctor_a,
+                                                 service_cleaning):
+    """Синк календаря пишет занятость врача — значит идёт под тем же
+    advisory-локом и берёт его ПЕРВЫМ.
+
+    Иначе порядок захвата инвертируется: импорт держит незакоммиченные
+    строки и ждёт внутри exclusion-проверки чужой INSERT, а пациентский
+    hold ждёт его же — Postgres рвёт одну из транзакций (40P01), и падает
+    либо календарный цикл, либо запись пациента.
+    """
+    from conftest import at_tashkent, next_monday
+    from test_gcal_export import bind_calendar, make_sync
+
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    sync, api = make_sync(app_session_factory, clinic_a)
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+
+    done = threading.Event()
+    failure: dict = {}
+
+    def import_thread():
+        try:
+            sync.sync_doctor(doctor_a)
+        except Exception as e:  # noqa: BLE001 — фиксируем для отчёта
+            failure["sync"] = e
+        finally:
+            done.set()
+
+    # сторонняя сессия держит advisory-лок врача
+    conn = admin_engine.connect()
+    trans = conn.begin()
+    conn.execute(text(_DOCTOR_LOCK), {"d": doctor_a})
+    try:
+        worker = threading.Thread(target=import_thread)
+        worker.start()
+        assert not done.wait(2.0), "импорт пишет занятость мимо advisory-лока врача"
+    finally:
+        trans.rollback()
+        conn.close()
+
+    worker.join(timeout=15)
+    assert done.is_set(), "импорт не дождался освобождения лока"
+    assert "sync" not in failure, f"импорт упал: {failure.get('sync')}"
+    with admin_engine.begin() as check:
+        imported = check.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'gcal_import' "
+            "AND status = 'booked'")).scalar_one()
+    assert imported == 1

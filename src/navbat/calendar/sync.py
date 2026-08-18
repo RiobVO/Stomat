@@ -34,7 +34,7 @@ from navbat.dialog.escalation import (
     ops_alert,
 )
 from navbat.dialog.replies import Button, Reply, service_label, t
-from navbat.scheduling.engine import SchedulingEngine
+from navbat.scheduling.engine import SchedulingEngine, lock_doctor
 from navbat.scheduling.errors import (
     AppointmentChangedError,
     AppointmentNotFoundError,
@@ -373,15 +373,25 @@ class CalendarSync:
                    if self._import_span(doctor_id, event_id) != wanted[event_id][0]}
         if not tangled:
             return "none"
+        # Разъять узел можно, только если новое состояние вообще жизнеспособно:
+        # цели уживаются друг с другом И не упираются в импорт, который никуда
+        # не денется (он вне батча, значит не изменится и в следующих циклах).
+        # Иначе это не перестановка, а честное пересечение приёмов: попытки
+        # откатывались бы каждый цикл и токен залип бы навсегда. Такой узел
+        # разбирает финальный проход — покрытие прежнее, сигнал администратору
         if _targets_overlap([wanted[event_id] for event_id in tangled]):
-            # приёмы разведены внахлёст — это не перестановка, а честное
-            # пересечение: развязывать нечего (двум пересекающимся строкам
-            # constraint жить не даст), а попытки залипли бы на токене
-            # навсегда. Пусть разбирает финальный проход: покрытие остаётся
-            # прежним, администратор получает сигнал
             return "none"
+        for event_id in tangled:
+            span, manual_buffer = wanted[event_id]
+            if self._blocking_import_ids(doctor_id, span, manual_buffer,
+                                         event_id) - tangled:
+                return "none"
         try:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                # порядок захвата единый со scheduling: advisory-лок врача
+                # ПЕРВЫМ, иначе пациентский hold и эта транзакция ждут друг
+                # друга внутри проверок constraint — дедлок
+                lock_doctor(session, doctor_id)
                 # снятие и запись — одной транзакцией: иначе слот на мгновение
                 # выглядит свободным и его успевает занять живой пациент
                 session.execute(
@@ -461,6 +471,9 @@ class CalendarSync:
         start, finish = span
         try:
             with tenant_transaction(self._session_factory, self._clinic_id) as session:
+                # тот же порядок захвата, что у записи пациента: advisory-лок
+                # врача первым (см. lock_doctor)
+                lock_doctor(session, doctor_id)
                 # протухшие hold физически блокируют exclusion — экспирим
                 session.execute(
                     text("UPDATE appointment SET status = 'expired' "
