@@ -79,12 +79,12 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
                       days: int = 14, now: datetime | None = None) -> int:
     """Наполнить прошлые `days` дней. Возвращает число созданных записей.
 
+    Идемпотентность скользящая: день, в котором история уже есть, не трогаем,
+    а пустые дни окна досеиваем — между показами «сегодня» уезжает вперёд.
+
     `now` инжектируется тестами (конвенция проекта — время тестируемо):
     сколько истории попадёт в сегодняшний день, зависит от часа прогона."""
     with tenant_transaction(session_factory, clinic_id) as session:
-        if _already_seeded(session):
-            log.info("демо-история уже есть — пропускаю")
-            return 0
         tz = ZoneInfo(session.execute(text(
             "SELECT timezone FROM clinic "
             "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one())
@@ -104,13 +104,21 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
         closed = set(session.execute(
             text("SELECT date FROM holiday WHERE date >= :first"),
             {"first": today - timedelta(days=days)}).scalars())
+        # дни, наполненные прошлым запуском: окно скользит вместе с «сегодня»,
+        # поэтому сид досеивает пустые дни, а наполненные не трогает. Прежний
+        # гейт «история уже есть» смотрел на факт наличия строк — и второй
+        # показ шёл с пустой свежей неделей при «истории» в базе
+        seeded = set(session.execute(
+            text("SELECT DISTINCT (lower(time_range) AT TIME ZONE :tz)::date "
+                 "FROM appointment WHERE source = :src"),
+            {"tz": tz.key, "src": DEMO_SOURCE}).scalars())
         created = 0
         # включая сегодня (offset=0): владелец жмёт «📊 Статистика», а консоль
         # открывает сводку ЗА ДЕНЬ — пустой сегодняшний день снова показывал
         # покупателю нули (живой тык 28.07)
         for offset in range(days, -1, -1):
             day = today - timedelta(days=offset)
-            if day in closed:
+            if day in closed or day in seeded:
                 continue
             per_day, nightly = DAILY_PLAN[offset % len(DAILY_PLAN)]
             if offset <= days // 2:
@@ -137,12 +145,6 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
     return created
 
 
-def _already_seeded(session: Session) -> bool:
-    return bool(session.execute(
-        text("SELECT 1 FROM appointment WHERE source = :src LIMIT 1"),
-        {"src": DEMO_SOURCE}).scalar_one_or_none())
-
-
 def _pick_service(services, created: int):
     """Услуга по весам спроса; если клиника ведёт не весь каталог —
     круг по тому, что есть."""
@@ -153,10 +155,19 @@ def _pick_service(services, created: int):
     return by_name[wanted[created % len(wanted)]]
 
 
-def _pick_doctor(doctors, created: int):
-    """Нагрузка неровная: ровно поделённая пополам выглядит сгенерированной."""
-    pattern = (0, 1, 0, 1, 0, 0, 1) if len(doctors) > 1 else (0,)
-    return doctors[pattern[created % len(pattern)] % len(doctors)]
+def _doctor_queue(doctors, created: int) -> list:
+    """Очередь кандидатов на запись: сначала «дежурный», затем остальные.
+
+    Нагрузка неровная — ровно поделённая пополам выглядит сгенерированной,
+    поэтому дежурный идёт по паттерну с весом у первого врача. Но в паттерне
+    обязан быть КАЖДЫЙ активный врач, а очередь — содержать всех: прежние
+    веса (0, 1, 0, 1, 0, 0, 1) при трёх врачах не давали третьему ни одной
+    записи (он исчезал из «Топ врачей»), а день, в который свободен только
+    он, обрывался на первой же записи."""
+    order = tuple(range(len(doctors)))
+    pattern = order + order[:1] + order[::-1]  # первый чаще остальных
+    first = pattern[created % len(pattern)]
+    return [doctors[(first + step) % len(doctors)] for step in range(len(doctors))]
 
 
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -203,12 +214,10 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
     врача на шаг сетки, а исчерпанная смена даёт `start is None`."""
     service = _pick_service(services, created)
     while True:
-        # выбор врача не продвигается счётчиком созданных записей: если у него
-        # кончилась смена, все следующие итерации дня выбирали бы его же и день
-        # обрывался на середине — пробуем остальных по тому же порядку
+        # если у дежурного кончилась смена, все следующие итерации дня выбирали
+        # бы его же и день обрывался на середине — идём по очереди дальше
         doctor = start = None
-        for shift in range(len(doctors)):
-            candidate = _pick_doctor(doctors, created + shift)
+        for candidate in _doctor_queue(doctors, created):
             if (not shifts.get(candidate.id)
                     or cursors.get(candidate.id) is None):
                 continue  # у этого врача сегодня выходной
@@ -236,7 +245,11 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
             earliest = datetime.combine(day, datetime.min.time(), tz).replace(
                 hour=EARLIEST_BOOKING_HOUR)
             booked_at = max(start - timedelta(hours=SAME_DAY_LEAD_HOURS), earliest)
-        # вернувшийся пациент повторяет чат прошлого визита
+        # часть визитов — повторные: остаток по счётчику переиспользует чат
+        # более раннего пациента. Точная доля неважна, витрине нужны обе группы;
+        # ровное «каждый третий» ставило бы повтор рядом с оригиналом, а stats
+        # считает вернувшимся того, чей ПЕРВЫЙ визит раньше периода — в окне
+        # семи дней такие возвраты схлопнулись бы в ноль
         chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
                             else created)
         cancelled = created % CANCEL_EVERY == CANCEL_EVERY - 1

@@ -96,8 +96,10 @@ def test_history_stays_in_the_past(app_session_factory, admin_engine,
 
     with admin_engine.begin() as conn:
         future = conn.execute(text(
-            "SELECT count(*) FROM appointment WHERE lower(time_range) > now()"
+            "SELECT count(*) FROM appointment WHERE upper(time_range) > now()"
         )).scalar_one()
+    # именно upper: приём, ИДУЩИЙ сейчас, занимает слот живого сценария так же,
+    # как будущий — проверка по lower пропустила бы такую регрессию
     assert future == 0
 
 
@@ -353,6 +355,44 @@ def test_seed_survives_occupied_past(app_session_factory, admin_engine,
             "AND status = 'booked'")).scalar_one()
     assert same_day > 0, "занятый первый слот стоил всего дня"
     assert foreign == 1, "чужая запись должна остаться нетронутой"
+
+
+def test_stale_history_is_extended(app_session_factory, priced_clinic):
+    """Сид, сделанный неделю назад, обязан догоняться до сегодня.
+
+    Гейт «история уже есть» смотрел на факт наличия строк, поэтому второй
+    показ шёл с пустой свежей неделей: `/stats 7` — нули, тренд вниз, а
+    команда отвечала «демо-история уже есть» и ничего не делала."""
+    clinic_a = priced_clinic
+    now = datetime.now(TZ)
+    seed_demo_history(app_session_factory, clinic_a, days=14,
+                      now=now - timedelta(days=8))
+
+    created = seed_demo_history(app_session_factory, clinic_a, days=14, now=now)
+
+    assert created > 0, "свежие дни не наполнились"
+    today = now.date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today - timedelta(days=6), today, TZ)
+    assert stats.booked > 0, "сводка за свежую неделю осталась пустой"
+
+
+def test_every_active_doctor_gets_appointments(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a):
+    """Каждый активный врач обязан попадать в раскладку: невыбранный исчезает
+    из «Топ врачей» на витрине, а день, когда работает только он, остаётся
+    пустым. Паттерн нагрузки давал лишь двух врачей независимо от их числа."""
+    make_service(admin_engine, clinic_a, "cleaning", 30, price=350_000)
+    make_doctor(admin_engine, clinic_a, name="Dilnoza opa")
+    make_doctor(admin_engine, clinic_a, name="Rustam aka")
+
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    with admin_engine.begin() as conn:
+        used = conn.execute(text(
+            "SELECT count(DISTINCT doctor_id) FROM appointment "
+            "WHERE source = 'demo_history'")).scalar_one()
+    assert used == 3, f"записи достались {used} врачам из 3"
 
 
 def test_clear_removes_everything_it_created(app_session_factory, admin_engine,
