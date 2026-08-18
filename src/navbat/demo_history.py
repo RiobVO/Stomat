@@ -85,15 +85,12 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
     `now` инжектируется тестами (конвенция проекта — время тестируемо):
     сколько истории попадёт в сегодняшний день, зависит от часа прогона."""
     with tenant_transaction(session_factory, clinic_id) as session:
-        zone = session.execute(text(
-            "SELECT timezone FROM clinic "
-            "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one_or_none()
-        if zone is None:
+        tz = _clinic_zone(session)
+        if tz is None:
             # сеять историю до `--demo` — типовой промах порядка команд; ответ
             # даёт CLI, здесь важно не отдать сырой NoResultFound
             log.warning("демо-история: демо-клиники нет в базе")
             return 0
-        tz = ZoneInfo(zone)
         doctors = session.execute(text(
             "SELECT id, buffer_min, working_intervals FROM doctor "
             "WHERE is_active ORDER BY id")).all()
@@ -149,6 +146,14 @@ def seed_demo_history(session_factory, clinic_id: uuid.UUID,
                     not_after=now if offset == 0 else None)
     log.info("демо-история: создано записей — %d", created)
     return created
+
+
+def _clinic_zone(session: Session) -> ZoneInfo | None:
+    """Таймзона клиники; None — клиники нет (сеяли до `--demo`)."""
+    zone = session.execute(text(
+        "SELECT timezone FROM clinic "
+        "WHERE id = current_setting('app.clinic_id')::uuid")).scalar_one_or_none()
+    return ZoneInfo(zone) if zone else None
 
 
 def _pick_service(services, created: int):
@@ -315,17 +320,28 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
         {"appt": appointment_id, "actor": actor, "action": action, "at": at})
 
 
-def count_demo_history(session_factory, clinic_id: uuid.UUID,
-                       days: int = 14) -> int:
+def count_demo_history(session_factory, clinic_id: uuid.UUID, days: int = 14,
+                       now: datetime | None = None) -> int:
     """Сколько демо-записей стоит в окне последних `days` дней.
 
     Нужно CLI, чтобы отличить «окно уже наполнено» от «наливать некуда»: ноль
-    созданных записей сам по себе не говорит, что витрина не пуста (ре-ревью)."""
+    созданных записей сам по себе не говорит, что витрина не пуста (ре-ревью).
+
+    Окно мерим локальными ДАТАМИ, ровно как ведёт его сид. Абсолютное «now()
+    минус N суток» отрезало бы утро самого старого дня: при `days=0` не видно
+    ни одной прошедшей записи вовсе, а после наполнения в субботу повтор в
+    воскресенье вечером терял субботнее утро — CLI объявлял исправную историю
+    несуществующей и печатал [FAIL] прямо перед показом."""
     with tenant_transaction(session_factory, clinic_id) as session:
+        tz = _clinic_zone(session)
+        if tz is None:
+            return 0
+        today = (now.astimezone(tz) if now is not None else datetime.now(tz)).date()
         return session.execute(
             text("SELECT count(*) FROM appointment WHERE source = :src "
-                 "AND lower(time_range) >= now() - :days * interval '1 day'"),
-            {"src": DEMO_SOURCE, "days": days}).scalar_one()
+                 "AND (lower(time_range) AT TIME ZONE :tz)::date >= :first"),
+            {"src": DEMO_SOURCE, "tz": tz.key,
+             "first": today - timedelta(days=days)}).scalar_one()
 
 
 def clear_demo_history(session_factory, clinic_id: uuid.UUID) -> int:
