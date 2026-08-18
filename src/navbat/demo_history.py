@@ -322,24 +322,30 @@ def _audit(session: Session, appointment_id: uuid.UUID, action: str,
 
 def count_demo_history(session_factory, clinic_id: uuid.UUID, days: int = 14,
                        now: datetime | None = None) -> int:
-    """Сколько демо-записей стоит в окне последних `days` дней.
+    """Сколько демо-истории ВИДИТ СВОДКА в окне последних `days` дней.
 
     Нужно CLI, чтобы отличить «окно уже наполнено» от «наливать некуда»: ноль
     созданных записей сам по себе не говорит, что витрина не пуста (ре-ревью).
 
-    Окно мерим локальными ДАТАМИ, ровно как ведёт его сид. Абсолютное «now()
-    минус N суток» отрезало бы утро самого старого дня: при `days=0` не видно
-    ни одной прошедшей записи вовсе, а после наполнения в субботу повтор в
-    воскресенье вечером терял субботнее утро — CLI объявлял исправную историю
-    несуществующей и печатал [FAIL] прямо перед показом."""
+    Считаем то же, что считает витрина, — confirm-аудиты (stats.py), а не сами
+    приёмы: оформление прошлых приёмов сид датирует НАКАНУНЕ, поэтому приёмы
+    самого старого дня окна сводке не видны. Счёт по приёмам отвечал «уже
+    есть» над сводкой из нулей — ровно та ложь, от которой заведён [FAIL].
+
+    Окно мерим локальными ДАТАМИ, как ведёт его сид. Абсолютное «now() минус N
+    суток» отрезало бы утро самого старого дня: при `days=0` не видно ни одной
+    прошедшей записи вовсе, а после наполнения в субботу повтор в воскресенье
+    вечером терял субботнее утро."""
     with tenant_transaction(session_factory, clinic_id) as session:
         tz = _clinic_zone(session)
         if tz is None:
             return 0
         today = (now.astimezone(tz) if now is not None else datetime.now(tz)).date()
         return session.execute(
-            text("SELECT count(*) FROM appointment WHERE source = :src "
-                 "AND (lower(time_range) AT TIME ZONE :tz)::date >= :first"),
+            text("SELECT count(*) FROM appointment_audit aa "
+                 "JOIN appointment a ON a.id = aa.appointment_id "
+                 "WHERE a.source = :src AND aa.action = 'confirm' "
+                 "AND (aa.at AT TIME ZONE :tz)::date >= :first"),
             {"src": DEMO_SOURCE, "tz": tz.key,
              "first": today - timedelta(days=days)}).scalar_one()
 
