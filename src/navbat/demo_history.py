@@ -32,6 +32,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from navbat.db.base import tenant_transaction
@@ -195,63 +196,95 @@ def _fit_into_shift(start: datetime, minutes: int, shifts) -> datetime | None:
 def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
                       created: int, doctors, services, cursors, shifts,
                       after_hours: bool, not_after: datetime | None = None) -> int:
-    """Одна запись: приём внутри смены врача, оформление — раньше приёма."""
+    """Одна запись: приём внутри смены врача, оформление — раньше приёма.
+
+    Цикл — про занятые слоты: сидер не знает, что стоит в прошлом врача, и
+    узнаёт это от БД. Он конечен, потому что каждая неудача продвигает курсор
+    врача на шаг сетки, а исчерпанная смена даёт `start is None`."""
     service = _pick_service(services, created)
-    # выбор врача не продвигается счётчиком созданных записей: если у него
-    # кончилась смена, все следующие итерации дня выбирали бы его же и день
-    # обрывался на середине — пробуем остальных по тому же порядку
-    doctor = start = None
-    for shift in range(len(doctors)):
-        candidate = _pick_doctor(doctors, created + shift)
-        if (not shifts.get(candidate.id)
-                or cursors.get(candidate.id) is None):
-            continue  # у этого врача сегодня выходной
-        at_time = _fit_into_shift(cursors[candidate.id], service.duration_min,
-                                  shifts[candidate.id])
-        if at_time is not None:
-            doctor, start = candidate, at_time
-            break
-    if start is None:
-        return 0  # смены всех врачей на сегодня исчерпаны
-    doctor_id = doctor.id
-    finish = start + timedelta(minutes=service.duration_min)
-    if not_after is not None and finish > not_after:
-        return 0  # сегодняшний день наполняем только прошедшими часами
-    cursors[doctor_id] = finish + timedelta(minutes=doctor.buffer_min)
-    if not_after is None:
-        # оформление — накануне: ночные заявки и есть «пока клиника спала»
-        booked_at = datetime.combine(
-            day - timedelta(days=1), datetime.min.time(),
-            tz).replace(hour=_hour_for(index, after_hours))
-    else:
-        # сегодняшний день оформляется сегодня же: сводка за день считает
-        # confirm-аудиты и created_at (stats.py), а не время приёма — с
-        # оформлением «вчера» первый экран покупателя оставался пустым
-        # даже при прошедших приёмах (повторное ревью сидера, блокер)
-        earliest = datetime.combine(day, datetime.min.time(), tz).replace(
-            hour=EARLIEST_BOOKING_HOUR)
-        booked_at = max(start - timedelta(hours=SAME_DAY_LEAD_HOURS), earliest)
-    # вернувшийся пациент повторяет чат прошлого визита
-    chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
-                        else created)
-    cancelled = created % CANCEL_EVERY == CANCEL_EVERY - 1
-    appointment_id = uuid.uuid4()
-    session.execute(
-        text("INSERT INTO appointment (id, clinic_id, doctor_id, service_id, "
-             "time_range, buffer_min, status, source, tg_chat_id, created_at) "
-             "VALUES (:id, current_setting('app.clinic_id')::uuid, :doc, :svc, "
-             "tstzrange(:lo, :hi, '[)'), :buf, :status, :src, :chat, :made)"),
-        {"id": appointment_id, "doc": doctor_id, "svc": service.id,
-         "lo": start, "hi": finish, "buf": doctor.buffer_min,
-         "src": DEMO_SOURCE, "chat": chat,
-         "status": "cancelled" if cancelled else "booked", "made": booked_at})
-    _audit(session, appointment_id, "confirm", "bot", booked_at)
-    if cancelled:
-        # actor='reminder' — топливо метрики «предотвращено неявок»: пациент
-        # предупредил заранее по напоминанию, слот вернулся в продажу
-        _audit(session, appointment_id, "cancel", "reminder",
-               start - timedelta(hours=3))
-    return 1
+    while True:
+        # выбор врача не продвигается счётчиком созданных записей: если у него
+        # кончилась смена, все следующие итерации дня выбирали бы его же и день
+        # обрывался на середине — пробуем остальных по тому же порядку
+        doctor = start = None
+        for shift in range(len(doctors)):
+            candidate = _pick_doctor(doctors, created + shift)
+            if (not shifts.get(candidate.id)
+                    or cursors.get(candidate.id) is None):
+                continue  # у этого врача сегодня выходной
+            at_time = _fit_into_shift(cursors[candidate.id], service.duration_min,
+                                      shifts[candidate.id])
+            if at_time is not None:
+                doctor, start = candidate, at_time
+                break
+        if start is None:
+            return 0  # смены всех врачей на сегодня исчерпаны
+        doctor_id = doctor.id
+        finish = start + timedelta(minutes=service.duration_min)
+        if not_after is not None and finish > not_after:
+            return 0  # сегодняшний день наполняем только прошедшими часами
+        if not_after is None:
+            # оформление — накануне: ночные заявки и есть «пока клиника спала»
+            booked_at = datetime.combine(
+                day - timedelta(days=1), datetime.min.time(),
+                tz).replace(hour=_hour_for(index, after_hours))
+        else:
+            # сегодняшний день оформляется сегодня же: сводка за день считает
+            # confirm-аудиты и created_at (stats.py), а не время приёма — с
+            # оформлением «вчера» первый экран покупателя оставался пустым
+            # даже при прошедших приёмах (повторное ревью сидера, блокер)
+            earliest = datetime.combine(day, datetime.min.time(), tz).replace(
+                hour=EARLIEST_BOOKING_HOUR)
+            booked_at = max(start - timedelta(hours=SAME_DAY_LEAD_HOURS), earliest)
+        # вернувшийся пациент повторяет чат прошлого визита
+        chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
+                            else created)
+        cancelled = created % CANCEL_EVERY == CANCEL_EVERY - 1
+        appointment_id = uuid.uuid4()
+        if not _try_insert(session, {
+                "id": appointment_id, "doc": doctor_id, "svc": service.id,
+                "lo": start, "hi": finish, "buf": doctor.buffer_min,
+                "src": DEMO_SOURCE, "chat": chat,
+                "status": "cancelled" if cancelled else "booked",
+                "made": booked_at}):
+            # слот занят тем, кого сидер не видит: ручное событие из календаря
+            # врача или запись, оставшаяся после показа. Двигаемся по сетке
+            cursors[doctor_id] = start + timedelta(minutes=SLOT_STEP_MIN)
+            continue
+        cursors[doctor_id] = finish + timedelta(minutes=doctor.buffer_min)
+        _audit(session, appointment_id, "confirm", "bot", booked_at)
+        if cancelled:
+            # actor='reminder' — топливо метрики «предотвращено неявок»: пациент
+            # предупредил заранее по напоминанию, слот вернулся в продажу
+            _audit(session, appointment_id, "cancel", "reminder",
+                   start - timedelta(hours=3))
+        return 1
+
+
+def _try_insert(session: Session, params: dict) -> bool:
+    """Вставить запись; False — слот занят, и это не повод падать.
+
+    Занятость в проекте гарантирует БД (exclusion constraint), а не код —
+    сидер живёт по тому же правилу, что живая запись в scheduling.engine.
+    SAVEPOINT здесь обязателен: вся история наливается ОДНОЙ транзакцией, и
+    без него первое пересечение с ручным событием врача (его личный календарь
+    импортируется вместе с прошлым) откатывало бы весь сид, оставляя витрину
+    пустой прямо перед показом."""
+    savepoint = session.begin_nested()
+    try:
+        session.execute(
+            text("INSERT INTO appointment (id, clinic_id, doctor_id, service_id, "
+                 "time_range, buffer_min, status, source, tg_chat_id, created_at) "
+                 "VALUES (:id, current_setting('app.clinic_id')::uuid, :doc, :svc, "
+                 "tstzrange(:lo, :hi, '[)'), :buf, :status, :src, :chat, :made)"),
+            params)
+    except IntegrityError as error:
+        savepoint.rollback()
+        if getattr(error.orig, "sqlstate", None) != "23P01":  # exclusion_violation
+            raise  # не пересечение (FK, дубль) — прятать нельзя
+        return False
+    savepoint.commit()
+    return True
 
 
 def _audit(session: Session, appointment_id: uuid.UUID, action: str,

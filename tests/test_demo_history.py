@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -314,6 +314,45 @@ def test_appointments_sit_on_the_slot_grid(app_session_factory, admin_engine,
             "AND extract(minute FROM lower(time_range) AT TIME ZONE "
             "'Asia/Tashkent')::int % 30 <> 0")).scalar_one()
     assert off_grid == 0, "приёмы стоят мимо получасовой сетки"
+
+
+def test_seed_survives_occupied_past(app_session_factory, admin_engine,
+                                     clinic_a, doctor_a):
+    """В прошлом врача уже стоит приём: ручное событие из его личного
+    календаря (первый импорт идёт без timeMin — calendar/sync.py) или запись,
+    оставшаяся после предыдущего показа.
+
+    Сидер существующие записи не смотрит — занятость в проекте гарантирует БД,
+    а не код. Значит пересечение обязано стоить ОДНОГО слота: сид идёт одной
+    транзакцией, и exclusion constraint откатывал бы её целиком — команда
+    падала бы трейсбеком перед показом, оставляя витрину пустой.
+    """
+    make_service(admin_engine, clinic_a, "cleaning", 30, price=350_000)
+    day = datetime.now(TZ).date() - timedelta(days=1)
+    while day.weekday() == 6:  # воскресенье у фикстурного врача выходной
+        day -= timedelta(days=1)
+    occupied = datetime.combine(day, time(9, 0), TZ)  # первый слот смены
+    with admin_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO appointment (clinic_id, doctor_id, time_range, "
+                 "buffer_min, status, source) VALUES (:c, :d, "
+                 "tstzrange(:lo, :hi, '[)'), 0, 'booked', 'gcal_import')"),
+            {"c": clinic_a, "d": doctor_a, "lo": occupied,
+             "hi": occupied + timedelta(hours=1)})
+
+    created = seed_demo_history(app_session_factory, clinic_a, days=14)
+
+    assert created > 0, "сид упал на чужой записи"
+    with admin_engine.begin() as conn:
+        same_day = conn.execute(
+            text("SELECT count(*) FROM appointment WHERE source = 'demo_history' "
+                 "AND (lower(time_range) AT TIME ZONE 'Asia/Tashkent')::date = :d"),
+            {"d": day}).scalar_one()
+        foreign = conn.execute(text(
+            "SELECT count(*) FROM appointment WHERE source = 'gcal_import' "
+            "AND status = 'booked'")).scalar_one()
+    assert same_day > 0, "занятый первый слот стоил всего дня"
+    assert foreign == 1, "чужая запись должна остаться нетронутой"
 
 
 def test_clear_removes_everything_it_created(app_session_factory, admin_engine,
