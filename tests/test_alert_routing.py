@@ -253,6 +253,36 @@ def test_reason_speaks_the_language_of_each_admin_chat(app_session_factory,
     assert "бэкапы БД не снимаются" in api.sent[-1][1]
 
 
+def test_broken_reason_template_does_not_swallow_the_alert():
+    """Сигнал важнее перевода.
+
+    Причина рендерится в момент отправки, поэтому опечатка в шаблоне (а
+    узбекские строки ещё будет править носитель) роняла рассылку: ни текущий
+    получатель, ни следующие не узнавали, что синк стоит. Ошибка обязана
+    остаться в логах, а алерт — дойти хотя бы по-русски (ревью)."""
+    from navbat.telegram import admin_texts
+
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(api, admin_chat_id=[ADMIN_CHAT, 888])
+
+    # опечатка в ключе и в имени подстановки — обе из служебного пути
+    escalation.notify_ops(admin_texts.Reason("reason_sync_stuk", cycles=3), {})
+    assert len(api.sent) == 2, "алерт должен уйти всем админ-чатам"
+    escalation.notify_ops(admin_texts.Reason("reason_sync_stuck", cycle=3), {})
+    assert len(api.sent) == 4, api.sent
+
+    # шаблон повреждён только в одном языке: русский обязан доехать
+    broken = dict(admin_texts.TEMPLATES["reason_sync_restored"])
+    broken["ru"] = "{cycles[typo]}"
+    original = admin_texts.TEMPLATES["reason_sync_restored"]
+    admin_texts.TEMPLATES["reason_sync_restored"] = broken
+    try:
+        escalation.notify_ops(admin_texts.Reason("reason_sync_restored"), {})
+    finally:
+        admin_texts.TEMPLATES["reason_sync_restored"] = original
+    assert len(api.sent) == 6, "повреждённый шаблон не должен гасить сигнал"
+
+
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:
     from navbat.db.base import tenant_transaction
     from navbat.dialog.conversation import load_conversation

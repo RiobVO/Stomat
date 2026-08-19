@@ -128,7 +128,14 @@ def test_translations_keep_the_same_placeholders():
             for lang, text in langs.items():
                 if lang != "ru" and holes(text) != expected:
                     broken.append(f"{name}.{key} [{lang}]")
-    assert not broken, "подстановки разошлись с русским: " + ", ".join(broken)
+                # одних имён мало: «{cycles[typo]}» неотличим от «{cycles}» по
+                # имени, но падает при рендере — пробуем отформатировать
+                try:
+                    text.format(**{hole: "X" for hole in holes(text)})
+                except Exception as e:  # noqa: BLE001 — интересен любой сбой формата
+                    broken.append(f"{name}.{key} [{lang}]: {e!r}")
+    assert not broken, "шаблоны разошлись с русским или не рендерятся: " \
+                       + ", ".join(broken)
 
 
 # ── Пакет для вычитки носителем (карта готовности, №20) ───────────────────
