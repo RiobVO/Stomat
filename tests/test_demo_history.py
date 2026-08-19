@@ -216,7 +216,7 @@ def test_count_window_is_measured_in_local_days(app_session_factory, admin_engin
     `--days 0` не видно ни одной прошедшей записи вовсе, а после наполнения в
     субботу повтор в воскресенье вечером терял субботнее утро. CLI объявлял
     исправную историю несуществующей и печатал [FAIL] перед показом."""
-    from navbat.demo_history import summary_bookings
+    from navbat.demo_history import summary_stats
 
     clinic_a = priced_clinic
     now = datetime.now(TZ).replace(hour=12, minute=0, second=0, microsecond=0)
@@ -234,7 +234,7 @@ def test_count_window_is_measured_in_local_days(app_session_factory, admin_engin
                  "action, at) VALUES (:c, :a, 'bot', 'confirm', :at)"),
             {"c": clinic_a, "a": appointment_id, "at": start.replace(minute=5)})
 
-    assert summary_bookings(app_session_factory, clinic_a, days=0, now=now) == 1
+    assert summary_stats(app_session_factory, clinic_a, days=0, now=now).booked == 1
 
 
 def test_cli_fails_when_the_summary_stays_empty(monkeypatch, admin_engine,
@@ -265,6 +265,42 @@ def test_cli_fails_when_the_summary_stays_empty(monkeypatch, admin_engine,
         onboard.main()
 
     assert "[FAIL]" in str(exc.value), str(exc.value)
+    # именно ветка «создано, но мимо окна»: отказ «наливать некуда» означал бы,
+    # что сид вообще ничего не создал, и блокер остался бы непокрытым
+    assert "создано" in str(exc.value), str(exc.value)
+
+
+def test_cli_counts_money_lines_as_a_living_summary(monkeypatch, admin_engine,
+                                                    app_session_factory):
+    """Витрина не пуста и без подтверждений в окне: отмены заранее живут на
+    cancel-аудитах в день приёма и держат денежные строки («предотвращено
+    неявок» с суммой), тогда как confirm датируется накануне и из окна
+    выпадает. Критерий по одним подтверждениям объявлял такую сводку пустой и
+    пугал владельца [FAIL] на исправной клинике (ревью)."""
+    import sys as _sys
+
+    from navbat import onboard
+
+    onboard.seed_demo_clinic(app_session_factory)
+    today = datetime.now(TZ).date()
+    # день с шестью приёмами (DAILY_PLAN), чтобы среди них была отмена;
+    # и он обязан быть рабочим — в воскресенье сеять негде
+    depth = 10 if (today - timedelta(days=10)).weekday() != 6 else 12
+    with admin_engine.begin() as conn:
+        for shift in range(depth):
+            conn.execute(
+                text("INSERT INTO holiday (clinic_id, date, reason) "
+                     "VALUES (:c, :d, 'Праздник')"),
+                {"c": onboard.DEMO_CLINIC_ID, "d": today - timedelta(days=shift)})
+    monkeypatch.setattr(_sys, "argv",
+                        ["onboard", "--demo-history", "--days", str(depth)])
+
+    assert onboard.main() == 0
+
+    with tenant_transaction(app_session_factory, onboard.DEMO_CLINIC_ID) as session:
+        stats = collect_stats(session, today - timedelta(days=depth), today, TZ)
+    assert stats.booked == 0, "предпосылка: подтверждения ушли за границу окна"
+    assert stats.prevented_noshows > 0, "денежные строки и держат витрину"
 
 
 def test_summary_count_sees_non_demo_bookings(app_session_factory, admin_engine,
@@ -272,7 +308,7 @@ def test_summary_count_sees_non_demo_bookings(app_session_factory, admin_engine,
     """Витрина считает ВСЕ подтверждения, не только синтетику. Счётчик, знающий
     лишь про `demo_history`, объявлял бы «наливать некуда» над непустой сводкой:
     слоты могли занять живые записи показа."""
-    from navbat.demo_history import summary_bookings
+    from navbat.demo_history import summary_stats
 
     clinic_a = priced_clinic
     now = datetime.now(TZ).replace(hour=12, minute=0, second=0, microsecond=0)
@@ -289,7 +325,7 @@ def test_summary_count_sees_non_demo_bookings(app_session_factory, admin_engine,
                  "action, at) VALUES (:c, :a, 'bot', 'confirm', :at)"),
             {"c": clinic_a, "a": appointment_id, "at": start})
 
-    assert summary_bookings(app_session_factory, clinic_a, days=0, now=now) == 1
+    assert summary_stats(app_session_factory, clinic_a, days=0, now=now).booked == 1
 
 
 def test_cli_rejects_negative_window(monkeypatch):

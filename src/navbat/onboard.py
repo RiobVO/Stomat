@@ -659,7 +659,7 @@ def main() -> int:
         return 0
     if args.demo_history or args.demo_history_clear:
         from navbat.demo_history import (clear_demo_history, seed_demo_history,
-                                         summary_bookings)
+                                         summary_stats)
 
         if args.demo_history and args.days < 0:  # откат окном не пользуется
             sys.exit("[FAIL] --days не может быть отрицательным: окно истории "
@@ -682,13 +682,16 @@ def main() -> int:
         # — непустая витрина. Ни «создано N» (аудиты могли не попасть в окно),
         # ни «уже есть» (записи могли лежать вне окна) сами по себе этого не
         # доказывают — оба сообщения врали владельцу перед показом (ревью)
-        visible = summary_bookings(session_factory, clinic, args.days, now=now)
-        if visible and created:
-            print(f"[OK] демо-история: создано записей — {created}, "
-                  f"сводка окна показывает {visible}")
-            return 0
-        if visible:
-            print(f"[OK] демо-история уже есть: сводка окна показывает {visible}")
+        summary = summary_stats(session_factory, clinic, args.days, now=now)
+        # пустой считается только сводка без подтверждений И без отмен заранее:
+        # денежные строки живут на cancel-аудитах (они датированы днём приёма)
+        # и остаются, даже когда confirm ушёл за границу окна (ревью)
+        shown = summary.booked + summary.prevented_noshows if summary else 0
+        if shown:
+            head = f"создано записей — {created}" if created else "уже есть"
+            print(f"[OK] демо-история: {head}; сводка окна — записей "
+                  f"{summary.booked}, предотвращено неявок "
+                  f"{summary.prevented_noshows}")
             return 0
         if created:
             sys.exit(f"[FAIL] создано {created} записей, но сводка окна пуста: "
