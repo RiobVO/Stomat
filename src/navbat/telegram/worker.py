@@ -33,7 +33,7 @@ from navbat.dialog.escalation import (
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import Button, Reply, menu_rows, t
 from navbat.telegram.admin_console import AdminConsole, booked_warning
-from navbat.telegram.admin_texts import at
+from navbat.telegram.admin_texts import Reason, at
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.queue import (
@@ -92,8 +92,8 @@ class UpdateWorker:
             if status == "failed":
                 ops_alert(
                     self._notifier,
-                    f"сообщение пациента (чат {claimed.tg_chat_id}) не удалось "
-                    f"обработать — свяжитесь с ним сами",
+                    Reason("reason_update_failed",
+                           chat=claimed.tg_chat_id),
                     {"update_id": claimed.update_id},
                     chat_id=claimed.tg_chat_id,
                     detail=f"апдейт {claimed.update_id} в dead letter: {e}",

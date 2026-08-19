@@ -42,7 +42,7 @@ from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
     collect_daily_stats, render_digest_short, render_questions,
     should_send_digest)
-from navbat.telegram.admin_texts import at
+from navbat.telegram.admin_texts import Reason, at
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
 from navbat.telegram.worker import send_reply
@@ -176,8 +176,8 @@ class ReminderService:
             if status == "failed":
                 ops_alert(
                     self._notifier,
-                    f"напоминание пациенту (чат {row.tg_chat_id}) не доставлено "
-                    f"после {MAX_ATTEMPTS} попыток — свяжитесь с ним сами",
+                    Reason("reason_reminder_failed", chat=row.tg_chat_id,
+                           attempts=MAX_ATTEMPTS),
                     {"reminder": row.id},
                     chat_id=row.tg_chat_id or 0)
             return False

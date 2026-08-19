@@ -40,6 +40,7 @@ from navbat.scheduling.errors import (
     AppointmentNotFoundError,
     SchedulingError,
 )
+from navbat.telegram.admin_texts import Reason
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.calendar")
@@ -202,8 +203,7 @@ class CalendarSync:
             recreated = self._api.insert_event(calendar_id, self._event_body(row))
             self._mark_synced(row.id, event_id=recreated["id"], synced=True)
             fyi_alert(self._notifier, row.tg_chat_id or 0,
-                      "событие записи удалили в календаре — восстановил; "
-                                  "правки записей — через бота", {"appointment": str(row.id)})
+                      Reason("reason_event_restored"), {"appointment": str(row.id)})
             return
         span = _event_span(event, self._clinic_tz())
         if span and span != (row.start, row.finish):
@@ -211,8 +211,7 @@ class CalendarSync:
             self._api.patch_event(calendar_id, event["id"],
                                   {"start": body["start"], "end": body["end"]})
             fyi_alert(self._notifier, row.tg_chat_id or 0,
-                      "событие записи сдвинули в календаре — вернул; "
-                                  "переносы — через бота", {"appointment": str(row.id)})
+                      Reason("reason_event_moved_back"), {"appointment": str(row.id)})
 
     def _apply_manual_batch(self, doctor_id: uuid.UUID, events: list[dict],
                             buffer_min: int) -> tuple[bool, bool]:
@@ -326,9 +325,8 @@ class CalendarSync:
                 tz = self._clinic_tz()
                 ops_alert(
                     self._notifier,
-                    f"в календаре два приёма на одно время "
-                    f"({span[0].astimezone(tz):%d.%m %H:%M}) — бот учитывает "
-                    f"только первый, второй в записи не виден",
+                    Reason("reason_double_booking",
+                           when=f"{span[0].astimezone(tz):%d.%m %H:%M}"),
                     {"event": event["id"]})
                 return moved, True
             log.warning("событие %s: конфликт не разрешён (живой hold?) — "
@@ -631,8 +629,7 @@ class CalendarSync:
                                  Reply(t("conflict_moved", lang,
                                          old=old_label, new=new_label), buttons))
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
-                  f"запись {old_label} вытеснена ручным событием — "
-                              f"перенесена на {new_label}",
+                  Reason("reason_relocated", old=old_label, new=new_label),
                               {"appointment": str(victim.id)})
 
     def _cancel_unrelocatable(self, scheduler: SchedulingEngine, victim,
@@ -649,8 +646,7 @@ class CalendarSync:
         self._notify_patient(victim.tg_chat_id,
                              Reply(t("conflict_cancelled", lang, old=old_label)))
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
-                  f"запись {old_label} вытеснена ручным событием, "
-                              f"перенести некуда — отменена",
+                  Reason("reason_unrelocatable", old=old_label),
                               {"appointment": str(victim.id)})
 
     def _relocation_slot(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,

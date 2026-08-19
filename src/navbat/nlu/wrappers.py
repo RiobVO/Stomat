@@ -23,6 +23,7 @@ from navbat.dialog.escalation import (
     ops_alert,
     system_alert,
 )
+from navbat.telegram.admin_texts import Reason
 from navbat.nlu.extractor import ExtractionError, Extractor, LLMDisabledError
 from navbat.nlu.schema import Extraction
 
@@ -153,8 +154,7 @@ class UsageRecorder:
         self._alerted_on = today
         ops_alert(
             self._notifier,
-            f"дневной лимит LLM-токенов ({self._cap}) исчерпан — "
-            f"бот эскалирует диалоги до конца дня", {"cap": self._cap})
+            Reason("reason_llm_cap", cap=self._cap), {"cap": self._cap})
 
 
 class DriftTrackingExtractor:
