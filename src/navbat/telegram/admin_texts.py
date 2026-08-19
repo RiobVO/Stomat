@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import logging
+from string import Formatter
 
 LANGS = ("ru", "uz")
 log = logging.getLogger("navbat.admin_texts")
@@ -725,10 +726,24 @@ def render_reason(key: str, lang: str, params: dict) -> str:
         # отдаёт шаблон как есть, и забытый параметр уезжал владельцу
         # буквальным «{cycles}» — это не сообщение, а мусор
         template = TEMPLATES[key].get(lang) or TEMPLATES[key][DEFAULT_LANG]
+        holes = {name.split("[")[0].split(".")[0]
+                 for _, name, _, _ in Formatter().parse(template) if name}
+        unused = set(params) - holes
+        if unused:
+            # format молча игнорирует лишние аргументы: убрали плейсхолдер из
+            # шаблона (правка перевода) — и данные исчезли из алерта незаметно
+            log.warning("причина %r (%s): подстановки не использованы — %s",
+                        key, lang, ", ".join(sorted(unused)))
         return template.format(**params)
-    except (KeyError, IndexError, ValueError, TypeError) as e:
+    # шаблон — данные, а не код: сломать его можно многими способами
+    # («{cycles.typo}» даёт AttributeError, незакрытая скобка — ValueError), и
+    # ни один не вправе отменить доставку сигнала
+    except Exception as e:  # noqa: BLE001
         log.error("причина %r не отрендерилась (%s): %r", key, lang, e)
-        return f"{key} {params}" if params else key
+        if not params:
+            return key
+        return f"{key} " + ", ".join(f"{name}={value}"
+                                     for name, value in params.items())
 
 
 class Reason(str):
@@ -761,7 +776,11 @@ def admin_lang_resolver(session_factory, clinic_id):
         try:
             with tenant_transaction(session_factory, clinic_id) as session:
                 conv = load_conversation(session, chat_id)
-        except Exception:  # алерт важнее языка — молча падаем на русский
+        except Exception as e:  # noqa: BLE001 — алерт важнее языка
+            # но не молча: иначе узбекский владелец получает русский экран, и
+            # причину деградации никто не видит (ревью)
+            log.warning("язык админ-чата %s не определён (%r) — русский",
+                        chat_id, e)
             return DEFAULT_LANG
         lang = conv.context.extras.get("adm_lang")
         return lang if lang in LANGS else DEFAULT_LANG

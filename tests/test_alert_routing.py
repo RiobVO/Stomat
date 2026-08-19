@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from navbat.dialog.escalation import fyi_alert, ops_alert, system_alert
@@ -307,6 +309,37 @@ def test_notifier_factory_always_knows_the_language(app_session_factory,
     assert "tiklandi" in api.sent[-1][1], api.sent[-1][1]
 
 
+def test_production_builds_notifier_through_the_factory():
+    """Сборка нотификатора мимо фабрики означает алерты по-русски независимо от
+    языка владельца — у standalone-синка это уже случилось. Юнит фабрики такого
+    не поймает: проверяем структурно, что прямой конструктор в рабочем коде
+    остался только там, где он определён (ревью)."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "navbat"
+    offenders = sorted(
+        path.relative_to(root).as_posix() for path in root.rglob("*.py")
+        if path.name != "escalation.py"
+        and "TelegramEscalation(" in path.read_text(encoding="utf-8"))
+    assert not offenders, ("нотификатор собирается мимо build_escalation: "
+                           + ", ".join(offenders))
+
+
+def test_language_resolution_failure_is_logged(caplog):
+    """Резолвер языка падает на любой ошибке БД и отдаёт русский — это верно
+    (алерт важнее языка), но молча: узбекский владелец получал русский экран, и
+    причину деградации никто не видел (ревью)."""
+    from navbat.telegram.admin_texts import admin_lang_resolver
+
+    def broken_session_factory():
+        raise RuntimeError("база недоступна")
+
+    resolve = admin_lang_resolver(broken_session_factory, uuid.uuid4())
+    with caplog.at_level("WARNING", logger="navbat.admin_texts"):
+        assert resolve(ADMIN_CHAT) == "ru"
+    assert caplog.records, "сбой резолвера обязан оставить след"
+
+
 def test_broken_reason_template_does_not_swallow_the_alert(caplog):
     """Сигнал важнее перевода.
 
@@ -347,6 +380,33 @@ def test_broken_reason_template_does_not_swallow_the_alert(caplog):
     assert "{" not in api.sent[-1][1], api.sent[-1][1]
     assert any("reason_sync_restored" in record.message
                for record in caplog.records), caplog.records
+
+    # обращение к атрибуту («{cycles.typo}») даёт AttributeError, а не KeyError:
+    # список исключений легко оставить неполным, поэтому проверяем и его
+    broken = dict(admin_texts.TEMPLATES["reason_sync_stuck"])
+    broken["ru"] = "{cycles.typo}"
+    original = admin_texts.TEMPLATES["reason_sync_stuck"]
+    admin_texts.TEMPLATES["reason_sync_stuck"] = broken
+    try:
+        escalation.notify_ops(admin_texts.Reason("reason_sync_stuck", cycles=3), {})
+    finally:
+        admin_texts.TEMPLATES["reason_sync_stuck"] = original
+    assert len(api.sent) == 10, api.sent
+    assert "{" not in api.sent[-1][1], api.sent[-1][1]
+
+
+def test_extra_parameter_is_reported(caplog):
+    """Лишняя подстановка молча теряется: `format` игнорирует неиспользованные
+    аргументы. Если плейсхолдер уберут из шаблона (а его будет править носитель),
+    число циклов исчезнет из алерта и никто об этом не узнает (ревью)."""
+    from navbat.telegram.admin_texts import render_reason
+
+    with caplog.at_level("WARNING", logger="navbat.admin_texts"):
+        text = render_reason("reason_sync_restored", "ru", {"cycles": 3})
+
+    assert "восстановлена" in text, text  # сигнал доходит как есть
+    assert any("cycles" in record.message for record in caplog.records), \
+        caplog.records
 
 
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:
