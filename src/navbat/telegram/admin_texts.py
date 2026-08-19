@@ -721,7 +721,11 @@ def render_reason(key: str, lang: str, params: dict) -> str:
     администратор не узнал бы, что синк стоит. Поэтому сбой рендера уходит в
     лог, а получатель видит ключ с подстановками: некрасиво, но доходит."""
     try:
-        return plain(key, lang, **params)
+        # форматируем ВСЕГДА, даже без подстановок: plain() при пустых kwargs
+        # отдаёт шаблон как есть, и забытый параметр уезжал владельцу
+        # буквальным «{cycles}» — это не сообщение, а мусор
+        template = TEMPLATES[key].get(lang) or TEMPLATES[key][DEFAULT_LANG]
+        return template.format(**params)
     except (KeyError, IndexError, ValueError, TypeError) as e:
         log.error("причина %r не отрендерилась (%s): %r", key, lang, e)
         return f"{key} {params}" if params else key

@@ -253,6 +253,60 @@ def test_reason_speaks_the_language_of_each_admin_chat(app_session_factory,
     assert "бэкапы БД не снимаются" in api.sent[-1][1]
 
 
+def test_escalation_alert_is_translated_too(app_session_factory, clinic_a):
+    """Тот же перевод в канале 🔴 эскалации, вместе с выжимкой брони.
+
+    Проверяется отдельно от ops/FYI: возврат `reason=reason` именно в notify()
+    оставил бы остальные тесты зелёными, а узбекский владелец снова читал бы
+    русский экран там, где бот его зовёт (ревью)."""
+    from navbat.dialog.conversation import load_conversation, save_conversation
+    from navbat.db.base import tenant_transaction
+    from navbat.telegram.admin_texts import Reason
+
+    ru_chat, uz_chat = 5252, 5353
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = load_conversation(session, uz_chat)
+        conv.context.extras["adm_lang"] = "uz"
+        save_conversation(session, conv)
+
+    api = FakeTelegramAPI()
+    escalation = TelegramEscalation(
+        api, admin_chat_id=[ru_chat, uz_chat],
+        lang_of=lambda chat: _admin_lang(app_session_factory, clinic_a, chat))
+
+    escalation.notify(555, Reason("reason_wants_human"),
+                      {"service": "cleaning", "date": "2026-08-01"})
+
+    sent = {chat: text for chat, text, _ in api.sent}
+    assert "просит администратора" in sent[ru_chat], sent[ru_chat]
+    assert "услуга — Чистка" in sent[ru_chat], sent[ru_chat]
+    assert "gaplashmoqchi" in sent[uz_chat], sent[uz_chat]
+    assert "xizmat — Tish tozalash" in sent[uz_chat], sent[uz_chat]
+
+
+def test_notifier_factory_always_knows_the_language(app_session_factory,
+                                                    admin_engine, clinic_a):
+    """Нотификатор собирается фабрикой, потому что забыть резолвер языка легко:
+    standalone-синк (`python -m navbat.calendar`) собирал его сам и рассылал
+    причины по-русски даже узбекскому владельцу (ревью)."""
+    from navbat.dialog.conversation import load_conversation, save_conversation
+    from navbat.db.base import tenant_transaction
+    from navbat.telegram.admin_texts import Reason
+    from navbat.telegram.escalation import build_escalation
+
+    uz_chat = 6464
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = load_conversation(session, uz_chat)
+        conv.context.extras["adm_lang"] = "uz"
+        save_conversation(session, conv)
+
+    api = FakeTelegramAPI()
+    escalation = build_escalation(api, app_session_factory, clinic_a, [uz_chat])
+    escalation.notify_ops(Reason("reason_sync_restored"), {})
+
+    assert "tiklandi" in api.sent[-1][1], api.sent[-1][1]
+
+
 def test_broken_reason_template_does_not_swallow_the_alert():
     """Сигнал важнее перевода.
 
@@ -271,6 +325,11 @@ def test_broken_reason_template_does_not_swallow_the_alert():
     escalation.notify_ops(admin_texts.Reason("reason_sync_stuck", cycle=3), {})
     assert len(api.sent) == 4, api.sent
 
+    # параметров не передали вовсе: подстановка не должна уехать владельцу
+    # буквальным «{cycles}» — это не сообщение, а мусор
+    escalation.notify_ops(admin_texts.Reason("reason_sync_stuck"), {})
+    assert "{cycles}" not in api.sent[-1][1], api.sent[-1][1]
+
     # шаблон повреждён только в одном языке: русский обязан доехать
     broken = dict(admin_texts.TEMPLATES["reason_sync_restored"])
     broken["ru"] = "{cycles[typo]}"
@@ -280,7 +339,7 @@ def test_broken_reason_template_does_not_swallow_the_alert():
         escalation.notify_ops(admin_texts.Reason("reason_sync_restored"), {})
     finally:
         admin_texts.TEMPLATES["reason_sync_restored"] = original
-    assert len(api.sent) == 6, "повреждённый шаблон не должен гасить сигнал"
+    assert len(api.sent) == 8, "повреждённый шаблон не должен гасить сигнал"
 
 
 def _admin_lang(session_factory, clinic_id, chat_id: int) -> str:

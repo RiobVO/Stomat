@@ -23,7 +23,7 @@ from navbat.calendar.sync import CalendarSync
 from navbat.crypto import decrypt_text
 from navbat.db.base import make_app_engine, make_session_factory, tenant_transaction
 from navbat.telegram.api import TelegramAPI
-from navbat.telegram.escalation import TelegramEscalation
+from navbat.telegram.escalation import build_escalation
 
 log = logging.getLogger("navbat.calendar")
 
@@ -54,7 +54,8 @@ def build_sync(session_factory: sessionmaker[Session],
     tg_api = notifier = None
     if row.tg_bot_token_encrypted:
         tg_api = TelegramAPI(decrypt_text(row.tg_bot_token_encrypted))
-        notifier = TelegramEscalation(tg_api, row.tg_admin_chat_ids)
+        notifier = build_escalation(tg_api, session_factory, clinic_id,
+                                    row.tg_admin_chat_ids)
     return CalendarSync(session_factory, clinic_id, api=api,
                         notifier=notifier, tg_api=tg_api)
 
