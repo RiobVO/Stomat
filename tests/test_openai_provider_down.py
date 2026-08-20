@@ -59,6 +59,39 @@ def test_server_error_becomes_provider_down(monkeypatch):
         make_extractor(monkeypatch, error).extract("чистку завтра")
 
 
+def test_truncated_answer_degrades_softly(monkeypatch):
+    """Обрезанный ответ модели — негодный ответ, а не сбой провайдера.
+
+    LengthFinishReasonError и пустой choices наследуют OpenAIError, но не
+    APIError, поэтому улетали наружу мимо обоих обработчиков: сообщение
+    пациента уходило в dead letter, а администратор получал алерт вместо
+    мягкого «не понял»."""
+    from types import SimpleNamespace
+
+    from navbat.nlu.extractor import ExtractionError
+
+    completion = SimpleNamespace(choices=[], usage=None)
+    error = openai.LengthFinishReasonError(completion=completion)
+    with pytest.raises(ExtractionError):
+        make_extractor(monkeypatch, error).extract("чистку завтра")
+
+
+def test_answer_without_choices_degrades_softly(monkeypatch):
+    from types import SimpleNamespace
+
+    from navbat.nlu.extractor import ExtractionError
+
+    class _Empty:
+        def parse(self, **kwargs):
+            return SimpleNamespace(choices=[], usage=None)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    extractor = OpenAIExtractor()
+    extractor._client = SimpleNamespace(chat=SimpleNamespace(completions=_Empty()))
+    with pytest.raises(ExtractionError):
+        extractor.extract("чистку завтра")
+
+
 # ── Сборка боевой цепочки ────────────────────────────────────────────────────
 
 def test_build_with_gemini_key_inserts_fallback(monkeypatch, app_session_factory,

@@ -42,7 +42,10 @@ class OpenAIExtractor:
         self._system_prompt = prompt or _PROMPT_PATH.read_text(encoding="utf-8")
 
     def extract(self, text: str) -> Extraction:
-        from openai import APIError  # модуль уже загружен в __init__
+        # модуль уже загружен в __init__; OpenAIError — база SDK, APIError её
+        # подкласс (сеть/5xx/429), а обрезанный ответ и прочие негодные
+        # результаты приходят другими подклассами
+        from openai import APIError, OpenAIError
 
         messages = [
             {"role": "system", "content": self._system_prompt},
@@ -69,6 +72,8 @@ class OpenAIExtractor:
                 if self._on_usage and response.usage:
                     self._on_usage(response.usage.prompt_tokens,
                                    response.usage.completion_tokens)
+                if not response.choices:
+                    raise ExtractionError("ответ без choices")
                 message = response.choices[0].message
                 if message.refusal or message.parsed is None:
                     raise ExtractionError(message.refusal or "пустой parsed")
@@ -77,6 +82,15 @@ class OpenAIExtractor:
                 # сеть/5xx/429 после встроенных ретраев SDK — аутэйдж
                 # провайдера, топливо для FallbackExtractor
                 raise ProviderDownError(f"openai: {e}") from e
+            except OpenAIError as e:
+                # негодный ответ (обрезан по лимиту токенов и т.п.) — это не
+                # аутэйдж и не наша ошибка: путь тот же, что у кривого JSON,
+                # иначе сообщение пациента уходит в dead letter с алертом
+                # админу вместо мягкого «не понял»
+                last_error = e
+                log.warning("NLU: ответ негоден (попытка %d): %s", attempt + 1, e)
+                if self._on_repair and attempt < REPAIR_TRIES:
+                    self._on_repair()
             except (ValidationError, ExtractionError) as e:
                 last_error = e
                 log.warning("NLU: невалидный ответ (попытка %d): %s", attempt + 1, e)

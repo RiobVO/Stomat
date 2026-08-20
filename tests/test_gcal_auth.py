@@ -51,3 +51,21 @@ def test_load_refresh_token_decrypts(app_session_factory, admin_engine, clinic_a
 def test_load_refresh_token_missing_is_config_error(app_session_factory, clinic_a):
     with pytest.raises(SystemExit):
         load_refresh_token(app_session_factory, clinic_a)
+
+
+def test_save_refresh_token_round_trip(app_session_factory, clinic_a):
+    from navbat.calendar.auth import save_refresh_token
+
+    save_refresh_token(app_session_factory, clinic_a, "REFRESH")
+    assert load_refresh_token(app_session_factory, clinic_a) == "REFRESH"
+
+
+def test_save_refresh_token_rejects_unknown_clinic(app_session_factory):
+    """Опечатка в --clinic задевает ноль строк, а одноразовый код Google уже
+    потрачен: оператор не должен уйти с «подключённым» календарём."""
+    import uuid as _uuid
+
+    from navbat.calendar.auth import save_refresh_token
+
+    with pytest.raises(SystemExit):
+        save_refresh_token(app_session_factory, _uuid.uuid4(), "REFRESH")

@@ -115,14 +115,28 @@ def run_loopback_flow(clinic_id: uuid.UUID, port: int) -> None:
     with httpx.Client(timeout=15) as client:
         refresh_token = exchange_code(client, received["code"], client_id,
                                       client_secret, redirect_uri)
-    session_factory = make_session_factory(make_app_engine())
+    save_refresh_token(make_session_factory(make_app_engine()), clinic_id,
+                       refresh_token)
+    print(f"[OK] refresh token сохранён для клиники {clinic_id}")
+
+
+def save_refresh_token(session_factory, clinic_id: uuid.UUID,
+                       refresh_token: str) -> None:
+    """Сохранить refresh-токен клиники; несуществующая клиника — отказ.
+
+    UPDATE по опечатке в --clinic задел бы ноль строк, а код Google
+    одноразовый и уже потрачен: молчаливый [OK] оставил бы оператора с
+    «подключённым» календарём, который не работает.
+    """
     with tenant_transaction(session_factory, clinic_id) as session:
-        session.execute(
+        saved = session.execute(
             text("UPDATE clinic SET gcal_refresh_token_encrypted = :token "
                  "WHERE id = :id"),
             {"token": encrypt_text(refresh_token), "id": clinic_id},
-        )
-    print(f"[OK] refresh token сохранён для клиники {clinic_id}")
+        ).rowcount
+    if not saved:
+        sys.exit(f"[FAIL] клиника {clinic_id} не найдена — токен не сохранён, "
+                 f"повторите авторизацию с верным --clinic")
 
 
 def main() -> int:
