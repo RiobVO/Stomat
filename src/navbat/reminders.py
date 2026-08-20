@@ -106,7 +106,12 @@ class ReminderService:
                         -- failed не воскрешаем: по нему уже был алерт админу
                         SET send_at = EXCLUDED.send_at, status = 'pending',
                             attempts = 0
-                        WHERE reminder.status IN ('pending', 'sent')
+                        -- cancelled тоже воскрешаем: строку гасит начавшийся
+                        -- приём, а его могут перенести в будущее (правка
+                        -- события в Google). Сюда попадают только будущие
+                        -- booked-записи живого чата, поэтому отменённая
+                        -- запись и «забытый» пациент не воскреснут
+                        WHERE reminder.status IN ('pending', 'sent', 'cancelled')
                           AND reminder.send_at IS DISTINCT FROM EXCLUDED.send_at
                     """),
                     {"kind": _kind(offset), "offset": offset},

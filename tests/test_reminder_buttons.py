@@ -65,6 +65,60 @@ def test_remind_cancel_runs_full_cancel_flow(app_session_factory, admin_engine,
     assert fsm_state(admin_engine) == "idle"
 
 
+def test_remind_cancel_touches_only_own_appointment(app_session_factory,
+                                                    admin_engine, clinic_a,
+                                                    doctor_a, service_cleaning):
+    """Кнопка напоминания несёт id записи — значит, id надо проверять.
+
+    callback_data приходит от клиента, и запись ищется по одному id: чужой
+    id внутри той же клиники отменил бы чужую запись (RLS изолирует клиники,
+    но не пациентов между собой)."""
+    victim_chat = CHAT + 1
+    victim_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                        service_cleaning, next_monday(), "11:00",
+                        chat_id=victim_chat)
+    engine = make_engine(app_session_factory, clinic_a)
+
+    reply = engine.handle_action(CHAT, f"remind_cancel:{victim_id}")
+    assert not reply.buttons, "бот предложил отменить чужую запись"
+    assert fsm_state(admin_engine, CHAT) == "idle"
+    with admin_engine.begin() as conn:
+        status = conn.execute(text("SELECT status FROM appointment "
+                                   "WHERE id = :id"), {"id": victim_id}).scalar_one()
+    assert status == "booked"
+
+
+def test_remind_cancel_after_the_visit_started(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a,
+                                               service_cleaning):
+    """Напоминание за 2 часа висит в чате и после начала приёма.
+
+    Тап по «Отменить запись» через минуту после начала — это неявка, а не
+    предотвращённая неявка: освобождать прошедший слот не для кого, а отмена
+    из напоминания идёт в сводку владельца деньгами."""
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, next_monday(), "09:00",
+                             chat_id=CHAT)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE appointment SET time_range = tstzrange("
+            "now() - interval '1 minute', now() + interval '29 minutes', '[)')"
+            " WHERE id = :id"), {"id": appointment_id})
+    engine = make_engine(app_session_factory, clinic_a)
+
+    reply = engine.handle_action(CHAT, f"remind_cancel:{appointment_id}")
+    assert not reply.buttons, "бот предложил отменить начавшийся приём"
+    with admin_engine.begin() as conn:
+        status = conn.execute(text("SELECT status FROM appointment "
+                                   "WHERE id = :id"), {"id": appointment_id}).scalar_one()
+        reminder_cancels = conn.execute(text(
+            "SELECT count(*) FROM appointment_audit "
+            "WHERE action = 'cancel' AND actor = 'reminder'")).scalar_one()
+    assert status == "booked"
+    assert reminder_cancels == 0, \
+        "состоявшийся приём попал в сводку как предотвращённая неявка"
+
+
 def test_remind_cancel_for_already_cancelled(app_session_factory, admin_engine,
                                              clinic_a, doctor_a, service_cleaning):
     appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,

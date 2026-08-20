@@ -161,6 +161,39 @@ def test_reminder_about_passed_appointment_is_not_sent(app_session_factory,
         "просроченная строка осталась pending и будет тянуться вечно"
 
 
+def test_appointment_moved_back_to_future_rearms_reminder(app_session_factory,
+                                                          admin_engine, clinic_a,
+                                                          doctor_a,
+                                                          service_cleaning):
+    """Запись переехала из прошлого в будущее — напоминание обязано вернуться.
+
+    Гашение напоминаний о начавшихся приёмах не должно становиться билетом
+    в один конец: приём можно перенести и после его начала (правка события
+    в Google, ручной перенос), и тогда пациент остался бы без напоминания
+    о новом времени."""
+    day = far_monday()
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, day, "09:00", chat_id=CHAT)
+    service, _, _ = make_service_obj(app_session_factory, clinic_a)
+    service.reconcile()
+    with admin_engine.begin() as conn:  # приём начался, пока процесс стоял
+        conn.execute(text(
+            "UPDATE appointment SET time_range = tstzrange("
+            "now() - interval '1 hour', now() - interval '30 minutes', '[)')"))
+    service.reconcile()
+    assert {r.status for r in reminder_rows(admin_engine)} == {"cancelled"}
+
+    new_start = at_tashkent(day, "15:00")
+    sched.reschedule(appointment_id, new_start)
+    service.reconcile()
+
+    rows = reminder_rows(admin_engine)
+    assert [r.status for r in rows] == ["pending", "pending"], \
+        "погашенное напоминание не вернулось — о новом времени никто не скажет"
+    assert {r.kind: r.send_at for r in rows}["120m"] == \
+        new_start - timedelta(hours=2)
+
+
 def test_reminder_buttons_belong_to_their_own_appointment(app_session_factory,
                                                           admin_engine, clinic_a,
                                                           doctor_a,

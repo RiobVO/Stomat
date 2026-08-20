@@ -64,6 +64,29 @@ def test_forget_anonymizes_patient_and_wipes_dialog(app_session_factory,
     assert "[OK]" in sent_to(api, ADMIN_CHAT)[-1][0]
 
 
+def test_forget_reminders_do_not_come_back(app_session_factory, admin_engine,
+                                           clinic_a, doctor_a, service_cleaning):
+    """Reconcile воскрешает погашенные напоминания (перенос приёма из прошлого
+    в будущее), но не те, что погасил /forget: запись обезличена, чата у неё
+    больше нет."""
+    from navbat.reminders import ReminderService
+
+    book_directly(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                  next_monday(), "09:00")
+    worker, _, _ = make_worker(app_session_factory, clinic_a, [],
+                               admin_chat_id=ADMIN_CHAT)
+    ReminderService(app_session_factory, clinic_a).reconcile()
+    put_message(app_session_factory, clinic_a, f"/forget {CHAT}",
+                chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    ReminderService(app_session_factory, clinic_a).reconcile()
+    with admin_engine.begin() as conn:
+        statuses = conn.execute(
+            text("SELECT DISTINCT status FROM reminder")).scalars().all()
+    assert statuses == ["cancelled"], "бот снова напомнит стёртому чату"
+
+
 def test_forget_takes_patient_out_of_the_waitlist(app_session_factory,
                                                   admin_engine, clinic_a,
                                                   doctor_a, service_cleaning):
