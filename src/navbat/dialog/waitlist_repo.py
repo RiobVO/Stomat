@@ -40,6 +40,15 @@ def active_for_chat_service(session: Session, tg_chat_id: int,
     ).one_or_none()
 
 
+def active_by_id(session: Session, waitlist_id: int) -> Row | None:
+    """Активная строка очереди по id — для тапа по предложенному слоту."""
+    return session.execute(
+        text(f"SELECT id, service_id, tg_chat_id FROM waitlist "
+             f"WHERE id = :id AND status IN {_ACTIVE}"),
+        {"id": waitlist_id},
+    ).one_or_none()
+
+
 def list_waiting(session: Session) -> list[Row]:
     """Активные записи, oldest-first — для матчера."""
     return list(session.execute(

@@ -25,11 +25,7 @@ from navbat.dialog import (
     services_repo,
     waitlist_repo,
 )
-from navbat.dialog.conversation import (
-    get_chat_lang,
-    load_conversation,
-    save_conversation,
-)
+from navbat.dialog.conversation import get_chat_lang
 from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
@@ -162,9 +158,9 @@ class ReminderService:
 
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             lang = get_chat_lang(session, row.tg_chat_id)
-            # строка conversation обязана существовать: send_reply кладёт
-            # туда map кнопок (callback придёт спустя часы)
-            save_conversation(session, load_conversation(session, row.tg_chat_id))
+        # строка conversation тут не нужна и не создаётся: кнопки напоминания
+        # несут запись сами (сырой callback), а слепая перезапись диалога из
+        # фонового потока затирала бы то, что пациент делает прямо сейчас
         local = row.start.astimezone(ZoneInfo(row.timezone))
         reply = Reply(
             t("reminder", lang, service=service_label(row.service or "checkup", lang),
@@ -267,17 +263,18 @@ class ReminderService:
             service_key = services_repo.service_name(session, row.service_id) \
                 or "checkup"
             svc = service_label(service_key, lang)
-            # ctx.service обязателен: slot:-кнопка услугу не несёт, _on_slot_chosen
-            # читает её из контекста. Заодно строка conversation должна
-            # существовать — send_reply кладёт туда map slot:-кнопки.
-            conv = load_conversation(session, row.tg_chat_id)
-            conv.context.service = service_key
-            save_conversation(session, conv)
+        # Кнопка несёт слот сама (сырой wl:, как кнопка выхода рядом):
+        # предложение висит часами, а карта кнопок одна на чат и
+        # перезаписывается любой следующей отправкой. Услуга берётся из строки
+        # очереди при тапе — писать её в диалог из фонового потока нельзя:
+        # пациент может в этот момент оформлять совсем другую запись.
+        # В callback_data 64 байта, поэтому время — минуты эпохи, а врач
+        # подбирается при тапе (очередь и так обещает «любого врача»).
         reply = Reply(
             t("waitlist_slot_offer", lang, service=svc, when=f"{local:%d.%m %H:%M}"),
             button_rows=(
                 (Button(f"{local:%d.%m %H:%M}",
-                        f"slot:{doctor_id}:{start.isoformat()}"),),
+                        f"wl:take:{row.id}:{int(start.timestamp()) // 60}"),),
                 (Button(t("btn_waitlist_leave", lang), f"wl:leave:{row.id}"),),
             ),
         )
