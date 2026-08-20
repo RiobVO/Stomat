@@ -51,6 +51,18 @@ RECLAIM_EVERY = 60.0   # сек между реклеймами зависших
 RATE_MAX = 5           # сообщений на чат за окно — дальше NLU не дёргаем
 RATE_WINDOW_SECONDS = 10
 
+# Пациентские кнопки, которые живут дольше одной отправки, поэтому несут своё
+# действие сами и не занимают номер в tg_actions-map: карта одна на чат и
+# перезаписывается КАЖДОЙ отправкой кнопок. Календарь и лист ожидания (П-4,
+# К-1) приходят часами позже, кнопка выхода из заморозки висит, пока пациент
+# ждёт администратора, а напоминание живёт до самого приёма — у пациента может
+# быть несколько записей, и пронумерованная кнопка под ранним напоминанием
+# указала бы на запись из последнего пуша.
+RAW_CALLBACK_PREFIXES = ("cal:", "wl:", "unfreeze", "attend:", "remind_cancel:")
+# Плюс админские префиксы: их роутинг — отдельные ветки в _handle (до паузы),
+# в пациентскую карту кнопок они попадать не должны тем более.
+UNNUMBERED_PREFIXES = RAW_CALLBACK_PREFIXES + ("stats:", "adm:")
+
 
 class UpdateWorker:
     def __init__(
@@ -239,12 +251,13 @@ class UpdateWorker:
                 self._api.answer_callback_query(callback["id"])
                 self._send(chat_id, self._paused_reply(chat_id))
                 return
-            if data.startswith(("cal:", "wl:", "unfreeze")):
-                # сырые короткие callback'и: календарь (П-4), лист ожидания и
-                # выход из заморозки — идут мимо tg_actions-map (тот
-                # перезаписывается любой отправкой кнопок); wl:-пуш приходит
-                # часами позже отмены, а кнопка выхода висит, пока пациент
-                # ждёт администратора, и напоминание успевает занять её номер
+            if data.startswith(RAW_CALLBACK_PREFIXES):
+                # сырые короткие callback'и: календарь (П-4), лист ожидания,
+                # выход из заморозки и кнопки напоминания — идут мимо
+                # tg_actions-map (тот перезаписывается любой отправкой кнопок);
+                # wl:-пуш приходит часами позже отмены, кнопка выхода висит,
+                # пока пациент ждёт администратора, а напоминание живёт до
+                # самого приёма — любой следующий пуш занял бы их номера
                 action = data
             else:
                 action = self._lookup_action(chat_id, data) or "stale"
@@ -578,8 +591,7 @@ def _number_buttons(session_factory: sessionmaker[Session], clinic_id: uuid.UUID
     for row in rows:
         out_row = []
         for b in row:
-            if b.action.startswith(("cal:", "stats:", "adm:", "wl:",
-                                    "unfreeze")):
+            if b.action.startswith(UNNUMBERED_PREFIXES):
                 out_row.append(b)
             else:
                 index = str(len(mapping) + 1)
