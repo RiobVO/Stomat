@@ -316,8 +316,13 @@ class ReminderService:
             stats = collect_daily_stats(session, moment.date(), tz)
             questions = questions_repo.for_day(session, moment.date(),
                                                row.timezone)
-        try:
-            for chat in self._digest_chat_ids:  # сводка всем админ-чатам (M4)
+        delivered = 0
+        for chat in self._digest_chat_ids:  # сводка всем админ-чатам (M4)
+            # сбой одного получателя не отменяет остальных и не отменяет день:
+            # цикл напоминаний повторяет попытку каждые 30 с, пока день не
+            # отмечен, и мёртвый чат размножал бы сводку у живых до полуночи
+            # (веер алертов изолирован по чатам ровно по этой причине)
+            try:
                 # у каждого админ-чата свой язык консоли (карта, №16)
                 lang = self._admin_lang(chat)
                 # короткий дайджест (В): три строки ценности; полная сводка
@@ -329,8 +334,12 @@ class ReminderService:
                 self._tg_api.send_message(
                     chat, digest, parse_mode="HTML",
                     buttons=(Button(at("digest_more", lang), "stats:full"),))
-        except Exception as e:
-            log.warning("вечерняя сводка не доставлена: %s", e)
+                delivered += 1
+            except Exception as e:
+                log.warning("вечерняя сводка: чат %s не получил её (%s)", chat, e)
+        if not delivered:
+            # не дошла никому — день не отмечаем, попытка повторится
+            log.warning("вечерняя сводка не доставлена ни одному админ-чату")
             return False
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             session.execute(
