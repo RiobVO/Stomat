@@ -132,6 +132,35 @@ def test_send_due_sends_only_ripe_with_buttons(app_session_factory, admin_engine
     assert statuses == {"sent"}
 
 
+def test_reminder_about_passed_appointment_is_not_sent(app_session_factory,
+                                                       admin_engine, clinic_a,
+                                                       doctor_a, service_cleaning):
+    """Приём уже прошёл, а напоминание о нём осталось pending.
+
+    Так бывает после простоя процесса (обновление, упавший хост) и после
+    переноса записи ближе, чем офсет: строка остаётся с прежним send_at.
+    Статус приёма после визита никто не меняет — он вечно 'booked', поэтому
+    сама по себе такая строка не гаснет. Отправлять её нельзя: пациент получит
+    напоминание о визите, который состоялся, с живой кнопкой «Отменить
+    запись» — а отмена из напоминания идёт в сводку владельца как
+    предотвращённая неявка с деньгами."""
+    book(app_session_factory, clinic_a, doctor_a, service_cleaning,
+         far_monday(), "09:00", chat_id=CHAT)
+    service, api, _ = make_service_obj(app_session_factory, clinic_a)
+    service.reconcile()
+    with admin_engine.begin() as conn:  # приём состоялся, пока процесс стоял
+        conn.execute(text(
+            "UPDATE appointment SET time_range = tstzrange("
+            "now() - interval '3 hours', now() - interval '2 hours', '[)')"))
+    ripen_all(admin_engine)
+
+    service.reconcile()
+    assert service.send_due() == 0, "напоминание о прошедшем приёме ушло пациенту"
+    assert api.sent == []
+    assert {r.status for r in reminder_rows(admin_engine)} == {"cancelled"}, \
+        "просроченная строка осталась pending и будет тянуться вечно"
+
+
 def test_reminder_buttons_belong_to_their_own_appointment(app_session_factory,
                                                           admin_engine, clinic_a,
                                                           doctor_a,

@@ -111,12 +111,17 @@ class ReminderService:
                     """),
                     {"kind": _kind(offset), "offset": offset},
                 )
-            # запись отменили/перенесли в прошлое и т.п. — pending гасим
+            # запись отменили/перенесли в прошлое и т.п. — pending гасим.
+            # Приём, который уже начался, — тоже: после визита статус остаётся
+            # 'booked' навсегда, и строка тянулась бы вечно (перенос ближе
+            # офсета оставляет её с прежним send_at, простой процесса — с
+            # созревшим)
             session.execute(text("""
                 UPDATE reminder r SET status = 'cancelled'
                 FROM appointment a
                 WHERE a.id = r.appointment_id
-                  AND r.status = 'pending' AND a.status != 'booked'
+                  AND r.status = 'pending'
+                  AND (a.status != 'booked' OR lower(a.time_range) <= now())
             """))
 
     # ── Доставка ─────────────────────────────────────────────────────────
@@ -133,6 +138,11 @@ class ReminderService:
                     JOIN clinic c ON c.id = r.clinic_id
                     LEFT JOIN service s ON s.id = a.service_id
                     WHERE r.status = 'pending' AND r.send_at <= now()
+                      -- о приёме, который уже начался, не напоминают: строка
+                      -- могла созреть за простой процесса, а кнопка «Отменить
+                      -- запись» из неё ушла бы в сводку как предотвращённая
+                      -- неявка с деньгами
+                      AND lower(a.time_range) > now()
                     ORDER BY r.send_at
                 """)
             ).all()
