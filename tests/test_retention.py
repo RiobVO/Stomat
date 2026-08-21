@@ -59,3 +59,38 @@ def test_maybe_cleanup_runs_once_a_day(app_session_factory, admin_engine,
 
     assert service.maybe_cleanup() is True, "первый вызов за день чистит"
     assert service.maybe_cleanup() is False, "повтор в тот же день — no-op"
+
+
+def test_cleanup_keeps_dialog_of_a_patient_with_a_future_appointment(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Диалог пациента с предстоящим приёмом — не мёртвый лид.
+
+    Запись за горизонт retention (брекеты, имплант — месяцы) плюс 90 дней
+    молчания сносили диалог, а с ним ЕДИНСТВЕННОЕ место, где хранится язык
+    чата: напоминание о приёме приходило узбеку по-русски."""
+    from datetime import timedelta
+
+    from conftest import at_tashkent, next_monday
+    from navbat.dialog.conversation import get_chat_lang
+    from navbat.scheduling.engine import SchedulingEngine
+
+    chat = 902
+    far_future = next_monday() + timedelta(days=120)
+    sched = SchedulingEngine(app_session_factory, clinic_a)
+    appointment = sched.hold(doctor_a, service_cleaning,
+                             at_tashkent(far_future, "09:00"), tg_chat_id=chat)
+    sched.confirm(appointment)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = Conversation(chat_id=chat)
+        conv.context.lang = "uz"
+        save_conversation(session, conv)
+    with admin_engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE conversation SET updated_at = now() - interval '100 days' "
+            "WHERE tg_chat_id = :c"), {"c": chat})
+
+    cleanup_old_data(app_session_factory, clinic_a)
+
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        assert get_chat_lang(session, chat) == "uz", \
+            "язык пациента с предстоящим приёмом потерян вместе с диалогом"

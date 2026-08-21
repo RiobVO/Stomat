@@ -37,9 +37,17 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "AND created_at < now() - make_interval(days => :days)"),
             {"days": days},
         ).rowcount
+        # диалог пациента с предстоящим приёмом не трогаем: запись могут
+        # оформить за горизонт retention (брекеты, имплант — месяцы), а
+        # conversation.context — ЕДИНСТВЕННОЕ место, где хранится язык чата.
+        # Без него напоминание о приёме приходит узбеку по-русски
         dialogs = session.execute(
-            text("DELETE FROM conversation "
-                 "WHERE updated_at < now() - make_interval(days => :days)"),
+            text("DELETE FROM conversation c "
+                 "WHERE c.updated_at < now() - make_interval(days => :days) "
+                 "AND NOT EXISTS (SELECT 1 FROM appointment a "
+                 "                WHERE a.tg_chat_id = c.tg_chat_id "
+                 "                  AND a.status = 'booked' "
+                 "                  AND lower(a.time_range) > now())"),
             {"days": days},
         ).rowcount
         questions = session.execute(
