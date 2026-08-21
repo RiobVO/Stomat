@@ -34,6 +34,7 @@ from navbat.dialog.escalation import (
     ops_alert,
 )
 from navbat.dialog.replies import Button, Reply, service_label, t
+from navbat.dialog.reschedule_flow import reslot_action
 from navbat.scheduling.engine import SchedulingEngine, lock_doctor
 from navbat.scheduling.errors import (
     AppointmentChangedError,
@@ -622,7 +623,8 @@ class CalendarSync:
                 ctx.lang = lang
                 save_conversation(session, conversation)
             buttons = tuple(
-                Button(f"{alt.astimezone(tz):%d.%m %H:%M}", f"reslot:{alt.isoformat()}")
+                Button(f"{alt.astimezone(tz):%d.%m %H:%M}",
+                       reslot_action(victim.id, alt))
                 for alt in alternatives
             )
             self._notify_patient(victim.tg_chat_id,

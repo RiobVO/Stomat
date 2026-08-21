@@ -109,8 +109,10 @@ def test_reschedule_without_date_asks(app_session_factory, admin_engine, clinic_
     reslots = [b for b in offer.buttons if b.action.startswith("reslot:")]
     assert reslots
     for b in reslots:
-        start = datetime.fromisoformat(b.action.split(":", 1)[1])
-        assert start.astimezone(TASHKENT).date() == tuesday
+        # reslot:<id записи>:<минуты эпохи> — кнопка несёт и запись, и время
+        minutes = int(b.action.rsplit(":", 1)[1])
+        start = datetime.fromtimestamp(minutes * 60, tz=TASHKENT)
+        assert start.date() == tuesday
 
 
 def test_reschedule_without_appointment(app_session_factory, admin_engine, clinic_a,
@@ -152,3 +154,46 @@ def test_reslot_with_garbage_time_does_not_crash(app_session_factory, admin_engi
     reply = engine.handle_action(CHAT, "reslot:не-время")
     assert reply.text
     assert appt_row(admin_engine).status == "booked"
+
+
+def test_reslot_into_the_past_is_refused(app_session_factory, admin_engine,
+                                         clinic_a, doctor_a, service_cleaning):
+    """Время в сырой кнопке — данные от клиента, а движок сверяет старт
+    только с рабочей сеткой врача: валидное «10:00 позапрошлого
+    понедельника» на сетке лежит и уносило запись в прошлое."""
+    monday = next_monday()
+    appointment = book_directly(app_session_factory, clinic_a, doctor_a,
+                                service_cleaning, monday, "09:00")
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    past = at_tashkent(monday - timedelta(days=14), "10:00")
+
+    engine.handle_action(
+        CHAT, f"reslot:{appointment}:{int(past.timestamp()) // 60}")
+
+    assert appt_row(admin_engine).start == at_tashkent(monday, "09:00"), \
+        "запись уехала в прошлое"
+
+
+def test_reslot_does_not_move_another_patients_appointment(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """id записи приходит из callback_data: чужой id внутри той же клиники
+    переносил бы чужую запись (RLS изолирует клиники, но не пациентов)."""
+    monday = next_monday()
+    victim_chat = CHAT + 1
+    sched = SchedulingEngine(app_session_factory, clinic_a)
+    victim = sched.hold(doctor_a, service_cleaning, at_tashkent(monday, "11:00"),
+                        tg_chat_id=victim_chat)
+    sched.confirm(victim)
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    target = at_tashkent(monday, "14:00")
+
+    engine.handle_action(
+        CHAT, f"reslot:{victim}:{int(target.timestamp()) // 60}")
+
+    with admin_engine.begin() as conn:
+        start = conn.execute(text(
+            "SELECT lower(time_range) FROM appointment WHERE id = :id"),
+            {"id": victim}).scalar_one()
+    assert start == at_tashkent(monday, "11:00"), "перенесена чужая запись"
