@@ -128,10 +128,23 @@ class _SharedHelpersMixin:
             # очередь уже закрыта (записался, отписался, истекла) либо чужая
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
-        start = datetime.fromtimestamp(int(minutes_raw) * 60,
-                                       tz=self._clinic_tz(session))
-        conv.context.service = self._service_name(session, row.service_id) \
-            or "checkup"
+        service_key = self._service_name(session, row.service_id) or "checkup"
+        if waitlist_repo.has_future_active(session, conv.chat_id, row.service_id):
+            # повторный тап по тому же предложению: врач подбирается здесь,
+            # поэтому второй тап занял бы ДРУГОГО свободного врача на то же
+            # время — две записи на один час. Снимает с очереди только
+            # следующий цикл матчера, окно реальное
+            waitlist_repo.mark_fulfilled(session, row.id)
+            return Reply(t("waitlist_taken_already", lang,
+                           service=service_label(service_key, lang)))
+        try:
+            start = datetime.fromtimestamp(int(minutes_raw) * 60,
+                                           tz=self._clinic_tz(session))
+        except (ValueError, OverflowError, OSError):
+            # время из callback_data: мусор не должен ронять обработку
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        conv.context.service = service_key
         doctor_id = self._free_doctor_at(session, row.service_id, start)
         if doctor_id is None:  # слот заняли, пока предложение висело
             return self._offer_slots(session, conv, note="slot_taken")
