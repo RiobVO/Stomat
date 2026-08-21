@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from conftest import next_monday
+from conftest import at_tashkent, next_monday
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
@@ -117,6 +117,43 @@ def test_remind_cancel_after_the_visit_started(app_session_factory, admin_engine
     assert status == "booked"
     assert reminder_cancels == 0, \
         "состоявшийся приём попал в сводку как предотвращённая неявка"
+
+
+def test_broken_appointment_id_does_not_crash(app_session_factory, admin_engine,
+                                              clinic_a, doctor_a,
+                                              service_cleaning):
+    """id записи приходит из callback_data, то есть от клиента: мусор падал
+    в приведении типа и уводил сообщение пациента в dead letter."""
+    engine = make_engine(app_session_factory, clinic_a)
+    reply = engine.handle_action(CHAT, "remind_cancel:не-uuid")
+    assert reply.text and not reply.buttons
+    assert fsm_state(admin_engine) == "idle"
+
+
+def test_cancel_confirm_after_appointment_moved(app_session_factory,
+                                                admin_engine, clinic_a,
+                                                doctor_a, service_cleaning):
+    """Пока пациент читал «Отменить запись на 09:00?», запись переехала.
+
+    Ручная правка события в Google переносит запись, и «Да» отменяло бы уже
+    другое время — пациент видел одно, отменил другое. Отмена подтверждается
+    только для того времени, которое ему показали (тот же приём, что у
+    переноса вытесненной записи)."""
+    appointment_id, sched = book(app_session_factory, clinic_a, doctor_a,
+                                 service_cleaning, next_monday(), "09:00",
+                                 chat_id=CHAT)
+    engine = make_engine(app_session_factory, clinic_a)
+    confirm = engine.handle_action(CHAT, f"remind_cancel:{appointment_id}")
+    assert "09:00" in confirm.text
+
+    sched.reschedule(appointment_id, at_tashkent(next_monday(), "15:00"))
+    engine.handle_action(CHAT, "cancel_yes")
+
+    with admin_engine.begin() as conn:
+        status = conn.execute(text("SELECT status FROM appointment "
+                                   "WHERE id = :id"),
+                              {"id": appointment_id}).scalar_one()
+    assert status == "booked", "отменено время, которого пациент не видел"
 
 
 def test_remind_cancel_for_already_cancelled(app_session_factory, admin_engine,

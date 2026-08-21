@@ -119,13 +119,38 @@ def test_dead_thread_stops_the_process_with_alert():
 
     stop = threading.Event()
     notifier = _RecordingNotifier()
+    published: list[str] = []
     died = supervise_threads([dead, alive], stop, notifier=notifier,
-                             interval=0.01)
+                             interval=0.01, died=published)
 
     assert died == ["worker-0"]
+    assert published == ["worker-0"], \
+        "главный поток проснётся от stop и не узнает об аварии"
     assert stop.is_set(), "процесс не остановлен — бот молчит, но контейнер жив"
     assert notifier.system and "worker-0" in notifier.system[0]
     stop.set()
+
+
+def test_dead_thread_stops_process_even_if_alert_fails():
+    """Недоставленный алерт не отменяет остановку: молча работающий процесс
+    хуже, чем процесс без уведомления."""
+    import threading
+
+    from navbat.supervisor import supervise_threads
+
+    class _BrokenNotifier:
+        def notify_system(self, reason, context):
+            raise RuntimeError("телеграм недоступен")
+
+    dead = threading.Thread(target=lambda: None, name="calendar")
+    dead.start()
+    dead.join()
+    stop = threading.Event()
+    published: list[str] = []
+
+    assert supervise_threads([dead], stop, notifier=_BrokenNotifier(),
+                             interval=0.01, died=published) == ["calendar"]
+    assert stop.is_set() and published == ["calendar"]
 
 
 def test_supervisor_watch_is_quiet_until_shutdown():

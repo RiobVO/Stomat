@@ -100,7 +100,8 @@ def install_sigterm_handler(stop: threading.Event) -> None:
 
 
 def supervise_threads(threads, stop: threading.Event, notifier=None,
-                      interval: float = 5.0) -> list[str]:
+                      interval: float = 5.0, died: list[str] | None = None
+                      ) -> list[str]:
     """Надзор за фоновыми потоками; возвращает имена умерших.
 
     Вся работа системы, кроме транспорта, живёт потоками одного процесса.
@@ -115,13 +116,23 @@ def supervise_threads(threads, stop: threading.Event, notifier=None,
         dead = [thread.name for thread in threads if not thread.is_alive()]
         if dead:
             names = ", ".join(dead)
+            # список заполняется ДО stop: главный поток проснётся от stop и
+            # сразу решает, чем кончился запуск — авария это или Ctrl+C
+            if died is not None:
+                died.extend(dead)
             log.error("фоновый поток умер: %s — останавливаю процесс", names)
-            if notifier is not None:
-                system_alert(
-                    notifier,
-                    f"фоновый поток умер: {names} — процесс остановлен, "
-                    f"контейнер должен подняться заново", {})
-            stop.set()
+            try:
+                if notifier is not None:
+                    system_alert(
+                        notifier,
+                        f"фоновый поток умер: {names} — процесс остановлен, "
+                        f"контейнер должен подняться заново", {})
+            except Exception:
+                # недоставленный алерт не отменяет остановку: молча работающий
+                # процесс хуже, чем процесс без уведомления
+                log.exception("надзор: алерт о смерти потока не ушёл")
+            finally:
+                stop.set()
             return dead
     return []
 
@@ -431,8 +442,8 @@ def main() -> int:
     # выглядит здоровым (light-ветка /health смотрит только на БД)
     died: list[str] = []
     watchdog = threading.Thread(
-        target=lambda: died.extend(
-            supervise_threads(threads, stop, notifier=notifier)),
+        target=supervise_threads,
+        args=(threads, stop), kwargs={"notifier": notifier, "died": died},
         name="watchdog", daemon=True)
     watchdog.start()
 
