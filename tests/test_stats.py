@@ -478,3 +478,27 @@ def test_digest_day_stays_unmarked_when_nobody_got_it(
     with admin_engine.begin() as conn:
         last = conn.execute(text("SELECT last_digest_date FROM clinic")).scalar_one()
     assert last is None
+
+
+def test_p95_ignores_admin_chats(app_session_factory, admin_engine, clinic_a):
+    """p95 — обещание пациенту (SLA ответа), а не время админской команды.
+
+    /stats за 30 дней и кнопочная консоль считают тяжёлые сводки тем же
+    воркером и той же очередью: их секунды задирали метрику, за которую бот
+    отвечает перед пациентом."""
+    from navbat.stats import collect_daily_stats
+
+    with admin_engine.begin() as conn:
+        conn.execute(text("UPDATE clinic SET tg_admin_chat_ids = "
+                          "ARRAY[777]::bigint[] WHERE id = :id"), {"id": clinic_a})
+        for upd, chat, secs in ((1, 100, 1), (2, 777, 60)):
+            conn.execute(text(
+                "INSERT INTO message_queue (clinic_id, update_id, tg_chat_id, "
+                "payload, status, created_at, completed_at) VALUES "
+                "(:c, :u, :chat, '{}', 'done', now() - make_interval(secs => :s), "
+                "now())"), {"c": clinic_a, "u": upd, "chat": chat, "s": secs})
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_daily_stats(session, datetime.now(TASHKENT).date(),
+                                    TASHKENT)
+    assert stats.p95_response_sec == 1.0, \
+        "минута админской команды поехала в пациентский SLA"

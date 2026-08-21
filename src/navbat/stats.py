@@ -99,7 +99,10 @@ def collect_stats(session: Session, first: date, last: date,
         span,
     ).one()
 
-    # p95 ответа за период: от приёма апдейта до отправленного ответа
+    # p95 ответа за период: от приёма апдейта до отправленного ответа.
+    # Только пациентские чаты: /stats за 30 дней и кнопочная консоль идут той
+    # же очередью и тем же воркером, но считают тяжёлые сводки — их секунды
+    # не имеют отношения к SLA, который бот обещает пациенту
     p95 = session.execute(
         text("""
             SELECT extract(epoch FROM percentile_cont(0.95)
@@ -107,6 +110,10 @@ def collect_stats(session: Session, first: date, last: date,
             FROM message_queue
             WHERE status = 'done' AND completed_at IS NOT NULL
               AND (completed_at AT TIME ZONE :tz)::date BETWEEN :first AND :last
+              AND NOT EXISTS (
+                  SELECT 1 FROM clinic c
+                  WHERE c.id = current_setting('app.clinic_id')::uuid
+                    AND message_queue.tg_chat_id = ANY(c.tg_admin_chat_ids))
         """),
         span,
     ).scalar_one()
