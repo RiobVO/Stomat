@@ -170,14 +170,19 @@ class _SharedHelpersMixin:
             doctors = [d for d in doctors if str(d[0]) == only_id]
         return doctors
 
+    # обрывок короче этого — не имя: «a» входит почти в любое имя и молча
+    # привязал бы пациента к первому попавшемуся врачу
+    _DOCTOR_NAME_MIN = 3
+
     def _resolve_doctor(self, session: Session, ctx: DialogContext,
                         name: str) -> None:
-        target = name.casefold()
-        for doctor_id, doctor_name in self._doctors(session):
-            if doctor_name and (target in doctor_name.casefold()
-                                or doctor_name.casefold() in target):
-                ctx.doctor_id = str(doctor_id)
-                return
+        target = name.casefold().strip()
+        if len(target) >= self._DOCTOR_NAME_MIN:
+            for doctor_id, doctor_name in self._doctors(session):
+                if doctor_name and (target in doctor_name.casefold()
+                                    or doctor_name.casefold() in target):
+                    ctx.doctor_id = str(doctor_id)
+                    return
         ctx.doctor_miss = True
 
     def _collect_slots(self, session: Session, doctors, service_id,
