@@ -78,8 +78,13 @@ class _CancelFlowMixin:
                 expected_start=(datetime.fromisoformat(cancel_start)
                                 if cancel_start else None))
         except AppointmentChangedError:
-            # запись уже не та, что он видел — показываем актуальную
-            return self._start_cancel(session, conv)
+            # запись уже не та, что он видел — переспрашиваем про ТУ ЖЕ запись
+            # с новым временем (ближайшая запись чата могла бы оказаться
+            # другой), сохранив источник отмены: он кормит метрику
+            # предотвращённых неявок
+            reply = self._start_cancel_by_id(session, conv, cancel_id)
+            conv.context.cancel_via = cancel_via
+            return reply
         except AppointmentNotFoundError:
             return Reply(t("cancel_none", lang))
         return Reply(t("cancel_done", lang))

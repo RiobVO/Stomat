@@ -104,10 +104,17 @@ def has_future_booked(session: Session, tg_chat_id: int,
 def has_future_active(session: Session, tg_chat_id: int,
                       service_id: uuid.UUID) -> bool:
     """То же, но считая незавершённое оформление (hold): повторный тап по
-    предложению не должен заводить вторую запись, пока пациент вводит имя."""
+    предложению не должен заводить вторую запись, пока пациент вводит имя.
+
+    Протухший hold не считается: строка живёт со статусом 'hold' до отдельной
+    чистки, и без проверки срока брошенное на шаге имени оформление закрывало
+    бы очередь как выполненную — пациент остался бы и без записи, и без
+    очереди."""
     return bool(session.execute(
         text("SELECT EXISTS (SELECT 1 FROM appointment "
              "WHERE tg_chat_id = :chat AND service_id = :sid "
-             "AND status IN ('hold', 'booked') AND lower(time_range) > now())"),
+             "AND lower(time_range) > now() "
+             "AND (status = 'booked' "
+             "     OR (status = 'hold' AND hold_expires_at > now())))"),
         {"chat": tg_chat_id, "sid": service_id},
     ).scalar_one())
