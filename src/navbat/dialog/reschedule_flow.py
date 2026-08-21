@@ -73,16 +73,25 @@ class _RescheduleFlowMixin:
     def _on_reslot(self, session: Session, conv: Conversation, start_iso: str) -> Reply:
         ctx = conv.context
         lang = self._lang(conv)
+        # кнопка альтернативы приходит сырой и живёт в чате до самого приёма
+        # (её шлёт календарный синк при вытеснении записи), а какую запись
+        # двигать — знает только диалог. Сценарий мог закрыться, время
+        # приходит от клиента: без снимка тап падал в dead letter
         try:
-            self._sched.reschedule(uuid.UUID(ctx.resched_id),
-                                   datetime.fromisoformat(start_iso))
+            appointment_id = uuid.UUID(ctx.resched_id)
+            new_start = datetime.fromisoformat(start_iso)
+        except (TypeError, ValueError):
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        try:
+            self._sched.reschedule(appointment_id, new_start)
         except (SlotTakenError, InvalidSlotError):
             return self._offer_resched_slots(session, conv, note="slot_taken")
         except AppointmentNotFoundError:
             self._clear_booking(conv)
             conv.state = "idle"
             return Reply(t("resched_none", lang))
-        local = datetime.fromisoformat(start_iso).astimezone(self._clinic_tz(session))
+        local = new_start.astimezone(self._clinic_tz(session))
         self._clear_booking(conv)
         conv.state = "idle"
         return Reply(t("resched_done", lang, when=f"{local:%d.%m %H:%M}"))

@@ -120,3 +120,35 @@ def test_reschedule_without_appointment(app_session_factory, admin_engine, clini
     reply = engine.handle_text(CHAT, "перенесите запись")
     assert not reply.buttons
     assert fsm_state(admin_engine) == "idle"
+
+
+def test_stale_reslot_without_pending_reschedule_does_not_crash(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Кнопка альтернативы висит в чате до самого приёма и приходит сырой.
+
+    К моменту тапа сценарий переноса мог закрыться (/start, другой поток,
+    retention снёс диалог) — переносить нечего, а id записи в кнопке нет.
+    Без снимка это падало приведением типа и уводило тап в dead letter."""
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[]))
+    start = at_tashkent(next_monday(), "11:00").isoformat()
+
+    reply = engine.handle_action(CHAT, f"reslot:{start}")
+    assert reply.text and fsm_state(admin_engine) == "idle"
+
+
+def test_reslot_with_garbage_time_does_not_crash(app_session_factory, admin_engine,
+                                                 clinic_a, doctor_a,
+                                                 service_cleaning):
+    """Время приходит из callback_data, то есть от клиента: сырой префикс
+    больше не прикрыт нумерацией, и мусор обязан гаситься, а не падать."""
+    book_directly(app_session_factory, clinic_a, doctor_a, service_cleaning,
+                  next_monday(), "09:00")
+    engine = DialogEngine(app_session_factory, clinic_a, extractor=FakeExtractor(
+        script=[extr(intent="reschedule",
+                     date_ref=explicit(next_monday() + timedelta(days=1)))]))
+    engine.handle_text(CHAT, "перенесите на вторник")
+
+    reply = engine.handle_action(CHAT, "reslot:не-время")
+    assert reply.text
+    assert appt_row(admin_engine).status == "booked"

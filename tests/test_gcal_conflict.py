@@ -10,10 +10,14 @@ from sqlalchemy import text
 
 from conftest import at_tashkent, make_doctor, next_monday
 from navbat.calendar.sync import CalendarSync
+from navbat.dialog.fsm import DialogEngine
+from navbat.dialog.replies import Button, Reply
+from navbat.nlu.extractor import FakeExtractor
 from navbat.scheduling.engine import SchedulingEngine
+from navbat.telegram.worker import UpdateWorker, send_reply
 from test_dialog_booking import CHAT, RecordingNotifier
 from test_gcal_export import CAL, FakeCalendarAPI, bind_calendar, book
-from test_tg_worker import FakeTelegramAPI
+from test_tg_worker import FakeTelegramAPI, put_callback
 
 
 def make_conflict_sync(app_session_factory, clinic_id):
@@ -74,7 +78,10 @@ def test_manual_event_over_booking_moves_it_and_notifies(
             "SELECT fsm_state, context FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).one()
     assert conv.fsm_state == "resched_offer_slots"
-    assert conv.context["tg_actions"]["1"].startswith("reslot:")
+    # кнопка несёт слот сама: сообщение висит до приёма, а карта кнопок чата
+    # перезаписывается любой следующей отправкой
+    assert buttons[0].action.startswith("reslot:")
+    assert "tg_actions" not in conv.context
 
     # админ уведомлён
     assert notifier.calls
@@ -309,3 +316,48 @@ def test_patient_reschedule_wins_over_stale_relocation(
     assert [r.status for r in rows] == ["booked"]
     assert rows[0].start == patient_choice, "выбор пациента затёрт переносом синка"
     assert not tg_api.sent, "пациента никто не вытеснял — извиняться не за что"
+
+
+def test_alternative_button_survives_a_later_button_send(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Предложение альтернатив висит в чате часами — до самого приёма.
+
+    Карта кнопок одна на чат и перезаписывается ЦЕЛИКОМ любой следующей
+    отправкой (инвариант кнопок, CLAUDE.md): номерная кнопка после этого
+    уводит в чужое действие. Альтернатива обязана нести слот сама."""
+    bind_calendar(admin_engine, doctor_a)
+    day = next_monday()
+    appointment_id, _ = book(app_session_factory, clinic_a, doctor_a,
+                             service_cleaning, day, "09:00", chat_id=CHAT)
+    sync, api, _notifier, tg_api = make_conflict_sync(app_session_factory, clinic_a)
+    sync.sync_doctor(doctor_a)
+    api.seed_manual_event(start=at_tashkent(day, "09:00"),
+                          end=at_tashkent(day, "09:30"))
+    sync.sync_doctor(doctor_a)
+
+    _chat, _text, buttons = tg_api.sent[-1]
+    offered_action = buttons[0].action  # ровно то, что ушло в Telegram
+    offered_at = at_tashkent(day, buttons[0].label[-5:])
+
+    # пока предложение висело, пациент начал новую запись — в тот же чат
+    # ушли другие кнопки и перезаписали карту
+    send_reply(tg_api, app_session_factory, clinic_a, CHAT,
+               Reply("Свободное время:", buttons=(
+                   Button("12:00",
+                          f"slot:{doctor_a}:{at_tashkent(day, '12:00').isoformat()}"),
+               )))
+
+    worker = UpdateWorker(
+        app_session_factory, clinic_a,
+        dialog=DialogEngine(app_session_factory, clinic_a,
+                            extractor=FakeExtractor(script=[])),
+        api=tg_api, notifier=RecordingNotifier())
+    put_callback(app_session_factory, clinic_a, offered_action)
+    worker.process_one()
+
+    with admin_engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT status, lower(time_range) AS start FROM appointment "
+            "WHERE id = :id"), {"id": appointment_id}).one()
+    assert (row.status, row.start) == ("booked", offered_at), \
+        "тап по альтернативе ушёл в чужое действие: карту кнопок перезаписали"
