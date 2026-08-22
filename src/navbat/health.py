@@ -180,15 +180,18 @@ class HealthChecker:
         # вчерашний день пять часов в сутки
         with tenant_transaction(self._session_factory, self._clinic_id) as s:
             row = s.execute(text(
-                "SELECT requests, failures FROM llm_usage "
+                "SELECT requests - repairs AS messages, failures FROM llm_usage "
                 "WHERE day = (now() AT TIME ZONE (SELECT timezone FROM clinic "
                 "    WHERE id = current_setting('app.clinic_id')::uuid))::date "
                 "AND clinic_id = current_setting('app.clinic_id')::uuid"
             )).one_or_none()
+        # знаменатель — сообщения, как у дрифт-алерта: requests считает и
+        # repair (вторая попытка по ТОМУ ЖЕ сообщению), и запасного
+        # провайдера. Две цифры про одно и то же не должны расходиться вдвое
         checks["llm"] = {
             "openai_key": bool(os.environ.get("OPENAI_API_KEY")),
             "gemini_key": bool(os.environ.get("GEMINI_API_KEY")),
-            "nlu_today": (f"{row.failures}/{row.requests} сбоев"
+            "nlu_today": (f"{row.failures}/{row.messages} сбоев"
                           if row else "0/0 сбоев"),
         }
 

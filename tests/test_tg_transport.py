@@ -220,3 +220,13 @@ def test_gcal_push_without_calendar_404(app_session_factory, admin_engine, clini
         assert post(server, tg_message(10)).status_code == 200
     finally:
         server.stop()
+
+
+def test_webhook_server_refuses_empty_secret(app_session_factory, clinic_a):
+    """Пустой секрет превращает проверку подлинности в тождество: заголовка
+    нет → сравнивается "" с "" → апдейт принят. Точки входа это и так
+    ловят, но конструктор обязан быть fail-closed сам."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        WebhookServer(app_session_factory, clinic_a, secret="")

@@ -19,6 +19,7 @@ from navbat.dialog.replies import Button, Reply, menu_rows, service_label, t
 from navbat.nlu.schema import Extraction
 from navbat.scheduling.errors import HoldExpiredError, InvalidSlotError, SlotTakenError
 from navbat.telegram.admin_texts import Reason
+from navbat.telegram.queue import redact_message_text
 
 
 class _BookingFlowMixin:
@@ -131,6 +132,10 @@ class _BookingFlowMixin:
                     or self._answer_question(session, conv, extraction, message)
                 return Reply(f"{answer.text}\n\n{t('ask_name', self._lang(conv))}")
         conv.context.pending_name = message.strip()
+        # имя распознано — стираем его из durable-очереди сразу: дальше
+        # пациент может бросить сценарий, и тогда открытый PII останется
+        # только там, ждать ретеншена 90 дней и уезжать в корпус
+        redact_message_text(session, conv.chat_id, message)
         conv.state = "awaiting_phone"
         lang = self._lang(conv)
         return Reply(t("ask_phone", lang),
