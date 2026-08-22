@@ -61,6 +61,8 @@ SERVICE_WEIGHTS = ("cleaning", "checkup", "cleaning", "filling", "checkup",
 CANCEL_EVERY = 6
 # доля вернувшихся: каждый третий пациент приходит повторно
 RETURNING_EVERY = 3
+# до этой записи повторов нет: делённый счётчик указывал бы на соседа
+RETURNING_MIN_HISTORY = RETURNING_EVERY * 4
 # шаг сетки слотов живой записи (scheduling.calendar_rules.slot_candidates)
 SLOT_STEP_MIN = 30
 # за сколько часов до приёма оформлена сегодняшняя заявка
@@ -257,13 +259,7 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
             earliest = datetime.combine(day, datetime.min.time(), tz).replace(
                 hour=EARLIEST_BOOKING_HOUR)
             booked_at = max(start - timedelta(hours=SAME_DAY_LEAD_HOURS), earliest)
-        # часть визитов — повторные: остаток по счётчику переиспользует чат
-        # более раннего пациента. Точная доля неважна, витрине нужны обе группы;
-        # ровное «каждый третий» ставило бы повтор рядом с оригиналом, а stats
-        # считает вернувшимся того, чей ПЕРВЫЙ визит раньше периода — в окне
-        # семи дней такие возвраты схлопнулись бы в ноль
-        chat = CHAT_BASE - (created // RETURNING_EVERY if created % RETURNING_EVERY
-                            else created)
+        chat = CHAT_BASE - _chat_index(created)
         cancelled = created % CANCEL_EVERY == CANCEL_EVERY - 1
         appointment_id = uuid.uuid4()
         if not _try_insert(session, {
@@ -284,6 +280,30 @@ def _make_appointment(session: Session, tz: ZoneInfo, day: date, index: int,
             _audit(session, appointment_id, "cancel", "reminder",
                    start - timedelta(hours=3))
         return 1
+
+
+def _chat_index(created: int) -> int:
+    """Номер синтетического пациента для записи №created.
+
+    Каждая RETURNING_EVERY-я запись — повторный визит: витрине нужны обе
+    группы, «новые» и «вернувшиеся». Донор берётся делением счётчика, то
+    есть из начала истории: stats считает вернувшимся того, чей ПЕРВЫЙ
+    визит раньше периода, и в окне семи дней возврат «через одну запись»
+    схлопнулся бы в ноль. Индекс донора подгоняется до НЕ кратного
+    RETURNING_EVERY — кратные отданы повторам, живого визита за ними нет.
+
+    Прежняя формула брала остаток счётчика, и соседние записи 3k+1 и 3k+2
+    получали один и тот же чат: треть визитов оказывалась повтором вплотную
+    к оригиналу, разных лиц выходило 39 из 70 вместо 47.
+
+    Начало истории — только новые лица: делённый счётчик там ещё указывает
+    на соседнюю запись, а перестановка визитов по времени (врачи идут по
+    очереди) ставила бы повтор впритык к оригиналу.
+    """
+    if created < RETURNING_MIN_HISTORY or created % RETURNING_EVERY:
+        return created
+    donor = created // RETURNING_EVERY
+    return donor + 1 if donor % RETURNING_EVERY == 0 else donor
 
 
 def _try_insert(session: Session, params: dict) -> bool:
