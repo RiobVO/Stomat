@@ -111,3 +111,41 @@ def test_pending_updates_not_exported(app_session_factory, admin_engine,
 
     records, counts = export_corpus(app_session_factory, clinic_a)
     assert records == [] and counts["fetched"] == 0
+
+
+def test_export_drops_the_name_step_answer(app_session_factory, admin_engine,
+                                           clinic_a):
+    """Шаг «как вас зовут» — детерминированный производитель чистого PII:
+    сообщение целиком является именем.
+
+    В БД имя лежит зашифрованным (AES-256-GCM), а выгрузка — обычный jsonl
+    вне периметра и вне ретеншена. Граница LLM этот шаг уже не пересекает —
+    корпус обязан вести себя так же."""
+    from navbat.dialog.patients import create_patient
+
+    put_message(app_session_factory, clinic_a, "Болит зуб, можно завтра?")
+    put_message(app_session_factory, clinic_a, "Азиз Рахимов")
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        create_patient(session, CHAT, "Азиз Рахимов", "998901234567")
+    finish_queue(admin_engine, clinic_a)
+
+    records, counts = export_corpus(app_session_factory, clinic_a)
+    assert texts_of(records) == ["Болит зуб, можно завтра?"]
+    assert counts["name"] == 1
+
+
+def test_export_drops_the_name_of_an_unfinished_booking(app_session_factory,
+                                                        admin_engine, clinic_a):
+    """Имя названо, телефон ещё нет: пациента в БД нет, имя ждёт в диалоге."""
+    from navbat.dialog.conversation import Conversation, save_conversation
+
+    put_message(app_session_factory, clinic_a, "Гулнора")
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        conv = Conversation(chat_id=CHAT, state="awaiting_phone")
+        conv.context.pending_name = "Гулнора"
+        save_conversation(session, conv)
+    finish_queue(admin_engine, clinic_a)
+
+    records, counts = export_corpus(app_session_factory, clinic_a)
+    assert texts_of(records) == []
+    assert counts["name"] == 1
