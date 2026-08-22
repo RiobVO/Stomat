@@ -142,3 +142,78 @@ def test_gemini_on_repair_called(app_session_factory, clinic_a):
 
     assert got.intent == "book"
     assert repairs == [1], "ровно один repair учтён"
+
+
+def test_drift_share_counts_messages_not_api_calls(app_session_factory, clinic_a):
+    """requests в llm_usage — это ВЫЗОВЫ API: repair и запасной провайдер тоже.
+
+    Repair сам по себе признак деградации, а в знаменателе он её разбавлял:
+    20 сообщений, каждое со второй попыткой, дают 40 «запросов», и доля
+    сбоев падала вдвое ровно тогда, когда модель плывёт."""
+    notifier = RecordingNotifier()
+    recorder = UsageRecorder(app_session_factory, clinic_a, daily_cap=10**9,
+                             notifier=notifier)
+    for _ in range(20):  # 20 сообщений пациентов, каждое со вторым вызовом
+        recorder.record(10, 5)
+        recorder.record_repair()
+        recorder.record(10, 5)
+    for _ in range(5):   # пять из двадцати так и не разобрались
+        recorder.record_failure()
+    recorder.maybe_alert_drift()
+
+    assert len(notifier.calls) == 1, \
+        "25% сбоев на сообщение — дрифт не замечен из-за repair в знаменателе"
+
+
+def test_drift_alert_deduped_by_clinic_day_not_process_day(
+        monkeypatch, app_session_factory, clinic_a):
+    """Счётчики ведутся в локальных сутках клиники, дедуп алерта жил по
+    date.today() процесса. На UTC-хосте они расходятся на пять часов: смена
+    даты у процесса открывала второй алерт в те же сутки клиники."""
+    from datetime import date, timedelta
+
+    import navbat.nlu.wrappers as wrappers
+
+    notifier = RecordingNotifier()
+    recorder = UsageRecorder(app_session_factory, clinic_a, daily_cap=10**9,
+                             notifier=notifier)
+    seed_requests(recorder, 20)
+    for _ in range(5):
+        recorder.record_failure()
+    recorder.maybe_alert_drift()
+    assert len(notifier.calls) == 1
+
+    class Tomorrow(date):
+        @classmethod
+        def today(cls):
+            return date.today() + timedelta(days=1)
+
+    monkeypatch.setattr(wrappers, "date", Tomorrow)  # у процесса «завтра»
+    recorder.record_failure()
+    recorder.maybe_alert_drift()
+    assert len(notifier.calls) == 1, "второй алерт в те же сутки клиники"
+
+
+def test_cap_alert_deduped_by_clinic_day_not_process_day(
+        monkeypatch, app_session_factory, clinic_a):
+    """Тот же расход суток у алерта дневного token cap."""
+    from datetime import date, timedelta
+
+    import navbat.nlu.wrappers as wrappers
+
+    notifier = RecordingNotifier()
+    recorder = UsageRecorder(app_session_factory, clinic_a, daily_cap=1,
+                             notifier=notifier)
+    recorder.record(10, 5)
+    assert recorder.cap_exceeded() is True
+    recorder.alert_once()
+    assert len(notifier.calls) == 1
+
+    class Tomorrow(date):
+        @classmethod
+        def today(cls):
+            return date.today() + timedelta(days=1)
+
+    monkeypatch.setattr(wrappers, "date", Tomorrow)
+    recorder.alert_once()
+    assert len(notifier.calls) == 1, "второй алерт про cap в те же сутки клиники"
