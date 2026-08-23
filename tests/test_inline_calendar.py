@@ -303,7 +303,7 @@ def test_day_click_shows_all_slots_in_grid(app_session_factory, admin_engine,
     reply = engine.handle_action(CHAT, f"cal:day:{monday.isoformat()}")
     assert reply.edit
     slot_btns = [b for b in flat(reply.button_rows)
-                 if b.action.startswith("slot:")]
+                 if b.action.startswith("time:")]
     # график 09–13/14–18, 30-мин слоты → все 16, не SLOTS_PER_REPLY
     assert len(slot_btns) == 16
     assert all(len(row) <= 4 for row in reply.button_rows)

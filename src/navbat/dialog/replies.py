@@ -312,6 +312,11 @@ TEMPLATES = {
         "ru": "✅ <b>ПЕРЕНЕСЕНО</b>\n\n📅 {when}\n\nЖдём вас!",
         "uz": "✅ <b>KO'CHIRILDI</b>\n\n📅 {when}\n\nSizni kutamiz!",
     },
+    "ask_doctor": {
+        "ru": "👨‍⚕️ <b>Кто вам удобнее на {when}?</b>",
+        "uz": "👨‍⚕️ <b>{when} ga kim qulay?</b>",
+    },
+    "btn_any_doctor": {"ru": "Любой", "uz": "Farqi yo'q"},
     "btn_other_time": {"ru": "Другое время", "uz": "Boshqa vaqt"},
     "btn_today": {"ru": "Сегодня", "uz": "Bugun"},
     "btn_tomorrow": {"ru": "Завтра", "uz": "Ertaga"},

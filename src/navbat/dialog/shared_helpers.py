@@ -153,12 +153,84 @@ class _SharedHelpersMixin:
 
     def _free_doctor_at(self, session: Session, service_id,
                         start: datetime) -> uuid.UUID | None:
+        free = self._free_doctors_at(session, service_id, start)
+        return free[0][0] if free else None
+
+    def _free_doctors_at(self, session: Session, service_id, start: datetime,
+                         preferred: str | None = None
+                         ) -> list[tuple[uuid.UUID, str | None]]:
+        """Врачи, свободные РОВНО на это время, — самый занятый последним.
+
+        preferred — врач, которого пациент назвал сам («к Акмалю»): выбор
+        уже сделан, предлагать вместо него другого нельзя.
+
+        Порядок — балансировка: первым идёт тот, у кого в этот день больше
+        свободных слотов, поэтому «Любой» не сажает всех к одному врачу.
+        Счётчик берётся из того же обхода, лишних запросов нет.
+        """
         day = start.astimezone(self._clinic_tz(session)).date()
-        for doctor_id, _ in self._doctors(session):
-            for slot in self._sched.find_free_slots(doctor_id, service_id, day):
-                if slot.start == start:
-                    return doctor_id
-        return None
+        free: list[tuple[int, str, uuid.UUID, str | None]] = []
+        for doctor_id, name in self._doctors(session, preferred):
+            slots = self._sched.find_free_slots(doctor_id, service_id, day)
+            if any(slot.start == start for slot in slots):
+                free.append((-len(slots), str(doctor_id), doctor_id, name))
+        free.sort()
+        return [(doctor_id, name) for _, _, doctor_id, name in free]
+
+    def _on_time_chosen(self, session: Session, conv: Conversation,
+                        start_iso: str) -> Reply:
+        """Тап по времени: врача выбирает пациент, но только если есть выбор.
+
+        Время приходит от клиента и сетка могла устареть — свободных врачей
+        считаем заново.
+        """
+        lang = self._lang(conv)
+        service_id = self._service_id(session, conv.context.service)
+        try:
+            start = datetime.fromisoformat(start_iso)
+        except ValueError:
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        free = (self._free_doctors_at(session, service_id, start,
+                                      conv.context.doctor_id)
+                if service_id is not None else [])
+        if not free:
+            return self._offer_slots(session, conv, note="slot_taken")
+        if len(free) == 1:
+            return self._on_slot_chosen(session, conv, str(free[0][0]), start_iso)
+        minutes = int(start.timestamp()) // 60
+        rows = [(Button(name or t("btn_any_doctor", lang),
+                        f"d:{doctor_id}:{minutes}"),)
+                for doctor_id, name in free]
+        rows.append((Button(t("btn_any_doctor", lang), f"d:any:{minutes}"),))
+        local = start.astimezone(self._clinic_tz(session))
+        return Reply(t("ask_doctor", lang, when=f"{local:%H:%M}"),
+                     button_rows=tuple(rows))
+
+    def _on_doctor_chosen(self, session: Session, conv: Conversation,
+                          rest: str) -> Reply:
+        """`d:<id врача|any>:<минуты эпохи>` — кнопка несёт и врача, и время."""
+        lang = self._lang(conv)
+        doctor_raw, _, minutes_raw = rest.partition(":")
+        if not minutes_raw.isdigit():
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        service_id = self._service_id(session, conv.context.service)
+        start = datetime.fromtimestamp(int(minutes_raw) * 60,
+                                       tz=self._clinic_tz(session))
+        free = (self._free_doctors_at(session, service_id, start,
+                                      conv.context.doctor_id)
+                if service_id is not None else [])
+        if not free:
+            return self._offer_slots(session, conv, note="slot_taken")
+        chosen = free[0][0]
+        if doctor_raw != "any":
+            chosen = next((d for d, _ in free if str(d) == doctor_raw), None)
+            if chosen is None:
+                # врача заняли, пока пациент выбирал — предлагаем свободных
+                return self._on_time_chosen(session, conv, start.isoformat())
+        return self._on_slot_chosen(session, conv, str(chosen),
+                                    start.isoformat())
 
     def _service_buttons(self, session: Session, lang: str) -> tuple[Button, ...]:
         names = services_repo.service_keys(session)

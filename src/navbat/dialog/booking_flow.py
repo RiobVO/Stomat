@@ -78,11 +78,12 @@ class _BookingFlowMixin:
             return self._no_slots_calendar(session, conv,
                                            Reason("reason_no_slots"))
 
-        multi_doctor = len(doctors) > 1
+        # лимит SLOTS_PER_REPLY тратится на ВРЕМЯ, а не на врачей: при двух
+        # врачах четыре кнопки давали всего два реальных времени
         buttons = [
-            Button(self._slot_label(start, doctor_name, tz, multi_doctor),
-                   f"slot:{doctor_id}:{start.isoformat()}")
-            for start, doctor_id, doctor_name in slots[:SLOTS_PER_REPLY]
+            Button(self._slot_label(start, None, tz, multi_doctor=False),
+                   f"time:{start.isoformat()}")
+            for start in list(dict.fromkeys(s[0] for s in slots))[:SLOTS_PER_REPLY]
         ]
         buttons.append(Button(t("btn_other_time", lang), "ask_date"))
 

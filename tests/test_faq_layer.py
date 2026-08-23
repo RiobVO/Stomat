@@ -230,7 +230,7 @@ def test_booking_with_price_question_answers_both(
     reply = engine.handle_text(CHAT, "завтра пломбу поставить, сколько стоит?")
 
     assert "400 000" in reply.text, "ценовая половина вопроса не теряется"
-    assert any(b.action.startswith("slot:") for b in reply.buttons), \
+    assert any(b.action.startswith("time:") for b in reply.buttons), \
         "и слоты на завтра показаны"
 
 
@@ -274,7 +274,7 @@ def test_faq_hours_with_today_not_hijacked_by_backstop(
     reply = engine.handle_text(CHAT, "до скольки работаете сегодня?")
 
     assert "09:00" in reply.text and "18:00" in reply.text
-    assert not any(b.action.startswith("slot:") for b in reply.buttons)
+    assert not any(b.action.startswith("time:") for b in reply.buttons)
 
 
 def test_faq_address_answers_without_llm(app_session_factory, admin_engine,

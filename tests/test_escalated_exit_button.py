@@ -82,7 +82,7 @@ def test_patient_can_book_after_coming_back(app_session_factory, admin_engine,
     reply = engine.handle_text(CHAT, "чистку в понедельник")
 
     assert fsm_state(admin_engine) != "escalated"
-    assert any(a.startswith("slot:") for a in _actions(reply)), \
+    assert any(a.startswith("time:") for a in _actions(reply)), \
         "после возврата сценарий записи работает целиком"
     assert len(notifier.calls) == 1
 

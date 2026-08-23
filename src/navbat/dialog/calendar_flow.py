@@ -150,18 +150,17 @@ class _CalendarFlowMixin:
         found.sort(key=lambda item: (item[0], str(item[1])))
 
         tz = self._clinic_tz(session)
-        multi = len(doctors) > 1
+        # одно время — одна кнопка: врач в подписи множил временну́ю ось на
+        # число врачей (двое давали 32 кнопки по две в ряд — простыня), а
+        # выбирает пациент сейчас КОГДА. Кто именно — спросим следующим шагом
+        # и только если свободны несколько
         buttons = []
-        for start, doctor_id, doctor_name in found:
-            label = f"{start.astimezone(tz):%H:%M}"
-            if multi and doctor_name:
-                label += f" · {doctor_name}"
+        for start in dict.fromkeys(item[0] for item in found):
             action = (reslot_action(conv.context.resched_id, start) if resched
-                      else f"slot:{doctor_id}:{start.isoformat()}")
-            buttons.append(Button(label, action))
-        per_row = SLOTS_PER_DAY_ROW_MULTI if multi else SLOTS_PER_DAY_ROW
-        rows = [tuple(buttons[i:i + per_row])
-                for i in range(0, len(buttons), per_row)]
+                      else f"time:{start.isoformat()}")
+            buttons.append(Button(f"{start.astimezone(tz):%H:%M}", action))
+        rows = [tuple(buttons[i:i + SLOTS_PER_DAY_ROW])
+                for i in range(0, len(buttons), SLOTS_PER_DAY_ROW)]
         rows.append((Button(t("btn_back_calendar", lang),
                             f"cal:nav:{day.isoformat()}"),))
         conv.state = "resched_offer_slots" if resched else "booking_offer_slots"
