@@ -317,6 +317,10 @@ TEMPLATES = {
         "uz": "👨‍⚕️ <b>{when} ga kim qulay?</b>",
     },
     "btn_any_doctor": {"ru": "Любой", "uz": "Farqi yo'q"},
+    "doctor_taken": {
+        "ru": "К сожалению, этого врача только что заняли.",
+        "uz": "Afsuski, bu shifokorning vaqti hozirgina band bo'ldi.",
+    },
     "btn_other_time": {"ru": "Другое время", "uz": "Boshqa vaqt"},
     "btn_today": {"ru": "Сегодня", "uz": "Bugun"},
     "btn_tomorrow": {"ru": "Завтра", "uz": "Ertaga"},

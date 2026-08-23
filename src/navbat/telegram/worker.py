@@ -61,7 +61,7 @@ RATE_WINDOW_SECONDS = 10
 # указала бы на запись из последнего пуша. reslot: — альтернативы вытесненной
 # записи из календарного синка: тот же долгий срок жизни.
 RAW_CALLBACK_PREFIXES = ("cal:", "wl:", "unfreeze", "attend:", "remind_cancel:",
-                         "reslot:")
+                         "reslot:", "time:", "d:")
 # Плюс админские префиксы: их роутинг — отдельные ветки в _handle (до паузы),
 # в пациентскую карту кнопок они попадать не должны тем более.
 UNNUMBERED_PREFIXES = RAW_CALLBACK_PREFIXES + ("stats:", "adm:")

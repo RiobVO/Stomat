@@ -344,6 +344,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_other_time` | выбор слота | Другое время | **Boshqa vaqt** | |
 | `ask_doctor` | выбор врача | 👨‍⚕️ Кто вам удобнее на {when}? | **👨‍⚕️ {when} ga kim qulay?** | шаг появляется, только если на это время свободны несколько врачей |
 | `btn_any_doctor` | выбор врача | Любой | **Farqi yo'q** | «без разницы, к кому» |
+| `doctor_taken` | выбор врача | К сожалению, этого врача только что заняли. | **Afsuski, bu shifokorning vaqti hozirgina band bo'ldi.** | врача заняли, пока пациент отвечал |
 | `btn_share_contact` | шаг телефона | 📱 Отправить мой номер | **📱 Raqamimni yuborish** | |
 | `btn_yes` | подтверждение отмены | Да, отменить | **Ha, bekor qilish** | |
 | `btn_no` | подтверждение отмены | Нет, оставить | **Yo'q, qoldirish** | |
