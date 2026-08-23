@@ -90,6 +90,66 @@ def test_booked_card_with_doctor_line(app_session_factory, admin_engine,
     assert "🦷 Чистка" in done.text
     assert "\n👨‍⚕️ Алиев" in done.text, "врач — отдельной строкой карточки"
     assert "🔔" in done.text
+    assert "📍" not in done.text, "адрес не задан — пустых строк в карточке нет"
+
+
+def test_booked_card_shows_clinic_address(app_session_factory, admin_engine,
+                                          clinic_a, service_cleaning):
+    """Карточка подтверждения — «билет»: адрес избавляет пациента от вопроса
+    «а куда идти» (и клинику — от звонка)."""
+    from conftest import make_doctor
+    from navbat.db.base import tenant_transaction
+    from navbat.dialog.patients import create_patient
+    from navbat.onboard import set_clinic_address
+
+    make_doctor(admin_engine, clinic_a, name="Алиев")
+    set_clinic_address(app_session_factory, clinic_a, "Ташкент, ул. Навои, 10")
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        create_patient(session, CHAT, "Гульнора", "998901112233")
+    monday = next_monday()
+    engine = DialogEngine(
+        app_session_factory, clinic_a,
+        extractor=FakeExtractor(script=[extr(service="cleaning",
+                                             date_ref=explicit(monday))]),
+        notifier=RecordingNotifier(),
+        clock=lambda: at_tashkent(monday, "08:00"))
+    offer = engine.handle_text(CHAT, "чистка в понедельник")
+    done = engine.handle_action(CHAT, slot_buttons(offer)[0].action)
+
+    assert "\n📍 Ташкент, ул. Навои, 10" in done.text, \
+        "адрес — отдельной строкой карточки"
+
+
+def test_resched_card_is_full_ticket(app_session_factory, admin_engine,
+                                     clinic_a, service_cleaning):
+    """«ПЕРЕНЕСЕНО» — та же карточка-билет, что подтверждение записи: услуга,
+    время, врач, адрес. Голое время заставляло пациента листать чат
+    в поисках «а что переносили»."""
+    from datetime import timedelta
+
+    from conftest import make_doctor
+    from navbat.onboard import set_clinic_address
+    from test_dialog_reschedule_cancel import book_directly
+
+    doctor = make_doctor(admin_engine, clinic_a, name="Алиев")
+    set_clinic_address(app_session_factory, clinic_a, "Ташкент, ул. Навои, 10")
+    monday = next_monday()
+    tuesday = monday + timedelta(days=1)
+    book_directly(app_session_factory, clinic_a, doctor, service_cleaning,
+                  monday, "09:00")
+    engine = DialogEngine(app_session_factory, clinic_a,
+                          extractor=FakeExtractor(script=[
+                              extr(intent="reschedule",
+                                   date_ref=explicit(tuesday))]),
+                          notifier=RecordingNotifier())
+    offer = engine.handle_text(CHAT, "перенесите на вторник")
+    reslots = [b for b in offer.buttons if b.action.startswith("reslot:")]
+    done = engine.handle_action(CHAT, reslots[0].action)
+
+    assert "<b>ПЕРЕНЕСЕНО</b>" in done.text
+    assert "🦷 Чистка" in done.text
+    assert "\n👨‍⚕️ Алиев" in done.text
+    assert "\n📍 Ташкент, ул. Навои, 10" in done.text
 
 
 def test_service_buttons_have_emoji(app_session_factory, admin_engine,

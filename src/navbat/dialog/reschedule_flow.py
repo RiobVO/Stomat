@@ -8,10 +8,10 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from navbat.dialog import appointments_repo
+from navbat.dialog import appointments_repo, clinic_repo, doctors_repo
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY
-from navbat.dialog.replies import Button, Reply, t
+from navbat.dialog.replies import Button, Reply, card_lines, service_label, t
 from navbat.nlu.schema import Extraction
 from navbat.telegram.admin_texts import Reason
 from navbat.scheduling.errors import (
@@ -138,6 +138,12 @@ class _RescheduleFlowMixin:
             conv.state = "idle"
             return Reply(t("resched_none", lang))
         local = new_start.astimezone(tz)
+        # карточка-«билет», как booked: услуга/врач/адрес — до _clear_booking,
+        # он стирает контекст
+        service = service_label(ctx.service or "checkup", lang)
+        lines = card_lines(doctors_repo.doctor_name(session, appointment.doctor_id),
+                           clinic_repo.clinic_address(session))
         self._clear_booking(conv)
         conv.state = "idle"
-        return Reply(t("resched_done", lang, when=f"{local:%d.%m %H:%M}"))
+        return Reply(t("resched_done", lang, service=service,
+                       when=f"{local:%d.%m %H:%M}", **lines))

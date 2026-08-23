@@ -173,3 +173,30 @@ def test_validate_intervals_rejects_malformed():
     assert _validate_intervals({"mon": [["09:00", "18:00"]], "sun": []})
     with pytest.raises(ValueError):
         _validate_intervals({"mon": [], "tue": []})
+
+
+def test_set_clinic_name_changes_greeting(app_session_factory):
+    """Вывеска показа: greeting несёт имя клиники — переименование делает
+    демо-бота ботом КОНКРЕТНОГО центра без пересоздания клиники."""
+    from navbat.dialog.fsm import DialogEngine
+    from navbat.nlu.extractor import FakeExtractor
+    from navbat.onboard import set_clinic_name
+
+    cid = create_clinic(app_session_factory, "Старая вывеска")
+    set_clinic_name(app_session_factory, cid, "  Shifo Dent  ")
+
+    engine = DialogEngine(app_session_factory, cid,
+                          extractor=FakeExtractor(script=[]))
+    reply = engine.handle_action(100, "lang:ru")
+    assert "Shifo Dent" in reply.text
+    assert "Старая вывеска" not in reply.text
+
+
+def test_set_clinic_name_rejects_empty(app_session_factory):
+    """Пустое имя очистило бы вывеску greeting — в отличие от адреса,
+    имя клиники обнуляемым не бывает."""
+    from navbat.onboard import set_clinic_name
+
+    cid = create_clinic(app_session_factory, "Клиника")
+    with pytest.raises(ValueError):
+        set_clinic_name(app_session_factory, cid, "   ")

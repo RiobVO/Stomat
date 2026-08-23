@@ -349,3 +349,26 @@ def test_delivery_does_not_bury_rearmed_reminder(monkeypatch, app_session_factor
     assert [r.status for r in rows] == ["pending"], \
         "перевзведённое напоминание погашено отметкой об отправке"
     assert rows[0].send_at == new_start - timedelta(hours=24)
+
+
+def test_reminder_card_shows_doctor_and_address(app_session_factory, admin_engine,
+                                                clinic_a, service_cleaning):
+    """Пациент идёт на приём по напоминанию — «к кому и куда» обязано быть
+    в нём самом, а не в глубине чата."""
+    from conftest import make_doctor
+    from navbat.onboard import set_clinic_address
+
+    doctor = make_doctor(admin_engine, clinic_a, name="Алиев")
+    set_clinic_address(app_session_factory, clinic_a, "Ташкент, ул. Навои, 10")
+    book(app_session_factory, clinic_a, doctor, service_cleaning,
+         far_monday(), "09:00", chat_id=CHAT)
+    service, api, _ = make_service_obj(app_session_factory, clinic_a,
+                                       offsets=(timedelta(hours=2),))
+    service.reconcile()
+    ripen_all(admin_engine)
+    assert service.send_due() == 1
+
+    sent_text = api.sent[0][1]
+    assert "\n👨‍⚕️ Алиев" in sent_text, "врач — отдельной строкой напоминания"
+    assert "\n📍 Ташкент, ул. Навои, 10" in sent_text, \
+        "адрес — отдельной строкой напоминания"

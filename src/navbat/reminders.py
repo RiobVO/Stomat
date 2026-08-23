@@ -32,7 +32,8 @@ from navbat.dialog.escalation import (
     ops_alert,
     system_alert,
 )
-from navbat.dialog.replies import Button, Reply, service_label, t
+from navbat.crypto import decrypt_text
+from navbat.dialog.replies import Button, Reply, card_lines, service_label, t
 from navbat.retention import cleanup_old_data
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
@@ -133,11 +134,13 @@ class ReminderService:
                 text("""
                     SELECT r.id, r.appointment_id, r.attempts, r.send_at,
                            a.tg_chat_id, lower(a.time_range) AS start,
-                           s.name AS service, c.timezone
+                           s.name AS service, c.timezone, c.address,
+                           d.name_encrypted AS doctor_encrypted
                     FROM reminder r
                     JOIN appointment a ON a.id = r.appointment_id
                     JOIN clinic c ON c.id = r.clinic_id
                     LEFT JOIN service s ON s.id = a.service_id
+                    LEFT JOIN doctor d ON d.id = a.doctor_id
                     WHERE r.status = 'pending' AND r.send_at <= now()
                       -- о приёме, который уже начался, не напоминают: строка
                       -- могла созреть за простой процесса, а кнопка «Отменить
@@ -162,9 +165,12 @@ class ReminderService:
         # несут запись сами (сырой callback), а слепая перезапись диалога из
         # фонового потока затирала бы то, что пациент делает прямо сейчас
         local = row.start.astimezone(ZoneInfo(row.timezone))
+        doctor = (decrypt_text(row.doctor_encrypted)
+                  if row.doctor_encrypted else None)
         reply = Reply(
             t("reminder", lang, service=service_label(row.service or "checkup", lang),
-              when=f"{local:%d.%m %H:%M}"),
+              when=f"{local:%d.%m %H:%M}",
+              **card_lines(doctor, row.address)),
             (Button(t("btn_attend", lang), f"attend:{row.appointment_id}"),
              Button(t("btn_remind_cancel", lang),
                     f"remind_cancel:{row.appointment_id}")),

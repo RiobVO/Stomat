@@ -169,13 +169,15 @@ TEMPLATES = {
         "ru": "📱 Отправить мой номер",
         "uz": "📱 Raqamimni yuborish",
     },
-    # {doctor} — либо пустой, либо готовая строка «\n👨‍⚕️ Имя» (booking_flow)
+    # {doctor}/{address} — либо пустые, либо готовые строки «\n👨‍⚕️ Имя» /
+    # «\n📍 Адрес» (card_lines): карточка-«билет» самодостаточна — к кому и
+    # куда идти, без пустых строк при незаполненных полях
     "booked": {
         "ru": "✅ <b>ЗАПИСЬ ПОДТВЕРЖДЕНА</b>\n\n"
-              "🦷 {service}\n📅 {when}{doctor}\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\n"
               "🔔 Напомним заранее. Ждём вас!",
         "uz": "✅ <b>YOZILDINGIZ</b>\n\n"
-              "🦷 {service}\n📅 {when}{doctor}\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\n"
               "🔔 Oldindan eslatamiz. Sizni kutamiz!",
     },
     "hold_expired": {
@@ -309,8 +311,10 @@ TEMPLATES = {
               "Yozilishni xohlaysizmi?",
     },
     "resched_done": {
-        "ru": "✅ <b>ПЕРЕНЕСЕНО</b>\n\n📅 {when}\n\nЖдём вас!",
-        "uz": "✅ <b>KO'CHIRILDI</b>\n\n📅 {when}\n\nSizni kutamiz!",
+        "ru": "✅ <b>ПЕРЕНЕСЕНО</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\nЖдём вас!",
+        "uz": "✅ <b>KO'CHIRILDI</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\nSizni kutamiz!",
     },
     "ask_doctor": {
         "ru": "👨‍⚕️ <b>Кто вам удобнее на {when}?</b>",
@@ -328,8 +332,10 @@ TEMPLATES = {
     "btn_yes": {"ru": "Да, отменить", "uz": "Ha, bekor qilish"},
     "btn_no": {"ru": "Нет, оставить", "uz": "Yo'q, qoldirish"},
     "reminder": {
-        "ru": "🔔 <b>Напоминание</b>\n\n🦷 {service}\n📅 {when}\n\nЖдём вас!",
-        "uz": "🔔 <b>Eslatma</b>\n\n🦷 {service}\n📅 {when}\n\nSizni kutamiz!",
+        "ru": "🔔 <b>Напоминание</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\nЖдём вас!",
+        "uz": "🔔 <b>Eslatma</b>\n\n"
+              "🦷 {service}\n📅 {when}{doctor}{address}\n\nSizni kutamiz!",
     },
     "btn_attend": {"ru": "✓ Приду", "uz": "✓ Kelaman"},
     "btn_remind_cancel": {"ru": "Отменить запись", "uz": "Qabulni bekor qilish"},
@@ -422,6 +428,15 @@ def t(key: str, lang: str, **kwargs) -> str:
     парсер Telegram. Эмодзи и \\n экранирование не трогает."""
     safe = {k: html.escape(str(v), quote=False) for k, v in kwargs.items()}
     return TEMPLATES[key][lang].format(**safe)
+
+
+def card_lines(doctor: str | None, address: str | None) -> dict[str, str]:
+    """Опциональные строки карточек booked/resched_done/reminder.
+
+    Пустое поле — пустая строка, шаблон не рисует «висящих» переводов строк;
+    экранирование делает t() вместе с остальными подстановками."""
+    return {"doctor": f"\n👨‍⚕️ {doctor}" if doctor else "",
+            "address": f"\n📍 {address}" if address else ""}
 
 
 def service_label(key: str, lang: str) -> str:

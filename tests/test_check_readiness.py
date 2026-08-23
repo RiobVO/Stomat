@@ -104,3 +104,37 @@ def test_binding_only_on_hidden_doctor_fails(app_session_factory, clinic_a,
     assert line.startswith("[FAIL]"), line
     assert "скрыт" in line, f"причина должна быть названа точно: {line}"
     assert code == 1
+
+
+def test_check_skips_showcase_for_regular_clinic(app_session_factory, clinic_a,
+                                                 capsys):
+    """Витрина /stats — атрибут демо-клиники; живой клинике сеять показную
+    историю нельзя, и строка про неё только путала бы."""
+    run_check(app_session_factory, clinic_a, use_real=False)
+    assert "витрина" not in capsys.readouterr().out
+
+
+def test_check_fails_empty_demo_showcase(app_session_factory, capsys):
+    """pytest стирает демо-историю, финализатор возвращает клинику БЕЗ неё:
+    31.07 сводка показа однажды вышла с «записей: 2» — заметили глазами.
+    Чек обязан ловить пустую витрину ДО встречи и называть команду починки."""
+    from navbat.onboard import DEMO_CLINIC_ID, seed_demo_clinic
+    seed_demo_clinic(app_session_factory)
+
+    run_check(app_session_factory, DEMO_CLINIC_ID, use_real=False)
+
+    line = _line(capsys.readouterr().out, "витрина")
+    assert line.startswith("[FAIL]"), line
+    assert "--demo-history" in line, "чек обязан подсказать команду починки"
+
+
+def test_check_passes_seeded_demo_showcase(app_session_factory, capsys):
+    from navbat.demo_history import seed_demo_history
+    from navbat.onboard import DEMO_CLINIC_ID, seed_demo_clinic
+    seed_demo_clinic(app_session_factory)
+    seed_demo_history(app_session_factory, DEMO_CLINIC_ID)
+
+    run_check(app_session_factory, DEMO_CLINIC_ID, use_real=False)
+
+    line = _line(capsys.readouterr().out, "витрина")
+    assert line.startswith("[OK]"), line
