@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from conftest import at_tashkent, make_doctor, next_monday
+from conftest import at_tashkent, make_doctor, make_service, next_monday
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import TEMPLATES
 from navbat.nlu.extractor import FakeExtractor
@@ -264,3 +264,57 @@ def test_doctor_button_from_a_past_grid_does_not_book_backwards(
             "SELECT count(*) FROM appointment "
             "WHERE lower(time_range) < now()")).scalar_one()
     assert rows == 0, "запись оформлена в прошлое"
+
+
+def _service_of_booking(admin_engine):
+    with admin_engine.begin() as conn:
+        return conn.execute(text(
+            "SELECT s.name FROM appointment a JOIN service s ON s.id = a.service_id "
+            "WHERE a.status IN ('hold', 'booked')")).scalar_one()
+
+
+def test_old_time_button_keeps_its_own_service(app_session_factory, admin_engine,
+                                               clinic_a, doctor_a,
+                                               service_cleaning):
+    """Кнопка несла время, но услугу брала из ТЕКУЩЕГО контекста.
+
+    Пациент выбрал время на чистку, потом начал новый сценарий (пломба), а
+    затем вернулся к старому сообщению и тапнул время оттуда — записывался
+    на пломбу. Сырой callback обязан нести свой субъект целиком."""
+    make_service(admin_engine, clinic_a, "filling", 60)
+    monday = next_monday()
+    engine = engine_on(app_session_factory, clinic_a, monday, script=[
+        extr(service="cleaning", date_ref=explicit(monday)),
+        extr(service="filling", date_ref=explicit(monday)),
+    ])
+    grid = open_day(engine, monday)
+    old_button = time_buttons(grid)[0].action
+
+    engine.handle_text(CHAT, "а лучше пломбу")  # новый сценарий
+    engine.handle_action(CHAT, old_button)      # тап по старому сообщению
+
+    assert _service_of_booking(admin_engine) == "cleaning", \
+        "тап по кнопке из сообщения про чистку записал на другую услугу"
+
+
+def test_old_doctor_button_keeps_its_own_service(app_session_factory,
+                                                 admin_engine, clinic_a,
+                                                 doctor_a, service_cleaning):
+    """То же для кнопки врача: она живёт в чате и переживает смену сценария."""
+    make_service(admin_engine, clinic_a, "filling", 60)
+    two_doctors(admin_engine, clinic_a, doctor_a)
+    monday = next_monday()
+    engine = engine_on(app_session_factory, clinic_a, monday, script=[
+        extr(service="cleaning", date_ref=explicit(monday)),
+        extr(service="filling", date_ref=explicit(monday)),
+    ])
+    grid = open_day(engine, monday)
+    ask = engine.handle_action(CHAT, time_buttons(grid)[0].action)
+    old_doctor_button = next(b.action for b in flat(ask.button_rows)
+                             if b.action.startswith("d:any:"))
+
+    engine.handle_text(CHAT, "а лучше пломбу")
+    engine.handle_action(CHAT, old_doctor_button)
+
+    assert _service_of_booking(admin_engine) == "cleaning", \
+        "кнопка врача из сообщения про чистку записала на другую услугу"

@@ -58,7 +58,9 @@ def slot_buttons(reply):
 
 
 def slot_start(button) -> datetime:
-    return datetime.fromisoformat(button.action.split(":", 1)[1])
+    # time:<услуга>:<isoformat> — кнопка несёт и услугу: она живёт в чате
+    # и переживает смену сценария
+    return datetime.fromisoformat(button.action.split(":", 2)[2])
 
 
 def fsm_state(admin_engine, chat_id=CHAT) -> str:
@@ -282,8 +284,12 @@ def test_one_letter_doctor_does_not_pick_a_doctor(app_session_factory,
         extr(service="cleaning", date_ref=explicit(day), doctor="a"),
     ])
     reply = engine.handle_text(CHAT, "чистку в понедельник")
-    doctors = {b.action.split(":", 2)[1] for b in slot_buttons(reply)}
-    assert len(doctors) > 1, "огрызок имени сузил выбор до одного врача"
+    # врача в кнопке времени больше нет — проверяем по делу: выбор не сужен,
+    # поэтому на тап по времени бот обязан спросить, к кому именно
+    ask = engine.handle_action(CHAT, slot_buttons(reply)[0].action)
+    picks = [b.action for row in ask.button_rows for b in row]
+    assert sum(a.startswith("d:") for a in picks) == 3, \
+        f"огрызок имени сузил выбор до одного врача: {picks}"
 
 
 # ── Срывы брони ──────────────────────────────────────────────────────────────
@@ -334,10 +340,11 @@ def test_slot_taken_reoffers_without_it(app_session_factory, admin_engine,
 
 def test_stale_slot_button_without_service_reasks_gracefully(
         app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
-    # m3: callback `slot:` из старого сообщения, нажатый когда сценарий уже
-    # сброшен (service=None). Раньше ctx["service"] кидал KeyError; типизи-
-    # рованный DialogContext (R2) отдаёт None → service_id None → hold даёт
-    # InvalidSlotError, которое ловится → бот переспрашивает услугу, не падает.
+    # m3 (пересмотр 31.07): кнопка времени несёт услугу сама, поэтому сброс
+    # сценария её не обесценивает — бот делает ровно то, что на кнопке
+    # написано, и не теряет нить после тапа по конкретному времени. Раньше
+    # услуга бралась из контекста: после /start бот переспрашивал её, а при
+    # смене сценария записывал на ЧУЖУЮ услугу (блокер независимого ревью).
     day = next_monday()
     engine = make_engine(app_session_factory, clinic_a, [
         extr(service="cleaning", date_ref=explicit(day)),
@@ -346,12 +353,13 @@ def test_stale_slot_button_without_service_reasks_gracefully(
     stale = slot_buttons(offer)[0].action
     engine.handle_text(CHAT, "/start")  # сброс сценария: service очищен
 
-    reply = engine.handle_action(CHAT, stale)  # не должно бросить
+    engine.handle_action(CHAT, stale)  # не должно бросить
 
-    assert any(b.action.startswith("service:") for b in reply.buttons), \
-        "после сброса контекста stale-slot переспрашивает услугу"
-    assert fsm_state(admin_engine) == "booking_collect"
-    assert appt_count(admin_engine) == 0, "запись не создаётся без услуги"
+    with admin_engine.begin() as conn:
+        booked = conn.execute(text(
+            "SELECT s.name FROM appointment a JOIN service s ON s.id = a.service_id"
+        )).scalar_one()
+    assert booked == "cleaning", "тап по кнопке дал не ту услугу, что на ней"
 
 
 def appt_count(admin_engine) -> int:
