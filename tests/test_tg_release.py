@@ -141,3 +141,20 @@ def test_release_from_patient_goes_to_nlu(app_session_factory, admin_engine,
     assert api.sent[0][0] == CHAT
     assert any(b.action.startswith("a:") for b in api.sent[0][2]), \
         "текст ушёл в NLU и вернулись слоты"
+
+
+def test_release_resets_escalation_cooldown(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a, service_cleaning):
+    """Админ вернул бота /release — новая просьба человека снова важна:
+    кулдаун повторных алертов сбрасывается вместе со счётчиком сбоев."""
+    worker, api, notifier = make_worker(
+        app_session_factory, clinic_a, [], admin_chat_id=ADMIN_CHAT)
+    escalate_chat(worker, app_session_factory, clinic_a)
+    put_message(app_session_factory, clinic_a, f"/release {CHAT}",
+                chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    escalate_chat(worker, app_session_factory, clinic_a)
+
+    assert fsm_state(admin_engine) == "escalated"
+    assert len(notifier.calls) == 2, "после /release алерт уходит снова"

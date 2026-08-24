@@ -90,11 +90,15 @@ class TelegramEscalation:
         raw_owner = os.environ.get("NAVBAT_OWNER_CHAT_ID", "")
         self._owner_chat = int(raw_owner) if raw_owner.lstrip("-").isdigit() else None
 
-    def notify(self, chat_id: int, reason: str, context: dict) -> None:
+    def notify(self, chat_id: int, reason: str, context: dict) -> bool:
+        """False — алерт не дошёл НИ ОДНОМУ админ-чату (транспортный сбой):
+        кулдаун дублей в fsm по такому «алерту» не стартует. Отсутствие
+        админ-чатов — штатная конфигурация, получатель — лог."""
         if not self._admin_chat_ids:
             log.warning("эскалация chat=%s (админ-чаты не заданы): %s | %s",
                         chat_id, reason, context)
-            return
+            return True
+        delivered = False
         for admin_chat in self._admin_chat_ids:
             lang = self._lang_of(admin_chat)
             message = plain("alert_escalation", lang,
@@ -102,9 +106,11 @@ class TelegramEscalation:
                             context=summarize_context(context, lang))
             try:
                 self._api.send_message(admin_chat, message)
+                delivered = True
             except TelegramAPIError as e:
                 log.error("эскалация chat=%s не доставлена админу %s: %s | %s",
                           chat_id, admin_chat, e, reason)
+        return delivered
 
     def notify_fyi(self, chat_id: int, reason: str, context: dict) -> None:
         """🟡 Информирование владельца: человек не нужен, снимать нечего.

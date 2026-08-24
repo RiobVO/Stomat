@@ -5,10 +5,17 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 MAX_NLU_FAILURES = 2     # подряд; дальше — «не понял» + повтор шага кнопками
+
+# Кулдаун ПОВТОРНОГО алерта «хочу человека» одного чата: первый уходит
+# мгновенно (P0 «до человека один тап»), карусель «просьба → /start →
+# просьба» больше не жужжит админу — пациент видит ту же заморозку,
+# подавляется только дубль алерта. Техавария 2×confirm кулдаун игнорирует.
+# /release сбрасывает: админ вернул бота — новая просьба снова важна.
+ESCALATION_ALERT_COOLDOWN = timedelta(hours=2)
 SLOTS_PER_REPLY = 4      # кнопок со временем в одном ответе
 NEAREST_DAY_SCAN = 14    # дней вперёд при поиске свободного дня
 

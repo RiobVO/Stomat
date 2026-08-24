@@ -76,3 +76,20 @@ def test_system_alert_falls_back_to_notify():
     notifier = RecordingNotifier()
     system_alert(notifier, "проблема", {}, chat_id=42)
     assert notifier.calls == [(42, "проблема")]
+
+
+def test_notify_reports_total_delivery_failure():
+    """Кулдаун дублей (fsm) стартует только по доставленному алерту:
+    «не дошло ни одному» канал обязан назвать явно — False."""
+    api = FakeTelegramAPI()
+    api.send_failures = 1
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+    assert escalation.notify(100, "причина", {}) is False
+
+
+def test_notify_partial_delivery_counts_as_delivered():
+    api = FakeTelegramAPI()
+    api.send_failures = 1
+    escalation = TelegramEscalation(api, [111, 222])
+    assert escalation.notify(100, "причина", {}) is not False
+    assert len(api.sent) == 1, "второй чат получил алерт"

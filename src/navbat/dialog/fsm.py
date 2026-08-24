@@ -39,6 +39,7 @@ from navbat.dialog.cancel_flow import _CancelFlowMixin
 from navbat.dialog.conversation import (
     Conversation, DialogContext, load_conversation, save_conversation)
 from navbat.dialog.dialog_common import (
+    ESCALATION_ALERT_COOLDOWN,
     MAX_NLU_FAILURES,
     NEAREST_DAY_SCAN,
     SlotGuard,
@@ -428,9 +429,21 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         """Эскалация по прямой просьбе пациента: заморозка + алерт.
 
         notify ДО _abort_pending — контекст сценария должен доехать до
-        админа целым; висящий hold отпускаем, бронь просьбу не переживает."""
-        self._notifier.notify(conv.chat_id, Reason("reason_wants_human"),
-                              self._escalation_context(conv))
+        админа целым; висящий hold отпускаем, бронь просьбу не переживает.
+        Повторный алерт того же чата внутри кулдауна подавляется (карусель
+        «просьба → /start → просьба»); заморозка и ответ пациенту — как
+        обычно, админ уже получил первый алерт об этом чате."""
+        now = self._clock()
+        last = conv.context.escalation_alerted_at
+        if (last is None
+                or now - datetime.fromisoformat(last) >= ESCALATION_ALERT_COOLDOWN):
+            delivered = self._notifier.notify(
+                conv.chat_id, Reason("reason_wants_human"),
+                self._escalation_context(conv))
+            # False = не дошло ни одному получателю (ревью): такой «алерт»
+            # кулдаун не стартует — следующая просьба снова попробует достучаться
+            if delivered is not False:
+                conv.context.escalation_alerted_at = now.isoformat()
         self._abort_pending(conv)
         conv.state = "escalated"
         # вне рабочего окна честно говорим «утром» — иначе пациент ждёт
