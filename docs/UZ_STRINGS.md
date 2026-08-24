@@ -396,6 +396,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `cal_past_day` | Этот день уже прошёл | **Bu kun o'tib ketdi** | |
 | `llm_off_menu` | Сейчас запись принимается через кнопки меню — выберите нужное действие. | **Hozir yozilish menyu tugmalari orqali qabul qilinadi — kerakli amalni tanlang.** | |
 | `bot_paused` | Запись через бота временно приостановлена. Позвоните в клинику или загляните позже. | **Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga qo'ng'iroq qiling yoki keyinroq urinib ko'ring.** | |
+| `bot_paused_phone` | Запись через бота временно приостановлена. Позвоните в клинику: {phone} — или загляните позже. | **Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga qo'ng'iroq qiling: {phone} — yoki keyinroq urinib ko'ring.** | |
 | `outside_hours` | Клиника работает с {open} до {close}. | **Klinika {open} dan {close} gacha ishlaydi.** | |
 | `hours_today` | 🕐 Сегодня клиника работает с {open} до {close}. | **🕐 Bugun klinika {open} dan {close} gacha ishlaydi.** | |
 | `hours_next` | 🕐 Сегодня клиника не работает. Ближайший рабочий день — {date}: с {open} до {close}. | **🕐 Bugun klinika ishlamaydi. Eng yaqin ish kuni — {date}: {open} dan {close} gacha.** | |

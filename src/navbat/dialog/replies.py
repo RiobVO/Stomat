@@ -207,6 +207,15 @@ TEMPLATES = {
         "uz": "Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga qo'ng'iroq "
               "qiling yoki keyinroq urinib ko'ring.",
     },
+    # тот же текст, но с номером: «позвоните в клинику» без номера — тупик,
+    # а на паузе бот больше ничем пациенту помочь не может (телефон задан
+    # онбордингом --phone; не задан — остаётся bot_paused)
+    "bot_paused_phone": {
+        "ru": "Запись через бота временно приостановлена. Позвоните "
+              "в клинику: {phone} — или загляните позже.",
+        "uz": "Bot orqali yozilish vaqtincha to'xtatildi. Klinikaga "
+              "qo'ng'iroq qiling: {phone} — yoki keyinroq urinib ko'ring.",
+    },
     "escalated": {
         "ru": "👤 Передаю администратору — он ответит вам здесь "
               "в ближайшее время.",
