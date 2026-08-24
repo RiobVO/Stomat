@@ -5,6 +5,7 @@ from conftest import make_service, next_monday
 from navbat.dialog.fsm import DialogEngine
 from navbat.dialog.replies import MEDICAL_DISCLAIMER
 from navbat.nlu.extractor import FakeExtractor
+from sqlalchemy import text
 from test_dialog_booking import CHAT, explicit, extr
 
 
@@ -67,3 +68,29 @@ def test_medical_question_keeps_disclaimer(app_session_factory, admin_engine,
     ]))
     reply = engine.handle_text(CHAT, "имплант мне вообще можно ставить?")
     assert MEDICAL_DISCLAIMER["ru"] in reply.text
+
+
+def test_disclaimer_keeps_button_rows(app_session_factory, admin_engine,
+                                      clinic_a, doctor_a):
+    """Обёртка дисклеймера собирала Reply руками — из всех полей доезжали
+    только text и buttons.
+
+    Жалоба плюс просьба записаться, а свободного времени нет: пациенту
+    полагается сетка дат и кнопка очереди (они едут в button_rows), но под
+    дисклеймером они молча исчезали — на «зуб болит» бот отвечал «времени
+    нет» вообще без выхода.
+    """
+    make_service(admin_engine, clinic_a, "checkup", 30)
+    with admin_engine.begin() as conn:  # график не заведён — слотов нет нигде
+        conn.execute(text("UPDATE doctor SET working_intervals = '{}' "
+                          "WHERE clinic_id = :c"), {"c": clinic_a})
+    engine = DialogEngine(app_session_factory, clinic_a, extractor=FakeExtractor(script=[
+        extr(service="checkup", date_ref=explicit(next_monday()), is_medical=True),
+    ]))
+    engine.handle_action(CHAT, "lang:ru")  # язык выбран: greeting уже показан
+
+    reply = engine.handle_text(CHAT, "зуб болит, запишите в понедельник")
+
+    assert reply.text.startswith(MEDICAL_DISCLAIMER["ru"])
+    actions = [b.action for row in reply.button_rows for b in row]
+    assert actions == ["wl:join:checkup"], "дисклеймер потерял button_rows"
