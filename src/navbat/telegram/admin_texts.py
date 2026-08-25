@@ -448,6 +448,29 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "feed_no_name": {"ru": "без имени", "uz": "ismsiz"},
     # услуги может не быть у записи с улицы — карточку это не отменяет
     "feed_no_service": {"ru": "приём", "uz": "qabul"},
+
+    # ── экран «Сегодня» и утренняя сводка ────────────────────────────────
+    "btn_today_list": {"ru": "📅 Сегодня", "uz": "📅 Bugun"},
+    "btn_today_refresh": {"ru": "🔄 Обновить", "uz": "🔄 Yangilash"},
+    # «приёмов: N», а не «N приёмов»: русское число требует трёх форм
+    # («1 приём», «2 приёма», «5 приёмов»), а склонять в шаблоне нечем
+    "today_header": {
+        "ru": "📅 <b>Сегодня, {date}</b> — приёмов: {count}",
+        "uz": "📅 <b>Bugun, {date}</b> — qabullar: {count}",
+    },
+    "today_line": {
+        "ru": "{time} {patient} ({phone}) — {service}, {doctor}",
+        "uz": "{time} {patient} ({phone}) — {service}, {doctor}",
+    },
+    "today_empty": {
+        "ru": "📅 Сегодня записей нет",
+        "uz": "📅 Bugun yozuvlar yo'q",
+    },
+    "today_no_phone": {"ru": "без телефона", "uz": "telefonsiz"},
+    "morning_header": {
+        "ru": "☀️ <b>Доброе утро!</b>",
+        "uz": "☀️ <b>Xayrli tong!</b>",
+    },
     "questions_title": {
         "ru": "❓ <b>Вопросы без ответа ({count})</b>",
         "uz": "❓ <b>Javobsiz savollar ({count})</b>",
@@ -831,8 +854,8 @@ def menu_key(label: str) -> str | None:
     Reply-клавиатура остаётся у админа на экране и после смены языка:
     тап по старой кнопке обязан сработать, а не молча открыть меню."""
     for key in ("btn_services", "btn_doctors", "btn_about", "btn_dayoff",
-                "btn_stats", "btn_pause", "btn_resume", "btn_lang",
-                "btn_preview"):
+                "btn_today_list", "btn_stats", "btn_pause", "btn_resume",
+                "btn_lang", "btn_preview"):
         if any(TEMPLATES[key][lang] == label for lang in LANGS):
             return key
     return None

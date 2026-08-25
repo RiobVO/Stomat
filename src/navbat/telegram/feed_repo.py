@@ -1,16 +1,16 @@
-"""Данные карточки ленты записей — один запрос по appointment_id.
+"""Данные карточки ленты записей — по appointment_id и списком на день.
 
-Лента шлёт владельцу карточку в момент события (запись, отмена, перенос).
-Собирать её обязан ОДИН слой: точки события живут в диалоге, напоминаниях и
-календарном синке, и знать про шифрование имён, рабочие часы клиники и
-статус привязки пациента им незачем. Функции работают внутри
-tenant_transaction (RLS по clinic_id).
+Лента шлёт владельцу карточку в момент события (запись, отмена, перенос),
+экран «Сегодня» показывает те же карточки за день. Собирать их обязан ОДИН
+слой: точки события живут в диалоге, напоминаниях и календарном синке, и
+знать про шифрование имён, рабочие часы клиники и статус привязки пациента
+им незачем. Функции работают внутри tenant_transaction (RLS по clinic_id).
 """
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -35,6 +35,33 @@ class Card:
     status: str
 
 
+# Проекция карточки: одна на обоих потребителей (событие ленты и день
+# целиком). Копия SELECT'а разъехалась бы на первой же правке — карточка
+# события и строка дня обязаны показывать владельцу одно и то же.
+# Пациент ищется по patient_id, а при пустом — по чату записи: привязка
+# пациента к записи идёт ОТДЕЛЬНОЙ транзакцией уже после confirm
+# (booking_flow: транзакция движка держит ту же строку), и первая запись
+# нового пациента иначе уходила бы владельцу «без имени».
+_CARD_QUERY = """
+    SELECT lower(a.time_range) AS start, a.created_at, a.status,
+           a.tg_chat_id, s.name AS service,
+           d.name_encrypted AS doctor_encrypted,
+           p.name_encrypted AS patient_encrypted, p.phone_encrypted
+    FROM appointment a
+    LEFT JOIN service s ON s.id = a.service_id
+    LEFT JOIN doctor d ON d.id = a.doctor_id
+    LEFT JOIN LATERAL (
+        SELECT pt.name_encrypted, pt.phone_encrypted
+        FROM patient pt
+        WHERE pt.id = a.patient_id
+           OR (a.patient_id IS NULL
+               AND pt.tg_chat_id = a.tg_chat_id)
+        ORDER BY pt.id
+        LIMIT 1
+    ) p ON true
+"""
+
+
 def appointment_card(session: Session, appointment_id: uuid.UUID | str
                      ) -> Card | None:
     """Данные карточки по записи; None — записи уже нет.
@@ -42,36 +69,34 @@ def appointment_card(session: Session, appointment_id: uuid.UUID | str
     Имя врача, имя и телефон пациента расшифровываются здесь же: админ-чат —
     тот же доверенный канал, что событие календаря врача (docs/PRIVACY.md),
     и владельцу нужен не хэш, а человек, которому можно позвонить.
-
-    Пациент ищется по patient_id, а при пустом — по чату записи: привязка
-    пациента к записи идёт ОТДЕЛЬНОЙ транзакцией уже после confirm
-    (booking_flow: транзакция движка держит ту же строку), и первая запись
-    нового пациента иначе уходила бы владельцу «без имени».
     """
     row = session.execute(
-        text("""
-            SELECT lower(a.time_range) AS start, a.created_at, a.status,
-                   a.tg_chat_id, s.name AS service,
-                   d.name_encrypted AS doctor_encrypted,
-                   p.name_encrypted AS patient_encrypted, p.phone_encrypted
-            FROM appointment a
-            LEFT JOIN service s ON s.id = a.service_id
-            LEFT JOIN doctor d ON d.id = a.doctor_id
-            LEFT JOIN LATERAL (
-                SELECT pt.name_encrypted, pt.phone_encrypted
-                FROM patient pt
-                WHERE pt.id = a.patient_id
-                   OR (a.patient_id IS NULL
-                       AND pt.tg_chat_id = a.tg_chat_id)
-                ORDER BY pt.id
-                LIMIT 1
-            ) p ON true
-            WHERE a.id = CAST(:id AS uuid)
-        """),
+        text(_CARD_QUERY + "WHERE a.id = CAST(:id AS uuid)"),
         {"id": str(appointment_id)},
     ).one_or_none()
-    if row is None:
-        return None
+    return _card(row) if row is not None else None
+
+
+def day_cards(session: Session, day: date, tz: ZoneInfo) -> list[Card]:
+    """Живые приёмы одного дня клиники по возрастанию времени (экран
+    «Сегодня» и утренняя сводка).
+
+    День считается в локали клиники, а не сервера: база живёт в UTC, и
+    ташкентский вечер иначе уезжал бы в завтрашний список. Прошедшие часы
+    из дня не вычёркиваются — владельцу нужен день целиком, включая тех,
+    кто уже пришёл.
+    """
+    rows = session.execute(
+        text(_CARD_QUERY + "WHERE a.status = 'booked' "
+                           "  AND (lower(a.time_range) AT TIME ZONE :tz)::date "
+                           "      = :day "
+                           "ORDER BY lower(a.time_range)"),
+        {"tz": tz.key, "day": day},
+    ).all()
+    return [_card(row) for row in rows]
+
+
+def _card(row) -> Card:
     return Card(
         start=row.start,
         service_key=row.service,

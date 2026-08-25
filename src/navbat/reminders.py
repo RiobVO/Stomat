@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -39,15 +39,22 @@ from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
     collect_daily_stats, render_digest_short, render_questions,
     should_send_digest)
+from navbat.telegram import feed_repo
 from navbat.telegram.admin_texts import Reason, at
 from navbat.telegram.api import ChatUnavailableError
 from navbat.telegram.escalation import _as_chat_tuple
+from navbat.telegram.today_view import render_day
 from navbat.telegram.worker import send_reply
 
 log = logging.getLogger("navbat.reminders")
 
 DEFAULT_OFFSETS = (timedelta(hours=24), timedelta(hours=2))
 MAX_ATTEMPTS = 3
+
+# Утренняя сводка: время, а не целый час как DIGEST_HOUR у вечернего
+# дайджеста. Полчаса здесь содержательны — сводка должна лечь в чат перед
+# открытием в 09:00, но не в 08:00, когда её ещё некому читать.
+MORNING_SUMMARY_TIME = dt_time(8, 30)
 
 # Лист ожидания: горизонт поиска слота, антиспам-кулдаун, TTL записи (env)
 WAITLIST_HORIZON_DAYS = int(os.environ.get("WAITLIST_HORIZON_DAYS", "14"))
@@ -379,6 +386,65 @@ class ReminderService:
             )
         return True
 
+    def maybe_send_morning_summary(self, now_local=None) -> bool:
+        """День клиники в админ-чаты раз в утро; отметка —
+        clinic.last_morning_digest_date.
+
+        Своя отметка, а не last_digest_date вечернего дайджеста: это два
+        события одного дня, и общая колонка гасила бы одно другим.
+        """
+        if not self._digest_chat_ids or self._tg_api is None:
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            row = session.execute(text(
+                "SELECT timezone, last_morning_digest_date FROM clinic "
+                "WHERE id = current_setting('app.clinic_id')::uuid"
+            )).one()
+        tz = ZoneInfo(row.timezone)
+        moment = now_local or datetime.now(tz)
+        if moment.time() < MORNING_SUMMARY_TIME:
+            return False
+        if row.last_morning_digest_date is not None \
+                and row.last_morning_digest_date >= moment.date():
+            return False
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            cards = feed_repo.day_cards(session, moment.date(), tz)
+        if not cards:
+            # пустым днём владельца не будим, но день отмечаем: такт цикла —
+            # 30 секунд, и без отметки он до полуночи ходил бы в базу за
+            # одним и тем же пустым списком
+            self._mark_morning_summary(moment.date())
+            return False
+        delivered = 0
+        for chat in self._digest_chat_ids:
+            # сбой одного получателя не отменяет остальных и не отменяет день
+            # (та же логика, что у вечернего дайджеста): мёртвый чат иначе
+            # размножал бы сводку у живых каждые полминуты
+            try:
+                # у каждого админ-чата свой язык консоли (карта, №16)
+                lang = self._admin_lang(chat)
+                body = (at("morning_header", lang) + "\n\n"
+                        + render_day(cards, moment.date(), lang, tz))
+                self._tg_api.send_message(chat, body, parse_mode="HTML")
+                delivered += 1
+            except Exception as e:
+                log.warning("утренняя сводка: чат %s не получил её (%s)",
+                            chat, e)
+        if not delivered:
+            # не дошла никому — день не отмечаем, попытка повторится
+            log.warning("утренняя сводка не доставлена ни одному админ-чату")
+            return False
+        self._mark_morning_summary(moment.date())
+        return True
+
+    def _mark_morning_summary(self, day: date) -> None:
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            session.execute(
+                text("UPDATE clinic SET last_morning_digest_date = :day "
+                     "WHERE id = current_setting('app.clinic_id')::uuid"),
+                {"day": day},
+            )
+
     def maybe_cleanup(self) -> bool:
         """Retention-чистка раз в календарный день (D.3)."""
         today = date.today()
@@ -398,6 +464,7 @@ class ReminderService:
                 self.reconcile()
                 self.send_due()
                 self.match_waitlist()
+                self.maybe_send_morning_summary()
                 self.maybe_send_digest()
                 self.maybe_cleanup()
             except Exception:
