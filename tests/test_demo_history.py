@@ -656,3 +656,31 @@ def test_no_synthetic_patient_books_twice_in_a_row(app_session_factory,
 
     assert len(chats) > 20, "сидер вообще ничего не налил"
     assert not glued, f"подряд идущие визиты одного лица: {len(glued)}"
+
+
+def test_repeat_visits_are_apart_by_formula():
+    """Инвариант «сосед по времени ≠ то же лицо» обязан держаться формулой,
+    а не удачной раскладкой дня.
+
+    Тест выше судит по реальной раскладке, а она зависит от календаря прогона:
+    какие дни окна выпали на воскресенье, сколько записей влезло в сегодня,
+    как легли приёмы разной длительности. С прежней формулой (один чат у
+    записей created и created+3) он краснел примерно через прогон, а в иные
+    дни недели оставался зелёным на сломанном коде — то есть один он инвариант
+    не стережёт. Здесь проверяем сам запас расстояния, детерминированно."""
+    from navbat.demo_history import NEIGHBOUR_SPAN, _chat_index
+
+    visits: dict[int, list[int]] = {}
+    for created in range(300):  # с запасом: две недели дают под сотню записей
+        visits.setdefault(_chat_index(created), []).append(created)
+    repeated = [when for when in visits.values() if len(when) > 1]
+
+    assert repeated, "вернувшихся нет — витрина показывает только новых"
+    assert len(repeated) < len(visits), "новых лиц нет — все записи повторные"
+    for when in repeated:
+        assert len(when) == 2, f"одно лицо ходит больше двух раз: {when}"
+        first, second = when
+        assert second - first > NEIGHBOUR_SPAN, \
+            f"повтор {second} может встать вплотную к оригиналу {first}"
+        assert _chat_index(first) == first, \
+            f"донор {first} сам повтор — живого первого визита за ним нет"
