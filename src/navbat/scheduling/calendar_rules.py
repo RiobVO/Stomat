@@ -47,6 +47,26 @@ def open_bounds(
     return min(lo for lo, _ in intervals), max(hi for _, hi in intervals)
 
 
+def outside_open_hours(
+    moment: datetime,
+    intervals_per_doctor: list[dict],
+    holidays: set[date],
+    tz: ZoneInfo,
+) -> bool:
+    """Момент вне рабочего окна СВОЕГО дня; закрытый день целиком — тоже «вне».
+
+    Один предикат на две витрины: «записей вне рабочих часов» в /stats и
+    пометка 🌙 у карточки ленты. Условие обязано быть буквально одним — иначе
+    владелец видит в ленте ночную запись, которой нет в сводке дня.
+    """
+    day = moment.astimezone(tz).date()
+    bounds = open_bounds(intervals_per_doctor, day, tz, holidays)
+    if bounds is None:
+        return True
+    lo, hi = bounds
+    return not (lo <= moment < hi)
+
+
 def slot_candidates(
     intervals: list[Interval], duration_min: int, step_min: int = 30
 ) -> list[Interval]:

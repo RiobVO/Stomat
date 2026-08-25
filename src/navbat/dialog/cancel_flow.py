@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from navbat.dialog import appointments_repo
 from navbat.dialog.conversation import Conversation
+from navbat.dialog.escalation import booking_feed
 from navbat.dialog.replies import Button, Reply, t
 from navbat.scheduling.errors import (
     AppointmentChangedError,
@@ -87,4 +88,7 @@ class _CancelFlowMixin:
             return reply
         except AppointmentNotFoundError:
             return Reply(t("cancel_none", lang))
+        # слот вернулся в продажу — владелец узнаёт об этом сейчас, а не
+        # вечером в дайджесте (путь из напоминания приходит сюда же)
+        booking_feed(self._notifier, session, cancel_id, "cancelled")
         return Reply(t("cancel_done", lang))

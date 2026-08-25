@@ -428,6 +428,26 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "uz": "\n• 🔔 kutish navbatida: {count}",
     },
     "digest_more": {"ru": "📊 Подробнее", "uz": "📊 Batafsil"},
+
+    # ── лента записей: карточка владельцу в момент события ───────────────
+    # Клиника без Google Calendar не видит записи бота вообще — карточка
+    # закрывает эту дыру. Уходит с parse_mode=HTML (at() экранирует имя
+    # пациента и врача: они приходят из БД и могут нести «<&>»)
+    "feed_booked": {
+        "ru": "✅ Запись: {patient}, {service}, {when}, {doctor}{night}",
+        "uz": "✅ Yozuv: {patient}, {service}, {when}, {doctor}{night}",
+    },
+    "feed_cancelled": {
+        "ru": "❌ Отмена: {patient}, {service}, {when}, {doctor}{night}",
+        "uz": "❌ Bekor qilindi: {patient}, {service}, {when}, {doctor}{night}",
+    },
+    "feed_resched": {
+        "ru": "🔄 Перенос: {patient}, {service} → {when}, {doctor}{night}",
+        "uz": "🔄 Ko'chirildi: {patient}, {service} → {when}, {doctor}{night}",
+    },
+    "feed_no_name": {"ru": "без имени", "uz": "ismsiz"},
+    # услуги может не быть у записи с улицы — карточку это не отменяет
+    "feed_no_service": {"ru": "приём", "uz": "qabul"},
     "questions_title": {
         "ru": "❓ <b>Вопросы без ответа ({count})</b>",
         "uz": "❓ <b>Javobsiz savollar ({count})</b>",

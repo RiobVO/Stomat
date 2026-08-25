@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from navbat.dialog.doctors_repo import doctor_list
 from navbat.dialog.replies import service_label
-from navbat.scheduling.calendar_rules import open_bounds
+from navbat.scheduling.calendar_rules import outside_open_hours
 from navbat.telegram.admin_texts import at
 
 DIGEST_HOUR = 21  # локальный час отправки вечерней сводки
@@ -228,18 +228,8 @@ def _after_hours_confirms(session: Session, first: date, last: date,
         text("SELECT date FROM holiday WHERE date BETWEEN :first AND :last"),
         {"first": first, "last": last},
     ).scalars())
-    count = 0
-    for moment in moments:
-        day = moment.astimezone(tz).date()
-        bounds = open_bounds(schedules, day, tz,
-                             {day} if day in holidays else set())
-        if bounds is None:
-            count += 1
-            continue
-        lo, hi = bounds
-        if not (lo <= moment < hi):
-            count += 1
-    return count
+    return sum(outside_open_hours(moment, schedules, holidays, tz)
+               for moment in moments)
 
 
 def _money(amount: int) -> str:

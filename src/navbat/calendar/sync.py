@@ -30,6 +30,7 @@ from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.escalation import (
     EscalationNotifier,
     LoggingEscalation,
+    booking_feed,
     fyi_alert,
     ops_alert,
 )
@@ -633,6 +634,10 @@ class CalendarSync:
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
                   Reason("reason_relocated", old=old_label, new=new_label),
                               {"appointment": str(victim.id)})
+        # карточка ДОПОЛНЯЕТ алерт: 🟡 объясняет причину переноса, лента
+        # показывает итог — то же, что владелец увидел бы в календаре
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            booking_feed(self._notifier, session, victim.id, "resched")
 
     def _cancel_unrelocatable(self, scheduler: SchedulingEngine, victim,
                               old_label: str, lang: str) -> None:
@@ -650,6 +655,8 @@ class CalendarSync:
         fyi_alert(self._notifier, victim.tg_chat_id or 0,
                   Reason("reason_unrelocatable", old=old_label),
                               {"appointment": str(victim.id)})
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            booking_feed(self._notifier, session, victim.id, "cancelled")
 
     def _relocation_slot(self, scheduler: SchedulingEngine, doctor_id: uuid.UUID,
                          victim, span: tuple[datetime, datetime],

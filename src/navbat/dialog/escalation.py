@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import logging
 from typing import Protocol
+from zoneinfo import ZoneInfo
+
+from navbat.dialog import clinic_repo
+from navbat.telegram import feed_repo
 
 log = logging.getLogger("navbat.escalation")
 
@@ -51,6 +55,38 @@ def relay_from_patient(notifier, chat_id: int, text: str) -> None:
                  chat_id)
         return
     handler(chat_id, text)
+
+
+def booking_feed(notifier, session, appointment_id, kind: str) -> None:
+    """Карточка ленты (kind: booked | cancelled | resched) в админ-чаты.
+
+    Клиника без Google Calendar не видит записи бота вообще — лента и есть
+    её экран. Не эскалация: фолбэка на notify() здесь нет (как у
+    relay_from_patient) — нотификаторы без канала (LoggingEscalation, фейки)
+    молчат, будить человека карточкой не за чем.
+
+    session уже открыт вызывающим: карточка собирается ровно из того
+    состояния записи, которое он только что зафиксировал.
+    """
+    handler = getattr(notifier, "booking_event", None)
+    if handler is None:
+        log.debug("лента: карточка %s не отправлена — канал не настроен", kind)
+        return
+    # лента — сигнал, а не транзакция (как якорь свайп-ответа): сбой рендера
+    # или доставки не вправе уронить обработку пациента. Он уже получил ответ
+    # о записи, а повтор апдейта прогнал бы весь сценарий заново
+    try:
+        card = feed_repo.appointment_card(session, appointment_id)
+        if card is None:
+            log.warning("лента: запись %s не найдена — карточка %s пропущена",
+                        appointment_id, kind)
+            return
+        tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+        handler(kind, card, f"{card.start.astimezone(tz):%d.%m %H:%M}",
+                feed_repo.is_after_hours(session, card.created_at, tz))
+    except Exception as e:  # noqa: BLE001 — карточка дешевле обработки пациента
+        log.error("лента: карточка %s по записи %s не отправлена: %r",
+                  kind, appointment_id, e)
 
 
 def ops_alert(notifier, reason: str, context: dict, chat_id: int = 0,

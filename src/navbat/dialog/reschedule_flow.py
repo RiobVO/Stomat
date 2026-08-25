@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from navbat.dialog import appointments_repo, clinic_repo, doctors_repo
 from navbat.dialog.conversation import Conversation
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY
+from navbat.dialog.escalation import booking_feed
 from navbat.dialog.replies import Button, Reply, card_lines, service_label, t
 from navbat.nlu.schema import Extraction
 from navbat.telegram.admin_texts import Reason
@@ -145,5 +146,8 @@ class _RescheduleFlowMixin:
                            clinic_repo.clinic_address(session))
         self._clear_booking(conv)
         conv.state = "idle"
+        # единственная точка переноса пациентом: и сценарий переноса, и
+        # альтернативы вытесненной записи приходят сюда одной кнопкой reslot:
+        booking_feed(self._notifier, session, appointment.id, "resched")
         return Reply(t("resched_done", lang, service=service,
                        when=f"{local:%d.%m %H:%M}", **lines))
