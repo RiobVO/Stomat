@@ -81,6 +81,8 @@ SAMPLE_VALUES = {
     "address": "Toshkent, Navoiy ko'chasi 10",
     "info": "naqd / karta / bo'lib to'lash",
     "phone": "+998 71 200-00-00",
+    # реплика живого администратора, пересланная пациенту свайп-ответом
+    "text": "10 daqiqadan keyin qo'ng'iroq qilaman",
 }
 
 

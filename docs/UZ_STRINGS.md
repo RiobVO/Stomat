@@ -408,6 +408,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_call_admin` | 👤 Позвать администратора | **👤 Administratorni chaqirish** | |
 | `btn_back_to_bot` | ↩️ Вернуться к записи | **↩️ Yozilishga qaytish** | |
 | `escalated_closed` | 👤 Передаю администратору. Клиника сейчас закрыта — он ответит вам здесь утром. | **👤 Administratorga uzataman. Klinika hozir yopiq — u sizga ertalab shu yerda javob beradi.** | |
+| `relay_from_admin` | 👤 Администратор: {text} | **👤 Administrator: {text}** | |
 | `confirm_retry` | Техническая заминка — подтвердить запись не получилось. Пожалуйста, выберите время ещё раз: | **Texnik nosozlik — qabulni tasdiqlab bo'lmadi. Iltimos, vaqtni yana tanlang:** | |
 | `btn_menu_about` | ℹ️ О клинике | **ℹ️ Klinika haqida** | |
 
@@ -623,6 +624,9 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `release_not_found` | Чат {chat} не найден. | **{chat} chat topilmadi.** | |
 | `release_not_escalated` | Чат {chat} не в эскалации (состояние: {state}). | **{chat} chat murojaatda emas (holati: {state}).** | |
 | `release_ok` | [OK] эскалация снята: чат {chat} | **[OK] murojaat yopildi: chat {chat}** | |
+| `relay_delivered` | ✅ Доставлено | **✅ Yetkazildi** | |
+| `relay_failed` | ⚠️ Не доставлено: {error} | **⚠️ Yetkazilmadi: {error}** | |
+| `relay_no_anchor` | Отвечайте реплаем на алерт эскалации или карточку 💬 | **Eskalatsiya ogohlantirishiga yoki 💬 kartochkaga javob (reply) qiling** | |
 | `forget_usage` | Формат: /forget <chat_id> — анонимизировать пациента | **Format: /forget <chat_id> — bemor ma'lumotlarini o'chirish** | |
 | `forget_not_found` | Чат {chat} не найден — данных нет. | **{chat} chat topilmadi — ma'lumot yo'q.** | |
 | `forget_ok` | [OK] чат {chat}: пациент анонимизирован, диалог и сообщения удалены. Будущие записи не отменены — отмените отдельно, если пациент просил. | **[OK] chat {chat}: bemor ma'lumotlari o'chirildi, suhbat va xabarlar tozalandi. Kelgusi yozuvlar bekor qilinmadi — bemor so'ragan bo'lsa, alohida bekor qiling.** | |
@@ -656,6 +660,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `alert_fyi` | 🟡 К сведению: {reason} ⏎ Что хотел пациент: {context} | **🟡 Ma'lumot uchun: {reason} ⏎ Bemor nima xohlagan: {context}** | |
 | `alert_ops` | ⚠ {reason} | **⚠ {reason}** | |
 | `alert_system` | ⚠ Системный алерт ⏎ {reason} | **⚠ Tizim ogohlantirishi ⏎ {reason}** | |
+| `relay_card` | 💬 Чат {chat}: {text} | **💬 Chat {chat}: {text}** | |
 
 ---
 

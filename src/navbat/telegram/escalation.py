@@ -143,6 +143,31 @@ class TelegramEscalation:
                       "пациент %s): %r", admin_chat, message_id,
                       patient_chat, e)
 
+    def relay_from_patient(self, chat_id: int, text: str) -> None:
+        """💬 Реплика замороженного пациента всем админ-чатам.
+
+        Не алерт: ни эскалационной шапки, ни подсказки /release — человек уже
+        вызван, а второй алерт на каждую реплику ломал бы анти-спам. Якорь
+        пишется на КАЖДУЮ карточку: администратор отвечает свайпом на
+        последнюю реплику, а не отматывает чат до первого алерта.
+        """
+        if not self._admin_chat_ids:
+            log.warning("реплика chat=%s не переслана (админ-чаты не заданы)",
+                        chat_id)
+            return
+        for admin_chat in self._admin_chat_ids:
+            lang = self._lang_of(admin_chat)
+            message = plain("relay_card", lang, chat=chat_id, text=text)
+            try:
+                sent = self._api.send_message(admin_chat, message)
+            except TelegramAPIError as e:
+                # остальным получателям реплика всё равно нужна (паттерн
+                # notify_fyi): сбой одного чата не гасит рассылку
+                log.error("реплика chat=%s не доставлена админу %s: %s",
+                          chat_id, admin_chat, e)
+                continue
+            self._save_anchor(admin_chat, sent, chat_id)
+
     def notify_fyi(self, chat_id: int, reason: str, context: dict) -> None:
         """🟡 Информирование владельца: человек не нужен, снимать нечего.
 
