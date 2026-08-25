@@ -427,7 +427,8 @@ class UpdateWorker:
         Будущие записи НЕ отменяются: запрос на удаление данных — не отмена
         приёма; pending-напоминания гасятся, чтобы не слать в стёртый чат,
         по той же причине снимается очередь ожидания (её строка хранит
-        tg_chat_id, а матчер пишет в чат каждые 30 секунд).
+        tg_chat_id, а матчер пишет в чат каждые 30 секунд) и якоря
+        свайп-ответов админа.
         """
         parts = command.split()
         if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
@@ -456,8 +457,14 @@ class UpdateWorker:
             waiting = session.execute(
                 text("DELETE FROM waitlist WHERE tg_chat_id = :chat"),
                 {"chat": target}).rowcount
+            # «забудьте меня» рвёт и канал свайп-ответов: якорь живёт своей
+            # неделей (retention.RELAY_RETENTION_DAYS), и без этого DELETE
+            # админ до недели мог реплаем на старый алерт написать в забытый чат
+            anchors = session.execute(
+                text("DELETE FROM admin_relay WHERE patient_chat_id = :chat"),
+                {"chat": target}).rowcount
         if not any((reminders, patients, appointments, dialogs, messages,
-                    waiting)):
+                    waiting, anchors)):
             return Reply(at("forget_not_found", lang, chat=target))
         return Reply(at("forget_ok", lang, chat=target))
 

@@ -11,6 +11,7 @@ from sqlalchemy import text
 from conftest import next_monday
 from navbat.db.base import tenant_transaction
 from navbat.dialog.patients import create_patient
+from navbat.telegram import relay_repo
 from test_dialog_booking import CHAT, explicit, extr
 from test_dialog_reschedule_cancel import book_directly
 from test_tg_release import ADMIN_CHAT, sent_to
@@ -118,6 +119,32 @@ def test_forget_takes_patient_out_of_the_waitlist(app_session_factory,
             text("SELECT count(*) FROM conversation WHERE tg_chat_id = :c"),
             {"c": CHAT}).scalar_one()
     assert conv == 0, "матчер заново создал диалог стёртого чата"
+
+
+def test_forget_breaks_the_swipe_reply_channel(app_session_factory, clinic_a):
+    """Якорь свайп-ответа (admin_relay) жил своей неделей и переживал /forget.
+
+    Админ реплаил на старый алерт эскалации — и бот писал в чат человека,
+    попросившего его забыть. Канал обязан рваться вместе с диалогом; чужие
+    якоря при этом не трогаются (WHERE по patient_chat_id).
+    """
+    other = CHAT + 1
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        create_patient(session, CHAT, "Алишер", "901234567")
+        relay_repo.save_anchor(session, ADMIN_CHAT, 11, CHAT)
+        relay_repo.save_anchor(session, ADMIN_CHAT, 12, other)
+    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
+                                 admin_chat_id=ADMIN_CHAT)
+    put_message(app_session_factory, clinic_a, f"/forget {CHAT}",
+                chat_id=ADMIN_CHAT)
+    worker.process_one()
+
+    assert "[OK]" in sent_to(api, ADMIN_CHAT)[-1][0]
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        assert relay_repo.patient_for(session, ADMIN_CHAT, 11) is None, \
+            "админ всё ещё может свайп-ответить в забытый чат"
+        assert relay_repo.patient_for(session, ADMIN_CHAT, 12) == other, \
+            "/forget снёс якорь другого пациента"
 
 
 def test_forget_bad_argument_shows_usage(app_session_factory, admin_engine,
