@@ -178,6 +178,13 @@ def test_today_is_filled_once_the_day_started(app_session_factory,
     клиники, записей за день нет и быть не может — выдумывать приёмы из
     будущего нельзя, они займут слоты живого сценария; для такого случая
     в DEMO.md сказано переключиться кнопкой на «7 дней».
+
+    То же и в воскресенье: у демо-врачей это выходной, сидер пропускает день
+    целиком, и пустая витрина «за сегодня» — правильное поведение.
+
+    Ожидание зависит от часа прогона, поэтому веток три: до 09:30 и в выходной
+    записей нет, с 11:00 они обязаны быть, а между — серое окно, где ответ
+    решает длительность первой посеянной услуги.
     """
     clinic_a = priced_clinic
     seed_demo_history(app_session_factory, clinic_a, days=14)
@@ -185,10 +192,20 @@ def test_today_is_filled_once_the_day_started(app_session_factory,
     with tenant_transaction(app_session_factory, clinic_a) as session:
         stats = collect_stats(session, today, today, TZ)
 
-    if datetime.now(TZ).hour < 11:
-        assert stats.booked == 0, "до открытия клиники приёмов быть не может"
-    else:
+    now = datetime.now(TZ)
+    # 09:30 — самый ранний момент, когда сегодняшний приём мог ЗАВЕРШИТЬСЯ:
+    # смена начинается в 09:00, короткая услуга фикстуры длится 30 минут, а
+    # сидер берёт только прошедшие часы (demo_history: not_after). Оформление
+    # такого приёма датируется задним числом (max(start − 3ч, 06:00)), поэтому
+    # в сводку за сегодня он попадает сразу, как приём прошёл
+    if now.weekday() == 6 or now.time() < time(9, 30):
+        assert stats.booked == 0, \
+            "выходной или клиника ещё не наработала на первый завершённый приём"
+    elif now.hour >= 11:
         assert stats.booked > 0, "днём сводка за сегодня не должна быть пустой"
+    else:
+        pytest.skip("09:30–11:00: результат зависит от длительности первой "
+                    "посеянной услуги (30 или 60 минут) — недетерминирован")
 
 
 # ── Ревью сидера: радиус поражения, чистота данных, доменные правила ────────
@@ -441,41 +458,54 @@ def test_history_respects_working_days(app_session_factory, admin_engine,
 # ── Повторное ревью сидера: что нашёл независимый проход ───────────────────
 
 def _seed_at(app_session_factory, clinic_id, hour: int = 15, days: int = 14):
-    """Сид с зафиксированным «сейчас»: иначе тест сегодняшнего дня зависит
-    от часа прогона (ночью приёмов за сегодня не бывает вовсе)."""
-    now = datetime.now(TZ).replace(hour=hour, minute=0, second=0, microsecond=0)
-    return seed_demo_history(app_session_factory, clinic_id, days=days, now=now)
+    """Сид с зафиксированным «сейчас» последнего РАБОЧЕГО дня.
+
+    Возвращает (создано, день сида). Час фиксируем, иначе тест дня зависит от
+    часа прогона (ночью приёмов за этот день не бывает вовсе). День откатываем
+    с воскресенья: у фикстурных врачей смен в этот день нет, сидер пропускает
+    его целиком — в воскресном прогоне проверять было бы нечего."""
+    day = datetime.now(TZ).date()
+    while day.weekday() == 6:
+        day -= timedelta(days=1)
+    now = datetime.combine(day, time(hour, 0), TZ)
+    created = seed_demo_history(app_session_factory, clinic_id, days=days, now=now)
+    return created, day
 
 
 def test_todays_summary_is_not_empty(app_session_factory, priced_clinic):
-    """Сводка за СЕГОДНЯ считает не приёмы, а работу бота: confirm-аудиты
+    """Сводка за ДЕНЬ считает не приёмы, а работу бота: confirm-аудиты
     (stats.py) и created_at. Оформление всей истории «накануне» оставляло
-    первый экран покупателя пустым даже с приёмами в этом дне."""
-    clinic_a = priced_clinic
-    _seed_at(app_session_factory, clinic_a)
-    today = datetime.now(TZ).date()
-    with tenant_transaction(app_session_factory, clinic_a) as session:
-        stats = collect_stats(session, today, today, TZ)
+    первый экран покупателя пустым даже с приёмами в этом дне.
 
-    assert stats.booked > 0, "за сегодня бот не оформил ни одной записи"
+    Судим по последнему рабочему дню, а не по календарному «сегодня»:
+    демо-клиника по воскресеньям закрыта, витрина за такой день пуста
+    законно — иначе тест проверял бы день недели, а не наполнение сводки."""
+    clinic_a = priced_clinic
+    _, day = _seed_at(app_session_factory, clinic_a)
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, day, day, TZ)
+
+    assert stats.booked > 0, "за рабочий день бот не оформил ни одной записи"
     assert stats.new_patients + stats.returning_patients > 0, "секция клиентов пуста"
-    assert stats.top_doctors, "топ врачей за сегодня пуст"
+    assert stats.top_doctors, "топ врачей за день пуст"
 
 
 def test_todays_appointments_are_booked_today(app_session_factory, admin_engine,
                                               priced_clinic):
     clinic_a = priced_clinic
-    _seed_at(app_session_factory, clinic_a)
+    _, day = _seed_at(app_session_factory, clinic_a)
 
     with admin_engine.begin() as conn:
+        # сверяем с днём сида, а не с now(): хелпер сеет последний рабочий
+        # день, и в воскресном прогоне сравнение с календарным «сегодня» не
+        # проверяло бы ничего — приёмов в воскресенье сидер не создаёт вовсе
         mismatched = conn.execute(text(
             "SELECT count(*) FROM appointment "
             "WHERE source = 'demo_history' "
-            "AND (lower(time_range) AT TIME ZONE 'Asia/Tashkent')::date = "
-            "    (now() AT TIME ZONE 'Asia/Tashkent')::date "
-            "AND (created_at AT TIME ZONE 'Asia/Tashkent')::date <> "
-            "    (now() AT TIME ZONE 'Asia/Tashkent')::date")).scalar_one()
-    assert mismatched == 0, "сегодняшние приёмы оформлены не сегодня"
+            "AND (lower(time_range) AT TIME ZONE 'Asia/Tashkent')::date = :day "
+            "AND (created_at AT TIME ZONE 'Asia/Tashkent')::date <> :day"),
+            {"day": day}).scalar_one()
+    assert mismatched == 0, "приёмы дня сида оформлены не в этот день"
 
 
 def test_history_skips_closed_days(app_session_factory, admin_engine,
