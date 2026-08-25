@@ -19,7 +19,13 @@ from navbat.telegram.escalation import TelegramEscalation, build_escalation
 from navbat.telegram.queue import enqueue
 from navbat.telegram.worker import UpdateWorker
 
-from test_tg_worker import UPDATE_SEQ, FakeTelegramAPI, put_callback, put_message
+from test_tg_worker import (
+    UPDATE_SEQ,
+    FakeTelegramAPI,
+    put_callback,
+    put_message,
+    queue_statuses,
+)
 
 ADMIN_A, ADMIN_B = 7001, 7002
 PATIENT = 5555
@@ -315,6 +321,37 @@ def test_failed_delivery_is_reported_to_the_admin(app_session_factory, clinic_a)
     assert api.sent[-1][0] == ADMIN_A
     assert api.sent[-1][1] == at("relay_failed", "ru",
                                  error="эмуляция падения сети")
+
+
+def test_failed_admin_confirmation_does_not_resend_to_the_patient(
+        app_session_factory, admin_engine, clinic_a):
+    """Подтверждение админу упало — пациенту НЕ уходит вторая копия ответа.
+
+    Отправка пациенту не идемпотентна: ретрай апдейта прогонит свайп-ответ
+    заново. Раньше сбой подтверждения ронял всю обработку — апдейт возвращался
+    в pending, и пациент получал текст админа дважды (до трёх раз на трёх
+    попытках). Галочка админу дешевле дубля у пациента.
+    """
+    api = FakeTelegramAPI()
+    worker = make_relay_worker(app_session_factory, clinic_a, api, [ADMIN_A])
+    alert_id = escalate_patient(app_session_factory, clinic_a, worker, api)
+    put_admin_reply(app_session_factory, clinic_a, ADMIN_A, "уже иду",
+                    reply_to=alert_id)
+    # падает ТОЛЬКО отправка в админ-чат: пациенту в той же обработке уходит
+    # успешно (счётчик send_failures уронил бы первую по порядку — пациента)
+    api.fail_chats = {ADMIN_A}
+
+    worker.process_one()
+    # второй проход обязан не найти работы: без фикса апдейт лежит в pending
+    # и прогоняет свайп-ответ по второму разу
+    retried = worker.process_one()
+
+    body = t("relay_from_admin", "ru", text="уже иду")
+    assert [b for chat, b, _ in api.sent if chat == PATIENT and b == body] \
+        == [body], "ответ админа дошёл до пациента ровно один раз"
+    assert queue_statuses(admin_engine) == ["done", "done"], \
+        "апдейт админа завершён, несмотря на недоставленное подтверждение"
+    assert retried is False, "в очереди не осталось работы"
 
 
 def test_reply_to_a_relay_card_also_reaches_the_patient(app_session_factory,

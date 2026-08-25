@@ -35,12 +35,18 @@ class FakeTelegramAPI:
         self.toasts: list[str] = []
         self.send_failures = 0  # сколько ближайших send уронить
         self.chat_gone = False  # пациент заблокировал бота / удалил чат
+        # уронить отправку в КОНКРЕТНЫЕ чаты: счётчик send_failures считает
+        # ближайшие отправки подряд и не даёт уронить вторую из двух внутри
+        # одной обработки (свайп-ответ: пациенту — успех, админу — сбой)
+        self.fail_chats: set[int] = set()
 
     def send_message(self, chat_id, text, buttons=(),
                      contact_request=None, menu=None, button_rows=(),
                      parse_mode=None):
         if self.chat_gone:
             raise ChatUnavailableError("Forbidden: bot was blocked by the user")
+        if chat_id in self.fail_chats:
+            raise TelegramAPIError("эмуляция падения сети")
         if self.send_failures > 0:
             self.send_failures -= 1
             raise TelegramAPIError("эмуляция падения сети")
