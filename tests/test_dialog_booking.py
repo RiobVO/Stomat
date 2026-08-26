@@ -21,6 +21,8 @@ from navbat.scheduling.engine import SchedulingEngine
 
 TASHKENT = ZoneInfo("Asia/Tashkent")
 CHAT = 100
+UZ_CHAT = 101
+RU_CHAT = 102
 
 
 class RecordingNotifier:
@@ -158,6 +160,47 @@ def test_happy_path_new_patient(app_session_factory, admin_engine, clinic_a,
             text("SELECT p.id FROM appointment a JOIN patient p ON p.id = a.patient_id")
         ).one_or_none()
     assert row is not None
+
+
+def appt_lang(admin_engine, chat_id) -> str:
+    with admin_engine.begin() as conn:
+        return conn.execute(
+            text("SELECT lang FROM appointment WHERE tg_chat_id = :c"),
+            {"c": chat_id},
+        ).scalar_one()
+
+
+def book_fully(engine, chat_id, message: str, phone: str) -> None:
+    """Полный пациентский путь до booked: слот → имя → контакт."""
+    offer = engine.handle_text(chat_id, message)
+    engine.handle_action(chat_id, slot_buttons(offer)[0].action)
+    engine.handle_text(chat_id, "Алишер")
+    engine.handle_contact(chat_id, phone, own=True)
+
+
+def test_booking_stores_patient_language(app_session_factory, admin_engine,
+                                         clinic_a, doctor_a, service_cleaning):
+    # язык пациента нужен рассылкам, которые уходят через месяцы после приёма
+    # (recall, отзывы): к тому времени ретеншен вычистил conversation, и
+    # единственный источник — appointment.lang. Записавшийся по-узбекски
+    # должен и приглашение получить по-узбекски
+    day = next_monday()
+    engine = make_engine(app_session_factory, clinic_a, [
+        extr(service="cleaning", date_ref=explicit(day), language="uz"),
+        extr(service="cleaning", date_ref=explicit(day), language="ru"),
+    ])
+
+    engine.handle_text(UZ_CHAT, "/start")
+    engine.handle_action(UZ_CHAT, "lang:uz")
+    book_fully(engine, UZ_CHAT, "tish tozalashga yozilmoqchiman", "998901111111")
+
+    engine.handle_text(RU_CHAT, "/start")
+    engine.handle_action(RU_CHAT, "lang:ru")
+    book_fully(engine, RU_CHAT, "хочу чистку", "998902222222")
+
+    assert appt_lang(admin_engine, UZ_CHAT) == "uz", \
+        "язык узбекоязычного пациента обязан доехать до записи"
+    assert appt_lang(admin_engine, RU_CHAT) == "ru"
 
 
 def test_known_patient_books_without_questions(app_session_factory, admin_engine,

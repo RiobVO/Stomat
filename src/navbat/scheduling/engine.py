@@ -101,7 +101,12 @@ class SchedulingEngine:
         tg_chat_id: int | None = None,
         tg_message_id: int | None = None,
         source: str = "bot",
+        lang: str = "ru",
     ) -> uuid.UUID:
+        """lang — язык пациента на момент записи, снимок для рассылок, которые
+        уходят через месяцы (recall, отзывы): conversation к тому времени
+        вычищен ретеншеном, и другого источника языка не остаётся. Дефолт «ru»
+        совпадает с дефолтом колонки — он для записей не из диалога."""
         with self._txn() as session:
             # сериализация записей по врачу: см. _lock_doctor
             self._lock_doctor(session, doctor_id)
@@ -117,18 +122,18 @@ class SchedulingEngine:
                         INSERT INTO appointment
                             (clinic_id, doctor_id, service_id, patient_id, time_range,
                              buffer_min, status, source, hold_expires_at,
-                             tg_chat_id, tg_message_id)
+                             tg_chat_id, tg_message_id, lang)
                         VALUES
                             (current_setting('app.clinic_id')::uuid, :doctor, :service,
                              :patient, tstzrange(:start, :end, '[)'), :buf, 'hold',
-                             :source, now() + :ttl, :chat, :msg)
+                             :source, now() + :ttl, :chat, :msg, :lang)
                         RETURNING id
                     """),
                     {
                         "doctor": doctor_id, "service": service_id, "patient": patient_id,
                         "start": slot.start, "end": slot.end, "buf": buffer_min,
                         "source": source, "ttl": HOLD_TTL,
-                        "chat": tg_chat_id, "msg": tg_message_id,
+                        "chat": tg_chat_id, "msg": tg_message_id, "lang": lang,
                     },
                 ).scalar_one()
             except IntegrityError as e:
