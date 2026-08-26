@@ -42,6 +42,14 @@ class Card:
 # пациента к записи идёт ОТДЕЛЬНОЙ транзакцией уже после confirm
 # (booking_flow: транзакция движка держит ту же строку), и первая запись
 # нового пациента иначе уходила бы владельцу «без имени».
+# У чата НЕТ UNIQUE на пациента (записывают себя, потом ребёнка), поэтому
+# фолбэк сортирует кандидатов по времени последней записи ЭТОГО чата под
+# ними: «первый по uuid» показывал владельцу чужое имя и чужой телефон.
+# Один LATERAL, а не COALESCE двух: карточка обязана взять имя и телефон
+# ОДНОЙ строки, поколоночная склейка дала бы имя одного пациента с номером
+# другого, когда у первого номера нет. Записей у чата ещё нет (самая первая,
+# привязка не случилась) — max() пуст, NULLS LAST возвращает прежний порядок
+# по pt.id, и он верен: пациент у чата ровно один, только что созданный.
 _CARD_QUERY = """
     SELECT lower(a.time_range) AS start, a.created_at, a.status,
            a.tg_chat_id, s.name AS service,
@@ -56,7 +64,11 @@ _CARD_QUERY = """
         WHERE pt.id = a.patient_id
            OR (a.patient_id IS NULL
                AND pt.tg_chat_id = a.tg_chat_id)
-        ORDER BY pt.id
+        ORDER BY (SELECT max(a2.created_at)
+                  FROM appointment a2
+                  WHERE a2.patient_id = pt.id
+                    AND a2.tg_chat_id = a.tg_chat_id) DESC NULLS LAST,
+                 pt.id
         LIMIT 1
     ) p ON true
 """
