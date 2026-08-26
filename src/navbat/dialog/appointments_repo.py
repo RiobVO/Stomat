@@ -45,6 +45,26 @@ def active_by_id(session: Session, appointment_id: str,
     ).one_or_none()
 
 
+def confirm_attendance(session: Session, appointment_id: str,
+                       tg_chat_id: int) -> bool:
+    """Отметить «пациент придёт» по кнопке напоминания; False — отмечать нечего.
+
+    Субъект приходит в самой кнопке (она висит в чате до приёма), поэтому
+    проверяется здесь же: callback_data — вход от клиента, и чужой id внутри
+    той же клиники ставил бы отметку на чужую запись (RLS изолирует клиники,
+    но не пациентов). Не-booked запись (отменённая, протухший hold) — тихий
+    отказ: подтверждать нечего. Повторный тап просто освежает отметку —
+    пациент подтвердил то же самое.
+    """
+    return session.execute(
+        text("UPDATE appointment "
+             "SET confirm_status = 'confirmed', confirmed_at = now() "
+             "WHERE id = CAST(:id AS uuid) AND tg_chat_id = :chat "
+             "AND status = 'booked'"),
+        {"id": appointment_id, "chat": tg_chat_id},
+    ).rowcount > 0
+
+
 def slot_bounds(session: Session, appointment_id: uuid.UUID) -> Row:
     """(doctor_id, start, finish) записи — для guard-проверки, что слот ещё
     свободен в календаре перед confirm."""

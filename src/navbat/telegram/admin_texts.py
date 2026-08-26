@@ -467,6 +467,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "uz": "📅 Bugun yozuvlar yo'q",
     },
     "today_no_phone": {"ru": "без телефона", "uz": "telefonsiz"},
+    # ⏳-строки дня одним числом: владельцу нужно действие, а не подсчёт
+    # значков глазами
+    "today_call_hint": {
+        "ru": "⚠️ Без ответа после напоминания: {count} — стоит позвонить",
+        "uz": "⚠️ Eslatmaga javob bermaganlar: {count} — qo'ng'iroq qilgan ma'qul",
+    },
     "morning_header": {
         "ru": "☀️ <b>Доброе утро!</b>",
         "uz": "☀️ <b>Xayrli tong!</b>",

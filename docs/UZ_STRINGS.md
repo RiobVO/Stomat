@@ -618,6 +618,10 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 номер цифрами, `{when}` — дата и время `08.06 15:30`, `{time}` — часы
 `15:30`, `{date}` — дата `08.06`.
 
+В списке дня перед временем стоит значок: ✅ — пациент нажал «Приду» в
+напоминании, ⏳ — напоминание ушло, а ответа нет. Строка `today_call_hint`
+считает таких молчунов и советует владельцу позвонить им до приёма.
+
 | Ключ | Русский | Узбекский (черновик) | Правка |
 |---|---|---|---|
 | `feed_booked` | ✅ Запись: {patient}, {service}, {when}, {doctor}{night} | **✅ Yozuv: {patient}, {service}, {when}, {doctor}{night}** | |
@@ -631,6 +635,7 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `today_line` | {time} {patient} ({phone}) — {service}, {doctor} | **{time} {patient} ({phone}) — {service}, {doctor}** | |
 | `today_empty` | 📅 Сегодня записей нет | **📅 Bugun yozuvlar yo'q** | |
 | `today_no_phone` | без телефона | **telefonsiz** | |
+| `today_call_hint` | ⚠️ Без ответа после напоминания: {count} — стоит позвонить | **⚠️ Eslatmaga javob bermaganlar: {count} — qo'ng'iroq qilgan ma'qul** | |
 | `morning_header` | ☀️ <b>Доброе утро!</b> | **☀️ <b>Xayrli tong!</b>** | |
 ### Команды администратора
 
