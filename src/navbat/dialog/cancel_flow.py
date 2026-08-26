@@ -29,10 +29,14 @@ class _CancelFlowMixin:
         try:
             # id приходит из callback_data, то есть от клиента: мусор не
             # должен падать в приведении типа и уводить сообщение в dead letter
-            uuid.UUID(appointment_id)
+            parsed = uuid.UUID(appointment_id)
         except ValueError:
             return self._begin_cancel(session, conv, None)
-        appointment = appointments_repo.active_by_id(session, appointment_id,
+        # в БД уходит каноническая форма, а не исходная строка: валидатор
+        # Python ШИРЕ постгресового CAST (принимает «urn:uuid:…» и фигурные
+        # скобки), и на такой строке CAST(... AS uuid) падал бы, травя всю
+        # транзакцию
+        appointment = appointments_repo.active_by_id(session, str(parsed),
                                                      conv.chat_id)
         reply = self._begin_cancel(session, conv, appointment)
         if conv.context.cancel_id:
