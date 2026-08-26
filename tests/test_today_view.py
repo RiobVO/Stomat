@@ -20,7 +20,9 @@ from navbat.dialog.conversation import load_conversation, save_conversation
 from navbat.dialog.patients import create_patient
 from navbat.dialog.replies import service_label
 from navbat.reminders import ReminderService
+from navbat.telegram import feed_repo
 from navbat.telegram.admin_texts import at
+from navbat.telegram.today_view import render_day
 from test_admin_console import ADMIN_CHAT, click, last_to, send_admin
 from test_dialog_booking import CHAT
 from test_tg_worker import FakeTelegramAPI, make_worker
@@ -258,6 +260,18 @@ def line_for(body, hhmm):
     return next(line for line in body.splitlines() if hhmm in line)
 
 
+def day_at(app_session_factory, clinic_id, moment, lang="ru"):
+    """День клиники, отрендеренный на ЗАФИКСИРОВАННЫЙ момент.
+
+    ⏳ означает «ещё ждём ответа» и потому зависит от «сейчас»: на реальных
+    часах тест про молчунов был бы зелёным только до утреннего приёма и
+    краснел бы после обеда. Данные при этом настоящие — те же карточки, что
+    собирает /today."""
+    with tenant_transaction(app_session_factory, clinic_id) as session:
+        cards = feed_repo.day_cards(session, moment.date(), TASHKENT)
+    return render_day(cards, moment.date(), lang, TASHKENT, now=moment)
+
+
 def three_states(admin_engine, clinic_a, doctor_id, service_id):
     """День из трёх записей: подтвердил / молчит / напоминание ещё не ушло."""
     confirmed = seed_today(admin_engine, clinic_a, doctor_id, service_id,
@@ -279,14 +293,16 @@ def test_today_marks_confirmation_state_of_every_line(
 
     Три состояния — подтвердил, молчит после напоминания, напоминание ещё
     не уходило — обязаны различаться в строке, иначе владелец обзванивает
-    всех подряд, включая тех, кого ещё и не спрашивали."""
+    всех подряд, включая тех, кого ещё и не спрашивали.
+
+    Момент рендера зафиксирован на утро: приёмы дня — 09:00–11:00, и на
+    реальных часах прогон после обеда судил бы о молчунах по уже
+    состоявшимся приёмам."""
     three_states(admin_engine, clinic_a, doctor_named, service_cleaning)
-    worker, api, _ = make_worker(app_session_factory, clinic_a, [],
-                                 admin_chat_id=ADMIN_CHAT)
+    moment = datetime.now(TASHKENT).replace(hour=8, minute=0)
 
-    send_admin(worker, app_session_factory, clinic_a, "/today")
+    body = day_at(app_session_factory, clinic_a, moment)
 
-    body = last_to(api, ADMIN_CHAT)
     assert line_for(body, "09:00").startswith("✅"), body
     assert line_for(body, "10:00").startswith("⏳"), body
     assert line_for(body, "11:00").startswith("11:00"), \
@@ -317,6 +333,32 @@ def test_today_without_silent_patients_has_no_call_hint(
     assert line_for(body, "10:00").startswith("✅"), body
     assert "⏳" not in body, body
     assert "⚠️" not in body, f"подсказка о звонках осталась в полном дне: {body}"
+
+
+def test_started_appointments_are_not_worth_a_call(
+        app_session_factory, admin_engine, clinic_a, doctor_named,
+        service_cleaning):
+    """Молчун из прошлого — не повод звонить: приём уже идёт или прошёл, и
+    ответа «приду» от него ждать нечего. Владелец с утренней сводкой в руках
+    обзванивал бы по ней людей, которые сидят у него в кресле.
+
+    Значок и счётчик обязаны совпадать: ⏳ зовёт к действию, число говорит,
+    сколько раз, — разойдясь, они перестают значить что-либо."""
+    past = seed_today(admin_engine, clinic_a, doctor_named, service_cleaning,
+                      "09:00", chat_id=CHAT)
+    future = seed_today(admin_engine, clinic_a, doctor_named, service_cleaning,
+                        "15:00", chat_id=CHAT + 1)
+    for appointment_id in (past, future):
+        mark_reminded(admin_engine, clinic_a, appointment_id)
+    moment = datetime.now(TASHKENT).replace(hour=12, minute=0)
+
+    body = day_at(app_session_factory, clinic_a, moment)
+
+    assert line_for(body, "09:00").startswith("09:00"), \
+        f"о начавшемся приёме предложено звонить: {body}"
+    assert line_for(body, "15:00").startswith("⏳"), body
+    assert at("today_call_hint", "ru", count=1) in body, \
+        f"счётчик звонков разошёлся с числом ⏳: {body}"
 
 
 def test_morning_summary_carries_the_call_hint(

@@ -55,12 +55,18 @@ def confirm_attendance(session: Session, appointment_id: str,
     но не пациентов). Не-booked запись (отменённая, протухший hold) — тихий
     отказ: подтверждать нечего. Повторный тап просто освежает отметку —
     пациент подтвердил то же самое.
+
+    Вторая половина проверки — свежесть времени: подтвердить можно только
+    БУДУЩИЙ приём. Кнопка переживает начало визита, и тап по ней через час
+    после него отвечал бы «ждём вас» и показывал владельцу «придёт» о том,
+    кто уже не пришёл. Прошедшая запись остаётся booked — её судьбу решает
+    приём, а не кнопка (тот же гейт у active_by_id).
     """
     return session.execute(
         text("UPDATE appointment "
              "SET confirm_status = 'confirmed', confirmed_at = now() "
              "WHERE id = CAST(:id AS uuid) AND tg_chat_id = :chat "
-             "AND status = 'booked'"),
+             "AND status = 'booked' AND lower(time_range) > now()"),
         {"id": appointment_id, "chat": tg_chat_id},
     ).rowcount > 0
 
