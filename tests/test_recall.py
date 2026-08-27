@@ -236,6 +236,25 @@ def test_service_without_interval_never_recalls(app_session_factory,
     assert outreach_rows(admin_engine, clinic_a) == []
 
 
+def test_ancient_visit_is_out_of_the_invitation_window(
+        app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Приём 13 месяцев назад при интервале 6: срок приглашения наступил
+    больше 180 дней назад — журнал такую строку уже не хранит.
+
+    Без верхней границы давности чистка журнала переоткрывала бы обещание
+    «одна отправка на приём»: строку удалили — приём снова проходит все
+    условия, и визит пятилетней давности звал бы пациента по кругу каждые
+    полгода."""
+    set_recall(admin_engine, service_cleaning, 6)
+    seed_past(admin_engine, clinic_a, doctor_a, service_cleaning, months_ago=13)
+    service, api = make_recall_service(app_session_factory, clinic_a)
+
+    assert service.send_recalls(now_local=at_local(12)) == 0
+    assert api.sent == []
+    assert outreach_rows(admin_engine, clinic_a) == []
+
+
 def test_interval_not_reached_yet(app_session_factory, admin_engine, clinic_a,
                                   doctor_a, service_cleaning):
     """Три месяца из шести — рано: интервал услуги и есть повод написать."""

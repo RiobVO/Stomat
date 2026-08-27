@@ -34,7 +34,7 @@ from navbat.dialog.escalation import (
 )
 from navbat.crypto import decrypt_text
 from navbat.dialog.replies import Button, Reply, card_lines, service_label, t
-from navbat.retention import cleanup_old_data
+from navbat.retention import RECALL_RETENTION_DAYS, cleanup_old_data
 from navbat.scheduling.engine import SchedulingEngine
 from navbat.stats import (
     collect_daily_stats, render_digest_short, render_questions,
@@ -358,6 +358,16 @@ class ReminderService:
                   AND s.recall_months IS NOT NULL
                   AND upper(a.time_range)
                       + make_interval(months => s.recall_months) <= now()
+                  -- верхняя граница давности, согласованная со сроком жизни
+                  -- журнала: строку старше RECALL_RETENTION_DAYS чистка
+                  -- удаляет, и без этого условия приём снова проходил бы все
+                  -- проверки — обещание «одна отправка на приём» держится
+                  -- уникальным ключом, то есть ровно до чистки, и визит
+                  -- пятилетней давности звал бы пациента по кругу каждые
+                  -- полгода
+                  AND upper(a.time_range)
+                      + make_interval(months => s.recall_months)
+                      > now() - make_interval(days => :retention)
                   -- пациент уже придёт — звать его на приём нелепо
                   AND NOT EXISTS (
                       SELECT 1 FROM appointment f
@@ -370,7 +380,7 @@ class ReminderService:
                       WHERE r.appointment_id = a.id
                   )
                 ORDER BY upper(a.time_range)
-            """)).all()
+            """), {"retention": RECALL_RETENTION_DAYS}).all()
         sent = 0
         for row in due:
             if self._send_recall(row):
