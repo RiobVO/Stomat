@@ -47,6 +47,9 @@ class DailyStats:
     recalls_sent: int = 0
     recalls_returned: int = 0
     recalls_saved: int = 0
+    # отзывы (инкремент 5): сколько приёмов оценили и на сколько звёзд
+    reviews_count: int = 0
+    reviews_avg: float = 0.0
 
 
 def collect_daily_stats(session: Session, day: date, tz: ZoneInfo) -> DailyStats:
@@ -196,6 +199,19 @@ def collect_stats(session: Session, first: date, last: date,
         span,
     ).one()
 
+    # Оценки приёмов: период считается по МОМЕНТУ ОЦЕНКИ (rated_at), а не
+    # просьбы — просьба могла уйти вчера вечером, а звезда прилететь утром.
+    # Неотвеченные в среднюю не входят вовсе: молчание — не двойка
+    # (алиас не `count`: у Row это метод Sequence, и значение пришлось бы
+    # доставать в обход имени — та же причина, по которой соседние выборки
+    # называют счётчики cnt/sent/prevented)
+    reviews = session.execute(
+        text("SELECT count(*) AS rated, avg(rating) AS avg_rating FROM review "
+             "WHERE rated_at IS NOT NULL "
+             "AND (rated_at AT TIME ZONE :tz)::date BETWEEN :first AND :last"),
+        span,
+    ).one()
+
     # В: хит-услуга — максимум confirm'ов периода по ключу услуги
     hit = session.execute(
         text("""
@@ -235,6 +251,10 @@ def collect_stats(session: Session, first: date, last: date,
         recalls_sent=recall.sent,
         recalls_returned=recall.returned,
         recalls_saved=int(recall.saved),
+        reviews_count=reviews.rated,
+        # до 0.1: владельцу нужна оценка, а не 3.6666666666666665
+        reviews_avg=(round(float(reviews.avg_rating), 1) if reviews.rated
+                     else 0.0),
     )
 
 
@@ -325,6 +345,11 @@ def render_stats(stats: DailyStats, day: date, last: date | None = None,
         sections.append(at("stats_recall", lang, sent=stats.recalls_sent,
                            returned=stats.recalls_returned,
                            money=_money(stats.recalls_saved)))
+    if stats.reviews_count:
+        # никто не оценил — строки нет: «средняя: 0.0» читалась бы как провал,
+        # а не как отсутствие данных (то же правило, что у recall)
+        sections.append(at("stats_reviews", lang, avg=stats.reviews_avg,
+                           count=stats.reviews_count))
     middle = "".join(f"{section}\n" for section in sections)
 
     return (f"{header}\n"

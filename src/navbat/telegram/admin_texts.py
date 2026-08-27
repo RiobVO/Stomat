@@ -415,6 +415,10 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "uz": "🔁 Bemorlarning qaytishi\n• takliflar: {sent} · qaytdi: "
               "{returned} (≈ {money} so'm)",
     },
+    "stats_reviews": {
+        "ru": "⭐ Оценки пациентов\n• средняя: {avg} (из {count})",
+        "uz": "⭐ Bemorlar baholari\n• o'rtacha: {avg} ({count} tadan)",
+    },
     "stats_tech": {
         "ru": "⚙️ Служебное\n• напоминаний: {reminders} · LLM: {requests} "
               "запросов, {tokens} токенов, сбоев: {failures}, repair: {repairs}",
@@ -625,6 +629,13 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "alert_system": {
         "ru": "⚠ Системный алерт\n{reason}",
         "uz": "⚠ Tizim ogohlantirishi\n{reason}",
+    },
+    # оценка 1–3: сигнал владельцу вместо публичного негатива. Не эскалация —
+    # ни шапки, ни «Снять: /release»: пациент не заморожен и человека не звал,
+    # владелец решает сам, звонить ему или нет
+    "alert_review": {
+        "ru": "⭐{rating} от чата {chat}: {service}, {when}",
+        "uz": "⭐{rating} — {chat} chatidan: {service}, {when}",
     },
     # реплика замороженного пациента. Тем же plain-каналом, что алерты: текст
     # пациента чужой, экранировать его под HTML нечем — parse_mode здесь нет

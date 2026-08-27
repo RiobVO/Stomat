@@ -489,8 +489,14 @@ class UpdateWorker:
             recalls = session.execute(
                 text("DELETE FROM recall_outreach WHERE tg_chat_id = :chat"),
                 {"chat": target}).rowcount
+            # журнал оценок приёма — по той же причине, что журнал
+            # приглашений: своя копия tg_chat_id, свой полугодовой срок
+            # (retention.REVIEW_RETENTION_DAYS)
+            reviews = session.execute(
+                text("DELETE FROM review WHERE tg_chat_id = :chat"),
+                {"chat": target}).rowcount
         if not any((reminders, patients, appointments, dialogs, messages,
-                    waiting, anchors, recalls)):
+                    waiting, anchors, recalls, reviews)):
             return Reply(at("forget_not_found", lang, chat=target))
         return Reply(at("forget_ok", lang, chat=target))
 

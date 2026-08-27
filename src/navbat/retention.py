@@ -4,10 +4,10 @@
 статусах, протухшие контексты диалогов (conversation) — включая escalated:
 мёртвый лид старше 90 дней — это PII без операционной ценности, — вопросы
 без ответа (unanswered_question) и терминальные строки листа ожидания
-(waitlist). Особняком сроки у якорей свайп-ответов (admin_relay) — неделя —
-и у журнала recall-приглашений (recall_outreach) — полгода. pending в очереди
-не трогаем (подберёт reclaim); записи и аудит — операционная история клиники,
-не чистятся.
+(waitlist). Особняком сроки у якорей свайп-ответов (admin_relay) — неделя — и
+у журналов recall-приглашений (recall_outreach) и оценок приёма (review) —
+полгода. pending в очереди не трогаем (подберёт reclaim); записи и аудит —
+операционная история клиники, не чистятся.
 """
 from __future__ import annotations
 
@@ -34,6 +34,12 @@ RELAY_RETENTION_DAYS = 7
 # вечно она не живёт. Срок свой, длиннее общего: 90 дней обрезали бы витрину
 # по услугам с годовым интервалом.
 RECALL_RETENTION_DAYS = 180
+# Журнал оценок приёма: в строке тот же chat_id пациента, и полгода здесь по
+# той же причине — витрина /stats считает среднюю за период, а 90 дней обрезали
+# бы сравнение «квартал к кварталу». Константа отдельная от recall'овой
+# намеренно: сроки держат РАЗНЫЕ окна (конверсия приглашения против глубины
+# витрины оценок) и вправе разъехаться, а общая константа связала бы их молча.
+REVIEW_RETENTION_DAYS = 180
 
 _HAS_UPCOMING_VISIT = (
     "EXISTS (SELECT 1 FROM appointment a WHERE a.tg_chat_id = c.tg_chat_id "
@@ -99,12 +105,23 @@ def cleanup_old_data(session_factory: sessionmaker[Session],
                  "WHERE sent_at < now() - make_interval(days => :days)"),
             {"days": RECALL_RETENTION_DAYS},
         ).rowcount
+        # журнал оценок приёма: срок свой, полугодовой. Возраст считаем по
+        # ПРОСЬБЕ (requested_at): rated_at пуст у всех, кто промолчал, и по
+        # нему такие строки не удалялись бы никогда
+        reviews = session.execute(
+            text("DELETE FROM review "
+                 "WHERE requested_at < now() - make_interval(days => :days)"),
+            {"days": REVIEW_RETENTION_DAYS},
+        ).rowcount
         relays = relay_repo.cleanup_old(session, RELAY_RETENTION_DAYS)
-    if messages or dialogs or questions or waitlist or relays or recalls:
+    if messages or dialogs or questions or waitlist or relays or recalls \
+            or reviews:
         log.info("retention: удалено %d сообщений, %d диалогов, %d вопросов, "
                  "%d записей очереди старше %d дней; %d якорей свайп-ответа "
-                 "старше %d дней; %d recall-приглашений старше %d дней",
+                 "старше %d дней; %d recall-приглашений старше %d дней; "
+                 "%d оценок приёма старше %d дней",
                  messages, dialogs, questions, waitlist, days,
                  relays, RELAY_RETENTION_DAYS,
-                 recalls, RECALL_RETENTION_DAYS)
+                 recalls, RECALL_RETENTION_DAYS,
+                 reviews, REVIEW_RETENTION_DAYS)
     return messages, dialogs
