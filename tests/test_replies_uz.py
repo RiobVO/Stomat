@@ -85,6 +85,8 @@ SAMPLE_VALUES = {
     "text": "10 daqiqadan keyin qo'ng'iroq qilaman",
     # интервал повторного визита в приглашении recall
     "months": "6",
+    # ссылка клиники на площадку отзывов (благодарность за 4–5)
+    "url": "https://g.page/r/shifo-dent/review",
 }
 
 

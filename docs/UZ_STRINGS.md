@@ -413,6 +413,11 @@ ASCII-апостроф `'` (`bo'sh`, `o'zbek`, `ko'chirish`). Правильны
 | `btn_menu_about` | ℹ️ О клинике | **ℹ️ Klinika haqida** | |
 | `recall_invite` | 🔁 {service}: прошло {months} мес. после визита — пора показаться врачу. Записать вас? | **🔁 {service}: tashrifdan keyin {months} oy o'tdi — shifokorga ko'rinish vaqti keldi. Sizni yozib qo'yaymi?** | |
 | `btn_recall_book` | 📅 Записаться | **📅 Yozilish** | |
+| `review_ask` | ⭐ <b>Как всё прошло?</b> Оцените приём — это займёт секунду. | **⭐ <b>Qabul qanday o'tdi?</b> Baho bering — bir soniya vaqt oladi.** | |
+| `review_thanks_good` | 🙏 Спасибо! Рады, что всё прошло хорошо. | **🙏 Rahmat! Hammasi yaxshi o'tganidan xursandmiz.** | |
+| `review_link_line` | Будем рады отзыву: {url} | **Sharhingizdan xursand bo'lamiz: {url}** | |
+| `review_thanks_bad` | 🙏 Спасибо за оценку — она поможет нам стать лучше. | **🙏 Baho uchun rahmat — u bizga yaxshilanishga yordam beradi.** | |
+| `review_already` | Оценка уже учтена — спасибо! | **Baho allaqachon hisobga olindi — rahmat!** | |
 
 ---
 

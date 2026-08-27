@@ -58,9 +58,17 @@ MAX_ATTEMPTS = 3
 MORNING_SUMMARY_TIME = dt_time(8, 30)
 
 # Recall: окно рассылки приглашений в локальных часах клиники. Не env:
-# «не будить пациента ночью» — не настройка, а обещание.
+# «не будить пациента ночью» — не настройка, а обещание. Просьба об оценке
+# идёт в то же окно и по той же причине.
 RECALL_HOUR_FROM = 9
 RECALL_HOUR_TO = 21
+
+# Отзывы: когда спрашивать «как всё прошло?». Раньше двух часов пациент может
+# быть ещё в кресле (приём затянулся) или в дороге; позже двух суток вопрос
+# приходит из ниоткуда — приём уже не вспомнить, а нижняя граница окна
+# отсекает старьё вместо отдельной проверки давности.
+REVIEW_ASK_AFTER_HOURS = 2
+REVIEW_ASK_WITHIN_HOURS = 48
 
 # Лист ожидания: горизонт поиска слота, антиспам-кулдаун, TTL записи (env)
 WAITLIST_HORIZON_DAYS = int(os.environ.get("WAITLIST_HORIZON_DAYS", "14"))
@@ -447,6 +455,106 @@ class ReminderService:
             return False
         return True
 
+    # ── Отзывы: как всё прошло ───────────────────────────────────────────
+
+    def send_review_requests(
+        self,
+        now_local: datetime | Callable[[], datetime] | None = None,
+    ) -> int:
+        """Спросить об оценке тех, у кого приём закончился пару часов назад.
+        Возвращает число отправленных просьб.
+
+        Reconciliation, как и напоминания: что спрошено — видно в review,
+        поэтому рестарт процесса не начинает рассылку заново.
+
+        now_local — фиксированный момент локали клиники либо источник момента
+        (тест границы окна); по умолчанию — часы клиники.
+        """
+        if self._tg_api is None:
+            return 0
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            tz = ZoneInfo(clinic_repo.clinic_timezone(session))
+        # момент берётся из ОДНОГО источника и на входе, и внутри цикла:
+        # фиксированный now_local остаётся фиксированным, вызываемый —
+        # пересчитывается на каждой сверке
+        clock = (now_local if callable(now_local)
+                 else lambda: now_local or datetime.now(tz))
+        # вечерний приём не повод будить пациента ночью. Очередь «на утро» не
+        # копим: такт цикла — полминуты, первый же дневной такт разошлёт всё
+        # созревшее, поэтому вне окна выходим до выборки
+        if not _in_recall_window(clock()):
+            return 0
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            due = session.execute(text("""
+                SELECT a.id, a.tg_chat_id, a.lang
+                FROM appointment a
+                WHERE a.status = 'booked'
+                  -- /forget обнулил чат: анонимизированного не беспокоим
+                  AND a.tg_chat_id IS NOT NULL
+                  -- только живая запись бота: у ручного события врача чата
+                  -- нет вовсе, а синтетические приёмы витрины показа несут
+                  -- служебные chat_id — просьба уходила бы десятками в
+                  -- несуществующие чаты прямо во время показа (по этой же
+                  -- причине сидер витрины не сеет очередь ожидания)
+                  AND a.source NOT IN ('gcal_import', 'demo_history')
+                  AND upper(a.time_range) BETWEEN
+                        now() - make_interval(hours => :within)
+                        AND now() - make_interval(hours => :after)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM review r WHERE r.appointment_id = a.id
+                  )
+                ORDER BY upper(a.time_range)
+            """), {"within": REVIEW_ASK_WITHIN_HOURS,
+                   "after": REVIEW_ASK_AFTER_HOURS}).all()
+        sent = 0
+        for row in due:
+            # окно сверяется перед КАЖДОЙ отправкой, а не только на входе:
+            # пачка идёт по сети минутами (ретраи Bot API, десятки адресатов)
+            # и успевает выехать за 21:00. Вышли из окна — остальные ждут
+            # утра: отметки в журнале у них нет, завтрашний цикл возьмёт их
+            # заново (пока приём не старше REVIEW_ASK_WITHIN_HOURS)
+            if not _in_recall_window(clock()):
+                break
+            if self._send_review_request(row):
+                sent += 1
+        return sent
+
+    def _send_review_request(self, row) -> bool:
+        """True — просьба ушла. Строка conversation не трогается: кнопка несёт
+        свой приём сама (правило фона)."""
+        lang = row.lang or "ru"
+        with tenant_transaction(self._session_factory, self._clinic_id) as session:
+            # отметка ДО отправки: два такта цикла (или два процесса) могли
+            # прочитать одну строку — второму INSERT вернёт 0, и он промолчит
+            claimed = session.execute(
+                text("INSERT INTO review (clinic_id, appointment_id, "
+                     "                    tg_chat_id, lang) "
+                     "VALUES (current_setting('app.clinic_id')::uuid, "
+                     "        :appointment, :chat, :lang) "
+                     "ON CONFLICT (appointment_id) DO NOTHING"),
+                {"appointment": row.id, "chat": row.tg_chat_id, "lang": lang},
+            ).rowcount
+        if not claimed:
+            return False
+        # кнопки сырые и несут СВОЙ приём: просьба висит в чате, а карта
+        # tg_actions одна на чат и перезаписывается любой следующей отправкой
+        # кнопок. Цифра в label'е переводу не подлежит, как числа в календарной
+        # сетке; пять звёзд ОДНИМ рядом — шкала читается за один взгляд
+        stars = tuple(Button(f"{n}⭐", f"rate:{row.id}:{n}")
+                      for n in range(1, 6))
+        reply = Reply(t("review_ask", lang), button_rows=(stars,))
+        try:
+            send_reply(self._tg_api, self._session_factory, self._clinic_id,
+                       row.tg_chat_id, reply)
+        except TelegramAPIError as e:
+            # просьба потеряна, отметка остаётся: пациент заблокировал бота или
+            # Telegram лёг, а повтор каждым тактом цикла превратил бы вопрос
+            # «как всё прошло?» в спам
+            log.warning("review %s: просьба об оценке не доставлена: %s",
+                        row.id, e)
+            return False
+        return True
+
     # ── Вечерняя сводка админу ───────────────────────────────────────────
 
     def _admin_lang(self, chat_id: int) -> str:
@@ -594,6 +702,7 @@ class ReminderService:
                 self.send_due()
                 self.match_waitlist()
                 self.send_recalls()
+                self.send_review_requests()
                 self.maybe_send_morning_summary()
                 self.maybe_send_digest()
                 self.maybe_cleanup()

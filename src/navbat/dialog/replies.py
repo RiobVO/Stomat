@@ -366,6 +366,30 @@ TEMPLATES = {
               "ko'rinish vaqti keldi. Sizni yozib qo'yaymi?",
     },
     "btn_recall_book": {"ru": "📅 Записаться", "uz": "📅 Yozilish"},
+    # отзывы: просьба об оценке через пару часов после приёма (инкремент 5)
+    "review_ask": {
+        "ru": "⭐ <b>Как всё прошло?</b>\nОцените приём — это займёт секунду.",
+        "uz": "⭐ <b>Qabul qanday o'tdi?</b>\nBaho bering — bir soniya vaqt "
+              "oladi.",
+    },
+    "review_thanks_good": {
+        "ru": "🙏 Спасибо! Рады, что всё прошло хорошо.",
+        "uz": "🙏 Rahmat! Hammasi yaxshi o'tganidan xursandmiz.",
+    },
+    "review_link_line": {
+        "ru": "Будем рады отзыву: {url}",
+        "uz": "Sharhingizdan xursand bo'lamiz: {url}",
+    },
+    # 1–3: пациенту — нейтральная благодарность без публичной ссылки; сигнал
+    # уходит владельцу, а не в отзывы
+    "review_thanks_bad": {
+        "ru": "🙏 Спасибо за оценку — она поможет нам стать лучше.",
+        "uz": "🙏 Baho uchun rahmat — u bizga yaxshilanishga yordam beradi.",
+    },
+    "review_already": {
+        "ru": "Оценка уже учтена — спасибо!",
+        "uz": "Baho allaqachon hisobga olindi — rahmat!",
+    },
     "rate_limited": {
         "ru": "Слишком много сообщений подряд — сделайте небольшую паузу, "
               "и я отвечу.",
