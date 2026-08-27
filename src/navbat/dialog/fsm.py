@@ -571,6 +571,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             return self._on_reslot(session, conv, rest)
         if kind == "wl":
             return self._on_waitlist(session, conv, rest)
+        if kind == "rcl":
+            # приглашение на повторный визит: кнопка несёт СВОЙ приём и
+            # проверяется на месте (она висит в чате днями)
+            return self._on_recall(session, conv, rest)
         if kind == "cancel_yes":
             return self._on_cancel_confirmed(session, conv)
         if kind == "cancel_no":

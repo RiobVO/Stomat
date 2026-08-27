@@ -71,6 +71,25 @@ def confirm_attendance(session: Session, appointment_id: str,
     ).rowcount > 0
 
 
+def visit_service(session: Session, appointment_id: str,
+                  chat_id: int) -> str | None:
+    """Ключ услуги приёма ЭТОГО чата — субъект кнопки повторного визита.
+
+    Проверка на месте, как у confirm_attendance: id приходит из callback_data,
+    то есть от клиента, и чужой id внутри той же клиники завёл бы пациента
+    в запись по чужому визиту (RLS изолирует клиники, но не пациентов).
+    Статус и время НЕ проверяем — в этом и смысл: приглашение зовёт как раз
+    после состоявшегося приёма, а он остаётся 'booked' и в прошлом. None —
+    записи нет, она чужая или у неё нет услуги: кнопка мертва.
+    """
+    return session.execute(
+        text("SELECT s.name FROM appointment a "
+             "JOIN service s ON s.id = a.service_id "
+             "WHERE a.id = CAST(:id AS uuid) AND a.tg_chat_id = :chat"),
+        {"id": appointment_id, "chat": chat_id},
+    ).scalar_one_or_none()
+
+
 def slot_bounds(session: Session, appointment_id: uuid.UUID) -> Row:
     """(doctor_id, start, finish) записи — для guard-проверки, что слот ещё
     свободен в календаре перед confirm."""

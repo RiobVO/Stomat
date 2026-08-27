@@ -10,7 +10,7 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from navbat.dialog import appointments_repo, clinic_repo
+from navbat.dialog import appointments_repo, clinic_repo, recall_repo
 from navbat.dialog.conversation import Conversation, DialogContext
 from navbat.dialog.dates import resolve_date_ref
 from navbat.dialog.dialog_common import SLOTS_PER_REPLY, _looks_like_question
@@ -37,6 +37,40 @@ class _BookingFlowMixin:
         self._merge_when(session, ctx, extraction)
         if extraction.doctor:
             self._resolve_doctor(session, ctx, extraction.doctor)
+        return self._advance_booking(session, conv)
+
+    def _on_recall(self, session: Session, conv: Conversation,
+                   rest: str) -> Reply:
+        """Тап по приглашению повторного визита: `rcl:<uuid прошлого приёма>`.
+
+        Приглашение висит в чате днями, поэтому кнопка сырая и несёт свой
+        приём: услуга берётся из НЕГО, а не из контекста (контекст один на чат
+        и к этому моменту может описывать совсем другой сценарий). Будущая
+        запись возврату не мешает — пациент решает сам, на что ему записаться.
+        """
+        lang = self._lang(conv)
+        try:
+            # id приходит из callback_data, то есть от клиента: мусор не должен
+            # падать в приведении типа и уводить апдейт в dead letter (тот же
+            # урок, что у attend:/remind_cancel)
+            parsed = uuid.UUID(rest)
+        except ValueError:
+            service = None
+        else:
+            # в БД уходит каноническая форма, а не исходная строка: валидатор
+            # Python ШИРЕ постгресового CAST (принимает «urn:uuid:…»), и на
+            # такой строке CAST(... AS uuid) травил бы всю транзакцию
+            service = appointments_repo.visit_service(session, str(parsed),
+                                                      conv.chat_id)
+        if service is None:
+            # чужой, битый или вычищенный приём: сценарий пациента не трогаем
+            return self._with_reprompt(session, conv,
+                                       Reply(t("stale_button", lang)))
+        # тап = явная смена намерения, как кнопка меню «Записаться»: висящий
+        # hold отпускаем, старый сценарий не должен подмешивать сюда свой день
+        self._abort_pending(conv)
+        conv.context.service = service
+        conv.context.recall_source = str(parsed)
         return self._advance_booking(session, conv)
 
     def _merge_when(self, session: Session, ctx: DialogContext,
@@ -232,6 +266,11 @@ class _BookingFlowMixin:
                         when=f"{local:%d.%m %H:%M}",
                         **card_lines(ctx.slot_doctor,
                                      clinic_repo.clinic_address(session))))
+        if ctx.recall_source:
+            # запись, начатая с приглашения, — это возврат пациента: витрина
+            # считает по отметке деньги вернувшихся. Отметка ДО ленты: карточка
+            # владельцу — best-effort, конверсия — цифра продажи
+            recall_repo.mark_booked(session, ctx.recall_source)
         self._clear_booking(conv)
         conv.state = "idle"
         # запись состоялась — карточка владельцу прямо сейчас. Только здесь:

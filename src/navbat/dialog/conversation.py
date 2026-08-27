@@ -24,7 +24,7 @@ _BOOKING_FIELDS = (
     "service", "date", "time_ref", "doctor_id", "doctor_miss",
     "appointment_id", "slot_start", "slot_doctor", "pending_name",
     "resched_id", "resched_doctor", "cancel_id", "cancel_when", "cancel_start",
-    "cancel_via", "confirm_failures",
+    "cancel_via", "confirm_failures", "recall_source",
 )
 
 # поля с PII пациента — НЕ выносить в эскалацию админу (m1)
@@ -58,6 +58,10 @@ class DialogContext:
     cancel_start: str | None = None  # ISO: отменяем именно показанное время
     cancel_via: str | None = None
     confirm_failures: int = 0  # подряд; 2 — эскалация (П-2а)
+    # приём, с приглашения по которому начат этот сценарий (recall): по нему
+    # отмечается конверсия при confirm. Живёт ровно столько же, сколько
+    # остальные поля сценария, — чистится тем же clear_booking
+    recall_source: str | None = None
     # ключи под управлением адаптеров (tg_actions и пр.) — passthrough
     extras: dict[str, Any] = field(default_factory=dict)
 

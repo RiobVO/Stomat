@@ -85,13 +85,22 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "svc_hidden_item": {"ru": "⚪ {name} (скрыта)", "uz": "⚪ {name} (yashirilgan)"},
     "svc_card": {
         "ru": "{emoji} <b>{name}</b>\n\n💰 Цена: {price}\n"
-              "⏱ Длительность: {duration}\n{badge}",
+              "⏱ Длительность: {duration}\n"
+              "🔁 Повторный визит: {recall}\n{badge}",
         "uz": "{emoji} <b>{name}</b>\n\n💰 Narxi: {price}\n"
-              "⏱ Davomiyligi: {duration}\n{badge}",
+              "⏱ Davomiyligi: {duration}\n"
+              "🔁 Takroriy tashrif: {recall}\n{badge}",
     },
     "price_unset": {"ru": "не задана", "uz": "kiritilmagan"},
     "sum": {"ru": "{value} сум", "uz": "{value} so'm"},
     "minutes": {"ru": "{value} мин", "uz": "{value} daqiqa"},
+    "recall_value": {"ru": "{value} мес", "uz": "{value} oy"},
+    "recall_off": {"ru": "выкл", "uz": "o'chiq"},
+    "btn_recall_off": {"ru": "🔁 Выкл", "uz": "🔁 O'chirish"},
+    "recall_saved": {
+        "ru": "✅ Повторный визит «{label}»: {value}",
+        "uz": "✅ «{label}» takroriy tashrifi: {value}",
+    },
     "btn_price_edit": {"ru": "💰 Изм. цену", "uz": "💰 Narxi"},
     "btn_dur_edit": {"ru": "⏱ Изм. длит.", "uz": "⏱ Davomiyligi"},
     "svc_hidden_notice": {"ru": "⛔ Услуга скрыта", "uz": "⛔ Xizmat yashirildi"},
@@ -399,6 +408,12 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "stats_waitlist": {
         "ru": "🔔 Очередь ожидания\n• сейчас ждут слота: {count}",
         "uz": "🔔 Kutish navbati\n• hozir vaqt kutayotganlar: {count}",
+    },
+    "stats_recall": {
+        "ru": "🔁 Возврат пациентов\n• приглашений: {sent} · вернулось: "
+              "{returned} (≈ {money} сум)",
+        "uz": "🔁 Bemorlarning qaytishi\n• takliflar: {sent} · qaytdi: "
+              "{returned} (≈ {money} so'm)",
     },
     "stats_tech": {
         "ru": "⚙️ Служебное\n• напоминаний: {reminders} · LLM: {requests} "
