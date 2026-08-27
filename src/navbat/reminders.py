@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from datetime import date, datetime, time as dt_time, timedelta
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -70,6 +71,11 @@ WAITLIST_ENABLED = os.environ.get("WAITLIST_ENABLED", "1") != "0"
 
 def _kind(offset: timedelta) -> str:
     return f"{int(offset.total_seconds() // 60)}m"
+
+
+def _in_recall_window(moment: datetime) -> bool:
+    """Локальный момент клиники внутри окна рассылки приглашений."""
+    return RECALL_HOUR_FROM <= moment.hour < RECALL_HOUR_TO
 
 
 class ReminderService:
@@ -328,23 +334,32 @@ class ReminderService:
 
     # ── Recall: пора показаться врачу ────────────────────────────────────
 
-    def send_recalls(self, now_local: datetime | None = None) -> int:
+    def send_recalls(self,
+                     now_local: datetime | Callable[[], datetime] | None = None
+                     ) -> int:
         """Позвать на повторный визит тех, у кого после приёма прошёл интервал
         услуги (service.recall_months). Возвращает число отправленных
         приглашений.
 
         Reconciliation, как и напоминания: что отправлено — видно в
         recall_outreach, поэтому рестарт процесса не начинает рассылку заново.
+
+        now_local — фиксированный момент локали клиники либо источник момента
+        (тест границы окна); по умолчанию — часы клиники.
         """
         if self._tg_api is None:
             return 0
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             tz = ZoneInfo(clinic_repo.clinic_timezone(session))
-        moment = now_local or datetime.now(tz)
+        # момент берётся из ОДНОГО источника и на входе, и внутри цикла:
+        # фиксированный now_local остаётся фиксированным, вызываемый —
+        # пересчитывается на каждой сверке
+        clock = (now_local if callable(now_local)
+                 else lambda: now_local or datetime.now(tz))
         # ночная рассылка разбудила бы пациента. Очередь «на утро» не копим:
         # такт цикла — полминуты, первый же дневной такт разошлёт всё
         # созревшее, поэтому вне окна выходим до выборки
-        if not RECALL_HOUR_FROM <= moment.hour < RECALL_HOUR_TO:
+        if not _in_recall_window(clock()):
             return 0
         with tenant_transaction(self._session_factory, self._clinic_id) as session:
             due = session.execute(text("""
@@ -383,6 +398,13 @@ class ReminderService:
             """), {"retention": RECALL_RETENTION_DAYS}).all()
         sent = 0
         for row in due:
+            # окно сверяется перед КАЖДОЙ отправкой, а не только на входе:
+            # пачка приглашений идёт по сети минутами (ретраи Bot API, десятки
+            # адресатов) и успевает выехать за 21:00. Вышли из окна — остальные
+            # ждут утра: отметки в журнале у них нет, завтрашний цикл возьмёт
+            # их заново
+            if not _in_recall_window(clock()):
+                break
             if self._send_recall(row):
                 sent += 1
         return sent

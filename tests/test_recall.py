@@ -12,15 +12,17 @@ import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import text
 
-from conftest import at_tashkent, next_monday
+from conftest import at_tashkent, make_service, next_monday
 from navbat.db.base import tenant_transaction
 from navbat.dialog.replies import service_label, t
+from navbat.onboard import set_service_recall
 from navbat.reminders import ReminderService
 from navbat.retention import cleanup_old_data
 from navbat.stats import collect_stats, render_stats
-from test_dialog_booking import (CHAT, RecordingNotifier, make_engine,
+from test_dialog_booking import (CHAT, RecordingNotifier, extr, make_engine,
                                  slot_buttons)
 from test_tg_worker import (FakeTelegramAPI, make_worker, put_callback,
                             put_message)
@@ -224,6 +226,35 @@ def test_night_is_silent_and_leaves_nothing_behind(app_session_factory,
     assert outreach_rows(admin_engine, clinic_a) == []
 
 
+def test_batch_stops_when_the_window_closes(app_session_factory, admin_engine,
+                                            clinic_a, doctor_a,
+                                            service_cleaning):
+    """Гейт 09–21 на входе держит только НАЧАЛО пачки: отправки идут по сети
+    (ретраи Bot API, десятки приглашений), и длинная рассылка выезжала за
+    21:00 — обещание «не будить пациента ночью» держится проверкой момента
+    перед КАЖДОЙ отправкой. Невзятые строки ждут утра, поэтому отметки в
+    журнале у них быть не должно: с ней их пропустят навсегда."""
+    set_recall(admin_engine, service_cleaning, 6)
+    first = seed_past(admin_engine, clinic_a, doctor_a, service_cleaning,
+                      months_ago=8)
+    seed_past(admin_engine, clinic_a, doctor_a, service_cleaning, months_ago=7,
+              chat_id=CHAT + 1)
+    service, api = make_recall_service(app_session_factory, clinic_a)
+
+    def clock() -> datetime:
+        # стрелки переваливают за 21:00 ровно после первой отправки; привязка
+        # к факту отправки, а не к числу вызовов, — иначе тест ломается от
+        # любой лишней сверки момента внутри цикла
+        if api.sent:
+            return at_local(21) + timedelta(seconds=1)
+        return at_local(20) + timedelta(minutes=59, seconds=59)
+
+    assert service.send_recalls(now_local=clock) == 1
+    assert len(api.sent) == 1, "рассылка вышла за окно и разбудила пациента"
+    assert [r.appointment_id for r in outreach_rows(admin_engine, clinic_a)] \
+        == [first], "невзятая строка отмечена как отправленная — утром её пропустят"
+
+
 def test_service_without_interval_never_recalls(app_session_factory,
                                                 admin_engine, clinic_a,
                                                 doctor_a, service_cleaning):
@@ -397,6 +428,45 @@ def test_ordinary_booking_does_not_steal_the_conversion(
     assert (stats.recalls_returned, stats.recalls_saved) == (0, 0)
 
 
+def test_booking_another_service_breaks_the_link_with_the_invitation(
+        app_session_factory, admin_engine, clinic_a, doctor_a,
+        service_cleaning):
+    """Тап по приглашению → пациент бросил сценарий → своим текстом записался
+    на ДРУГУЮ услугу. Возврат по приглашению — только его прямое продолжение:
+    источник, переживший смену услуги, приписывал бы приглашению чужую запись,
+    и «вернулось» в витрине врало бы покупателю."""
+    set_recall(admin_engine, service_cleaning, 6)
+    make_service(admin_engine, clinic_a, "extraction", 30)
+    seed_past(admin_engine, clinic_a, doctor_a, service_cleaning, months_ago=7)
+    service, api = make_recall_service(app_session_factory, clinic_a)
+    assert service.send_recalls(now_local=at_local(12)) == 1
+    invite = api.sent[-1][2][0].action
+
+    engine = make_engine(app_session_factory, clinic_a,
+                         [extr(intent="book", service="extraction")])
+    engine.handle_action(CHAT, invite)
+    engine.handle_text(CHAT, "зуб удалить надо")  # другая услуга, мимо кнопки
+    offer = engine.handle_action(CHAT, f"date:{next_monday().isoformat()}")
+    engine.handle_action(CHAT, slot_buttons(offer)[0].action)
+    engine.handle_text(CHAT, "Алишер")
+    engine.handle_contact(CHAT, "998901234567", own=True)
+
+    with admin_engine.begin() as conn:
+        booked = conn.execute(text(
+            "SELECT s.name FROM appointment a JOIN service s ON s.id = a.service_id "
+            "WHERE a.status = 'booked' AND lower(a.time_range) > now()"
+        )).scalar_one()
+    assert booked == "extraction", "сценарий не переключился на другую услугу"
+    assert [r.booked_at for r in outreach_rows(admin_engine, clinic_a)] == [None], \
+        "конверсия приписана приглашению, с которого запись не начиналась"
+
+    today = datetime.now(TASHKENT).date()
+    with tenant_transaction(app_session_factory, clinic_a) as session:
+        stats = collect_stats(session, today, today, TASHKENT)
+    assert (stats.recalls_returned, stats.recalls_saved) == (0, 0)
+    assert "вернулось: 0" in render_stats(stats, today)
+
+
 def test_recall_line_appears_only_when_invitations_were_sent():
     """Витрина без нулей (конвенция /stats): строка возврата появляется,
     только когда рассылка работала."""
@@ -434,6 +504,28 @@ def test_owner_switches_the_recall_interval_from_the_service_card(
 
     assert recall_months(admin_engine, clinic_a) is None
     assert "выкл" in api.edited[-1][2], api.edited[-1][2]
+
+
+def test_recall_interval_refuses_nonsense(app_session_factory, admin_engine,
+                                          clinic_a, service_cleaning):
+    """Интервал уходит в make_interval(months => …), а CHECK'а в БД нет:
+    отрицательный сдвигал бы срок приглашения В ПРОШЛОЕ (звать начали бы
+    раньше самого визита), нулевой звал бы сразу после приёма. Отказ — до
+    UPDATE: сохранённое значение остаётся прежним."""
+    set_recall(admin_engine, service_cleaning, 6)
+
+    with pytest.raises(ValueError):
+        set_service_recall(app_session_factory, clinic_a, "cleaning", -3)
+    with pytest.raises(ValueError):
+        set_service_recall(app_session_factory, clinic_a, "cleaning", 0)
+
+    assert recall_months(admin_engine, clinic_a) == 6, \
+        "интервал изменён вопреки отказу"
+    # осмысленный интервал и выключение рассылки (None) — законные значения
+    set_service_recall(app_session_factory, clinic_a, "cleaning", 3)
+    assert recall_months(admin_engine, clinic_a) == 3
+    set_service_recall(app_session_factory, clinic_a, "cleaning", None)
+    assert recall_months(admin_engine, clinic_a) is None
 
 
 # ── Ретеншен ────────────────────────────────────────────────────────────────

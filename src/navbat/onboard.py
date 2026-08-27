@@ -288,6 +288,13 @@ def set_service_recall(session_factory, clinic_id: uuid.UUID, name: str,
                        months: int | None) -> None:
     """Через сколько месяцев после визита звать на повторный; None — рассылка
     по этой услуге выключена (умолчание)."""
+    # значение уходит в make_interval(months => …) без CHECK'а в БД:
+    # отрицательное сдвинуло бы срок приглашения в прошлое (звали бы раньше
+    # самого визита), нулевое — сразу после приёма
+    if months is not None and (not isinstance(months, int) or months <= 0):
+        raise ValueError(
+            "интервал повторного визита — целое число месяцев больше нуля "
+            f"или None (выключено), не {months!r}")
     with tenant_transaction(session_factory, clinic_id) as session:
         updated = session.execute(
             text("UPDATE service SET recall_months = :m WHERE name = :n "

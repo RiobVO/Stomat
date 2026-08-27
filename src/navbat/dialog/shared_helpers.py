@@ -39,6 +39,20 @@ class _SharedHelpersMixin:
     def _clear_booking(self, conv: Conversation) -> None:
         conv.context.clear_booking()
 
+    def _set_scenario_service(self, ctx: DialogContext,
+                              service_key: str | None) -> None:
+        """Услуга текущего сценария; смена услуги рвёт связь с приглашением.
+
+        Конверсия recall засчитывается ТОЛЬКО прямому продолжению тапа rcl.
+        Контекст живёт в БД и переживает брошенный сценарий, поэтому источник
+        приглашения доживал до записи на совсем другую услугу (свободный текст,
+        сырая кнопка time:/d:/wl:take из старого сообщения) — и витрина
+        выдавала бы обычную запись за возврат по приглашению.
+        """
+        if ctx.recall_source and service_key != ctx.service:
+            ctx.recall_source = None
+        ctx.service = service_key
+
     def _escalation_context(self, conv: Conversation) -> dict:
         """Контекст для эскалации без PII пациента (имя) — он уходит
         в админ-чат и логи (m1)."""
@@ -144,7 +158,7 @@ class _SharedHelpersMixin:
             # время из callback_data: мусор не должен ронять обработку
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
-        conv.context.service = service_key
+        self._set_scenario_service(conv.context, service_key)
         doctor_id = self._free_doctor_at(session, row.service_id, start)
         if doctor_id is None:  # слот заняли, пока предложение висело
             return self._offer_slots(session, conv, note="slot_taken")
@@ -200,7 +214,7 @@ class _SharedHelpersMixin:
         except ValueError:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
-        conv.context.service = service_key
+        self._set_scenario_service(conv.context, service_key)
         free = (self._free_doctors_at(session, service_id, start,
                                       conv.context.doctor_id)
                 if service_id is not None else [])
@@ -235,7 +249,7 @@ class _SharedHelpersMixin:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
         service_id = self._service_id(session, service_key)
-        conv.context.service = service_key
+        self._set_scenario_service(conv.context, service_key)
         try:
             start = datetime.fromtimestamp(int(minutes_raw) * 60,
                                            tz=self._clinic_tz(session))

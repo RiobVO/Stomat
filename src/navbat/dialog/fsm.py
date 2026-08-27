@@ -549,7 +549,10 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             note = Reply(t("lang_changed", rest), menu=menu_rows(rest))
             return self._with_reprompt(session, conv, note)
         if kind == "service":
-            conv.context.service = rest
+            # выбор услуги кнопкой — тоже вход в запись мимо приглашения:
+            # другая услуга рвёт связь с ним (конверсия recall — только
+            # прямое продолжение тапа rcl)
+            self._set_scenario_service(conv.context, rest)
             return self._advance_booking(session, conv)
         if kind == "date":
             conv.context.date = rest
