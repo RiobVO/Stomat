@@ -416,8 +416,8 @@ TEMPLATES: dict[str, dict[str, str]] = {
               "{returned} (≈ {money} so'm)",
     },
     "stats_reviews": {
-        "ru": "⭐ Оценки пациентов\n• средняя: {avg} (из {count})",
-        "uz": "⭐ Bemorlar baholari\n• o'rtacha: {avg} ({count} tadan)",
+        "ru": "⭐ Оценки пациентов\n• средняя: {avg} · оценок: {count}",
+        "uz": "⭐ Bemorlar baholari\n• o'rtacha: {avg} · baholar: {count} ta",
     },
     "stats_tech": {
         "ru": "⚙️ Служебное\n• напоминаний: {reminders} · LLM: {requests} "

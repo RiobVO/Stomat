@@ -105,7 +105,7 @@ class _SharedHelpersMixin:
         lang = self._lang(conv)
         op, _, arg = rest.partition(":")
         if op == "leave":
-            if arg.isdigit():
+            if arg.isdecimal():
                 waitlist_repo.mark_cancelled(session, int(arg))
             return Reply(t("waitlist_left", lang))
         if op == "take":
@@ -134,7 +134,7 @@ class _SharedHelpersMixin:
         """
         lang = self._lang(conv)
         wid_raw, _, minutes_raw = arg.partition(":")
-        if not wid_raw.isdigit() or not minutes_raw.isdigit():
+        if not wid_raw.isdecimal() or not minutes_raw.isdecimal():
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
         row = waitlist_repo.active_by_id(session, int(wid_raw))
@@ -245,7 +245,7 @@ class _SharedHelpersMixin:
         lang = self._lang(conv)
         doctor_raw, _, tail = rest.partition(":")
         minutes_raw, _, service_key = tail.partition(":")
-        if not minutes_raw.isdigit():
+        if not minutes_raw.isdecimal():
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
         service_id = self._service_id(session, service_key)

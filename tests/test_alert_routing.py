@@ -101,6 +101,21 @@ def test_system_alert_falls_back_to_clinic_without_owner(monkeypatch):
     assert [chat for chat, _, _ in api.sent] == [ADMIN_CHAT]
 
 
+def test_broken_owner_chat_env_does_not_break_the_notifier(monkeypatch):
+    """NAVBAT_OWNER_CHAT_ID читается при КОНСТРУИРОВАНИИ нотификатора: опечатка
+    в переменной («--5» переживала lstrip('-')) валила int() и уносила с собой
+    весь канал алертов — ни клиника, ни владелец не узнавали ничего. Кривое
+    значение = канала владельца просто нет, как при пустой переменной."""
+    monkeypatch.setenv("NAVBAT_OWNER_CHAT_ID", "--5")
+    api = FakeTelegramAPI()
+
+    escalation = TelegramEscalation(api, admin_chat_id=ADMIN_CHAT)
+    escalation.notify_system("бэкапы БД не снимаются", {})
+
+    assert [chat for chat, _, _ in api.sent] == [ADMIN_CHAT], \
+        "кривой NAVBAT_OWNER_CHAT_ID увёл алерт мимо клиники"
+
+
 @pytest.mark.parametrize("reason", ["дневной лимит токенов исчерпан",
                                     "TLS-cert истекает через 3 дн."])
 def test_system_alert_still_delivered(monkeypatch, reason):

@@ -624,7 +624,7 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
         except ValueError:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
-        if not raw_rating.isdigit() or not 1 <= int(raw_rating) <= 5:
+        if not raw_rating.isdecimal() or not 1 <= int(raw_rating) <= 5:
             return self._with_reprompt(session, conv,
                                        Reply(t("stale_button", lang)))
         rating = int(raw_rating)

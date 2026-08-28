@@ -111,7 +111,7 @@ def main() -> int:
             actions = []
             print("Диалог сброшен.")
             continue
-        if user_input.isdigit() and 1 <= int(user_input) <= len(actions):
+        if user_input.isdecimal() and 1 <= int(user_input) <= len(actions):
             action = actions[int(user_input) - 1]
             if action == CONTACT_ACTION:
                 reply = engine.handle_contact(DEMO_CHAT_ID, DEMO_PHONE, own=True)
