@@ -93,4 +93,5 @@ def test_disclaimer_keeps_button_rows(app_session_factory, admin_engine,
 
     assert reply.text.startswith(MEDICAL_DISCLAIMER["ru"])
     actions = [b.action for row in reply.button_rows for b in row]
-    assert actions == ["wl:join:checkup"], "дисклеймер потерял button_rows"
+    assert actions == ["call_admin", "wl:join:checkup"], \
+        "дисклеймер потерял button_rows"

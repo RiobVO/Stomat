@@ -194,4 +194,10 @@ class _CalendarFlowMixin:
             return replace(reply,
                            text=f"{t('no_slots_calendar', lang)}\n\n{reply.text}",
                            button_rows=reply.button_rows + (join,))
-        return replace(reply, button_rows=(join,))
+        # пустой горизонт: кнопка к человеку приходит из _month_reply плоским
+        # buttons, а рендер при непустых button_rows шлёт ТОЛЬКО ряды — она
+        # обязана переехать туда же, иначе единственный тап к живому человеку
+        # не доедет, а пустая карта действий (сырой wl: номера не занимает)
+        # оставит жить чужие номера прошлой отправки
+        return replace(reply, buttons=(),
+                       button_rows=tuple((b,) for b in reply.buttons) + (join,))
