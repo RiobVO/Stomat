@@ -475,9 +475,17 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             note = Reply(t("not_understood", lang),
                          (Button(t("btn_call_admin", lang), "call_admin"),))
             reply = self._with_reprompt(session, conv, note)
-            if not any(b.action == "call_admin" for b in reply.buttons):
-                # посреди сценария _with_reprompt отдал кнопки шага — выход
-                # к человеку дополняет их, а не теряется (пересмотр 11.06)
+            # посреди сценария _with_reprompt отдал кнопки шага — выход
+            # к человеку дополняет их, а не теряется (пересмотр 11.06).
+            # Проверяем и дополняем ровно тот контейнер, который дойдёт до
+            # пациента: в рендере (send_reply/edit_reply) button_rows шага
+            # перебивает плоские buttons, и кнопка из note была бы съедена
+            if reply.button_rows:
+                if not any(b.action == "call_admin"
+                           for row in reply.button_rows for b in row):
+                    reply = replace(
+                        reply, button_rows=reply.button_rows + (note.buttons,))
+            elif not any(b.action == "call_admin" for b in reply.buttons):
                 reply = replace(reply, buttons=reply.buttons + note.buttons)
             return reply
         # 1-й сбой посреди сценария — повтор текущего шага (пересмотр 11.06);
@@ -786,4 +794,8 @@ class DialogEngine(_SharedHelpersMixin, _BookingFlowMixin,
             prompt = self._cancel_prompt(conv)
         else:
             return answer
-        return Reply(f"{answer.text}\n\n{prompt.text}", prompt.buttons)
+        # replace, а не Reply(...): шаг обязан доехать ЦЕЛИКОМ. Ручная сборка
+        # переносила только text и buttons, а button_rows/menu/contact_request
+        # молча теряла — шаг «нет слотов» (сетка календаря лежит в button_rows)
+        # после прерывания вбок оставался без единой кнопки
+        return replace(prompt, text=f"{answer.text}\n\n{prompt.text}")
