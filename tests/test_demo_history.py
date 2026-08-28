@@ -74,16 +74,30 @@ def test_render_has_no_zero_money_lines(seeded):
     assert "👥 Клиенты" in out and "👨‍⚕️ Топ врачей" in out
 
 
+def _seeded_counts(admin_engine) -> tuple[int, int, int]:
+    """(записей, приглашений, просьб об оценке) — всё, что налил сид."""
+    with admin_engine.begin() as conn:
+        return conn.execute(text(
+            "SELECT (SELECT count(*) FROM appointment), "
+            "       (SELECT count(*) FROM recall_outreach), "
+            "       (SELECT count(*) FROM review)")).one()
+
+
 def test_seed_is_idempotent(app_session_factory, admin_engine, priced_clinic):
     clinic_a = priced_clinic
-    """Повторный прогон перед показом не должен удваивать историю."""
-    seed_demo_history(app_session_factory, clinic_a, days=14)
-    with admin_engine.begin() as conn:
-        first = conn.execute(text("SELECT count(*) FROM appointment")).scalar_one()
-    seed_demo_history(app_session_factory, clinic_a, days=14)
-    with admin_engine.begin() as conn:
-        second = conn.execute(text("SELECT count(*) FROM appointment")).scalar_one()
+    """Повторный прогон перед показом не должен удваивать историю.
 
+    Журналы возвратов и оценок сеются отдельной фазой по ВСЕМ прошедшим
+    приёмам базы, а не только по созданным этим прогоном, — значит второй
+    запуск проходит по тем же приёмам, и защита от дублей у них своя
+    (UNIQUE(appointment_id) + ON CONFLICT), а не пропуск наполненного дня."""
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    first = _seeded_counts(admin_engine)
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    second = _seeded_counts(admin_engine)
+
+    assert first[1] and first[2], \
+        "журналы пусты — идемпотентность держалась бы на пустоте"
     assert first == second
 
 
@@ -656,6 +670,93 @@ def test_no_synthetic_patient_books_twice_in_a_row(app_session_factory,
 
     assert len(chats) > 20, "сидер вообще ничего не налил"
     assert not glued, f"подряд идущие визиты одного лица: {len(glued)}"
+
+
+# ── Журналы витрины: возвраты (recall) и оценки приёма ─────────────────────
+
+def test_recall_and_review_lines_are_alive(seeded):
+    """Две продающие фичи пакета живут в собственных журналах: пустые
+    recall_outreach и review — это пустые строки «🔁 Возврат пациентов» и
+    «⭐ Оценки пациентов», которые на показе приходится пересказывать
+    словами (render_stats их при нуле вовсе не печатает)."""
+    assert seeded.recalls_sent > 0, "приглашений на повторный визит нет"
+    assert seeded.recalls_returned > 0, "без конверсии строка теряет смысл"
+    assert seeded.recalls_saved > 0, "у возвратов должна быть сумма"
+    assert seeded.reviews_count > 0, "оценок нет — строка ⭐ не отрендерится"
+    assert 3.5 <= seeded.reviews_avg < 5.0, \
+        f"средняя {seeded.reviews_avg}: ровная пятёрка читается как выдумка"
+
+
+def test_render_shows_recall_and_review_sections(seeded):
+    today = datetime.now(TZ).date()
+    out = render_stats(seeded, today - timedelta(days=6), today)
+
+    assert "🔁" in out and "⭐" in out, out
+
+
+def test_journals_stay_in_the_past(app_session_factory, admin_engine,
+                                   priced_clinic):
+    """Строка журнала из будущего — такая же ложь, как будущий приём:
+    «спросили оценку завтра» владелец увидит в первой же выгрузке.
+
+    Сравниваем с ИНЖЕКТИРОВАННЫМ «сейчас», как тест записей: сид считает
+    моменты журналов от времени приёма, и на плавающем now() разница в
+    секунды ничего не доказывала бы. День берём рабочий — в воскресенье у
+    фикстурных врачей смен нет."""
+    clinic_a = priced_clinic
+    day = datetime.now(TZ).date()
+    while day.weekday() == 6:
+        day -= timedelta(days=1)
+    now = datetime.combine(day, time(15, 0), TZ)
+    seed_demo_history(app_session_factory, clinic_a, days=14, now=now)
+
+    with admin_engine.begin() as conn:
+        rows, ahead = conn.execute(text(
+            "SELECT (SELECT count(*) FROM recall_outreach) "
+            "     + (SELECT count(*) FROM review), "
+            "       (SELECT count(*) FROM recall_outreach "
+            "         WHERE sent_at > :now OR booked_at > :now) "
+            "     + (SELECT count(*) FROM review "
+            "         WHERE requested_at > :now OR rated_at > :now)"),
+            {"now": now}).one()
+
+    assert rows > 0, "журналы вообще не посеяны — проверять нечего"
+    assert ahead == 0, "момент журнала уехал в будущее"
+
+
+def test_some_review_requests_stay_unanswered(app_session_factory, admin_engine,
+                                              priced_clinic):
+    """Молчание — не двойка: часть просьб остаётся без оценки, и в среднюю
+    такие строки не входят вовсе (stats.collect_stats). Журнал, где ответили
+    поголовно все, читается как выдумка ровно так же, как средняя 5.0."""
+    seed_demo_history(app_session_factory, priced_clinic, days=14)
+
+    with admin_engine.begin() as conn:
+        asked, silent = conn.execute(text(
+            "SELECT count(*), count(*) FILTER (WHERE rating IS NULL) "
+            "FROM review")).one()
+
+    assert asked > 0, "просьб об оценке нет вовсе"
+    assert 0 < silent < asked, f"промолчали {silent} из {asked}"
+
+
+def test_clear_removes_the_journals_too(app_session_factory, admin_engine,
+                                        priced_clinic):
+    """FK на запись у журналов намеренно нет (0025, 0026): удали откат
+    сначала приёмы — найти их строки было бы уже нечем, и возвраты с оценками
+    остались бы в базе навсегда, а витрина считала бы приглашения к
+    несуществующим приёмам."""
+    from navbat.demo_history import clear_demo_history
+
+    clinic_a = priced_clinic
+    seed_demo_history(app_session_factory, clinic_a, days=14)
+    before = _seeded_counts(admin_engine)
+
+    clear_demo_history(app_session_factory, clinic_a)
+
+    left = _seeded_counts(admin_engine)
+    assert before[1] and before[2], "чистить нечего — журналы не посеяны"
+    assert left[1] == 0 and left[2] == 0, f"в журналах осталось: {left}"
 
 
 def test_repeat_visits_are_apart_by_formula():

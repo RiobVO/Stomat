@@ -328,6 +328,19 @@ def run_check(session_factory, clinic_id: uuid.UUID, use_real: bool) -> int:
                f"записей за 7 дн: {booked}" if booked >= SHOWCASE_MIN_BOOKED
                else f"записей за 7 дн: {booked} — /stats на показе будет "
                     f"пустым: python -m navbat.onboard --demo-history")
+        # возвраты и оценки живут в своих журналах и пустеют отдельно от
+        # записей: сводка с записями, но без них молча теряет на показе две
+        # фичи целиком. Судим тем же окном, второй раз сводку не считаем.
+        # Названия строк витрины — без эмодзи: перенаправленный stdout на
+        # Windows идёт в cp1251, и «🔁» уронил бы весь чеклист трейсбеком
+        recalls = window.recalls_sent if window else 0
+        rated = window.reviews_count if window else 0
+        report(bool(recalls and rated), "витрина: возвраты и отзывы",
+               f"приглашений за 7 дн: {recalls}, оценок: {rated}"
+               if recalls and rated
+               else f"приглашений за 7 дн: {recalls}, оценок: {rated} — строки "
+                    f"«Возврат пациентов» и «Оценки пациентов» на показе будут "
+                    f"пустыми: python -m navbat.onboard --demo-history")
 
     if use_real:
         report(bool(os.environ.get("OPENAI_API_KEY")), "OPENAI_API_KEY для --real")
