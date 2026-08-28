@@ -17,11 +17,14 @@ from sqlalchemy import text
 from conftest import at_tashkent, make_service, next_monday
 from navbat.dialog.calendar_view import HORIZON_DAYS, month_title, month_view
 from navbat.dialog.fsm import DialogEngine
-from navbat.dialog.replies import TEMPLATES
+from navbat.dialog.replies import TEMPLATES, Button, Reply
 from navbat.nlu.extractor import FakeExtractor
+from navbat.telegram.worker import send_reply
+from test_button_infra import tg_actions
 from test_dialog_booking import (
     CHAT, RecordingNotifier, explicit, extr, fsm_state)
 from test_dialog_reschedule_cancel import book_directly
+from test_tg_worker import FakeTelegramAPI
 
 
 def make(app_session_factory, clinic_id, script, clock):
@@ -368,9 +371,12 @@ def test_no_slots_anywhere_honest_text_no_dead_buttons(
 
     reply = engine.handle_text(CHAT, "чистка в понедельник")
     assert TEMPLATES["no_slots_horizon"]["ru"] in reply.text
-    # мёртвых (календарных) кнопок нет — только живая кнопка «встать в очередь»
+    # мёртвых (календарных) кнопок нет — только живые: выход к человеку и
+    # «встать в очередь». Обе в button_rows: рендер при непустых рядах плоские
+    # buttons не отправляет вовсе
     actions = [b.action for row in reply.button_rows for b in row]
-    assert actions == ["wl:join:cleaning"], "одна кнопка очереди, без мёртвых"
+    assert actions == ["call_admin", "wl:join:cleaning"], \
+        "две живые кнопки, без мёртвых"
     assert fsm_state(admin_engine) == "booking_collect", "диалог жив"
     assert len(notifier.calls) == 1, "владельцу FYI"
 
@@ -402,3 +408,67 @@ def test_empty_horizon_offers_admin_button(app_session_factory, admin_engine,
     actions = ([b.action for b in reply.buttons]
                + [b.action for row in reply.button_rows for b in row])
     assert "call_admin" in actions, "выход к человеку должен быть тапом"
+
+
+def _empty_horizon_engine(app_session_factory, admin_engine, clinic_a):
+    """Ни одного рабочего дня: «чистка в понедельник» уходит в _offer_slots
+    и оттуда в _no_slots_calendar с пустым горизонтом."""
+    _drop_schedule(admin_engine)
+    monday = next_monday()
+    engine, _ = make(app_session_factory, clinic_a,
+                     [extr(service="cleaning", date_ref=explicit(monday))],
+                     clock=lambda: at_tashkent(monday, "08:00"))
+    return engine
+
+
+def test_empty_horizon_both_live_buttons_reach_patient(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Проверяем ТОТ контейнер, который отрисует send_reply, а не склейку
+    обоих: при непустых button_rows плоские buttons не передаются вовсе,
+    и кнопка к человеку (карта продажи №19) пропадала молча."""
+    engine = _empty_horizon_engine(app_session_factory, admin_engine, clinic_a)
+    reply = engine.handle_text(CHAT, "чистка в понедельник")
+
+    api = FakeTelegramAPI()
+    send_reply(api, app_session_factory, clinic_a, CHAT, reply)
+
+    # то, что реально уехало в Telegram; пронумерованные a:N разворачиваем
+    # обратно через карту действий чата
+    mapping = tg_actions(admin_engine)
+    sent = [mapping.get(b.action[2:], b.action) if b.action.startswith("a:")
+            else b.action for b in flat(api.row_keyboards[-1])]
+    assert sent == ["call_admin", "wl:join:cleaning"], \
+        "до пациента доехали обе живые кнопки"
+
+
+def test_no_slots_reply_keeps_one_button_container(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """buttons и button_rows взаимоисключающие (replies.Reply): reply_markup
+    в Telegram один. Смешанная форма — источник потери кнопок в рендере."""
+    engine = _empty_horizon_engine(app_session_factory, admin_engine, clinic_a)
+
+    reply = engine.handle_text(CHAT, "чистка в понедельник")
+
+    assert reply.button_rows, "кнопки шага лежат в рядах"
+    assert reply.buttons == (), "плоские кнопки обязаны переехать в ряды"
+
+
+def test_no_slots_send_rewrites_action_map(
+        app_session_factory, admin_engine, clinic_a, doctor_a, service_cleaning):
+    """Карта callback-действий одна на чат и перезаписывается ЦЕЛИКОМ каждой
+    отправкой кнопок. Сырой wl: номера не занимает — без нумеруемой кнопки
+    map пуст, UPDATE не выполняется, и a:1 прошлого шага остаётся живым
+    чужим действием."""
+    engine = _empty_horizon_engine(app_session_factory, admin_engine, clinic_a)
+    engine.handle_action(CHAT, "lang:ru")
+    api = FakeTelegramAPI()
+    # прошлый шаг занумеровал свою кнопку — она в карте чата
+    send_reply(api, app_session_factory, clinic_a, CHAT,
+               Reply("отменить запись?", (Button("Да", "cancel_yes"),)))
+    assert tg_actions(admin_engine) == {"1": "cancel_yes"}
+
+    reply = engine.handle_text(CHAT, "чистка в понедельник")
+    send_reply(api, app_session_factory, clinic_a, CHAT, reply)
+
+    assert tg_actions(admin_engine) == {"1": "call_admin"}, \
+        "старая карта пережила отправку кнопок"
